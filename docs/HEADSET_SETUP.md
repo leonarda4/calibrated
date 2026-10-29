@@ -98,12 +98,18 @@ desktop picker: click on the scan in the PC browser — 1st click prints
 point A, 2nd point B, further clicks alternate — and copy the printed
 coordinates into the constants.
 
-Then in VR the flow is placement-only:
+Then in VR the flow is:
 
-| View | Action |
+| Screen | What happens |
 | --- | --- |
-| scan with markers **A** (cyan) and **B** (orange) | put the **LEFT** remote on real spot A, the **RIGHT** remote on spot B |
-| HUD (sticks to your view) | pull the trigger → solved and applied, fit errors shown |
+| **CALIBRATE** (scan at 50%, camera visible) | aim at the green button, pull the trigger |
+| **10-second countdown** | place the **LEFT** remote on real spot A (cyan marker) and the **RIGHT** remote on spot B (orange marker) — on the floor |
+| **Result** | remotes are read at 0 s, yaw+translation solved and applied, fit errors shown (~4 s) |
+
+Afterwards only the green ⟲ button remains — aim + trigger to recalibrate
+(e.g. after the world shifted from leaving the boundary box). During the
+whole calibration process the scan runs at 50% opacity so the camera feed
+stays visible; it returns to 70% once calibrated.
 
 The instruction HUD is parented to the camera, so it never drifts or hides
 behind the scan. After calibration the message fades after ~4 s and only the

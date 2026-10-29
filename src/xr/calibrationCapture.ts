@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import type * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import { raycastSplatCenters } from '../viewer/splatRaycast';
+import { setScanOpacity, SCAN_OPACITY } from '../viewer/splatViewer';
 import { SCAN_POINT_A, SCAN_POINT_B } from '../calibration/landmarks';
 import {
   solveYawTranslation, composeCalibration,
@@ -29,6 +30,8 @@ export const PROBE_TIP_OFFSET: Vec3 = [0, 0, 0];
 
 const HUD_DISTANCE = 1.3;          // m in front of the eyes
 const PANEL_HOLD_MS = 4000;        // final message stays this long
+const PLACE_SECONDS = 10;          // countdown to place the remotes
+const CALIBRATION_OPACITY = 0.50;   // scan visibility while calibrating (camera visible)
 const MIN_REMOTE_SEPARATION = 0.3; // m — A and B must be distinguishable
 const MAX_FIT_RMS = 1;             // m — refuse nonsense fits
 
@@ -103,27 +106,62 @@ export function setupCalibrationCapture(
   splats.add(markerA, markerB);
   scene.add(physA, physB);
 
-  let step: 'PLACE' | 'DONE' = 'PLACE';
+  let step: 'READY' | 'COUNTDOWN' | 'DONE' = 'READY';
   let pickToggle: 'A' | 'B' = 'A';
   let holdTimer: ReturnType<typeof setTimeout> | null = null;
+  let countdownTimer: ReturnType<typeof setInterval> | null = null;
+  let secondsLeft = 0;
 
   const showPanel = (text: string): void => {
     panel.visible = true;
     setText(text);
   };
 
-  const startPlacement = (): void => {
-    step = 'PLACE';
-    physA.visible = physB.visible = false;
-    button.visible = false;
+  const clearTimers = (): void => {
     if (holdTimer) clearTimeout(holdTimer);
+    if (countdownTimer) clearInterval(countdownTimer);
+    holdTimer = countdownTimer = null;
+  };
+
+  /** "CALIBRATE" start screen: button + instructions, scan at 50%. */
+  const enterReady = (): void => {
+    step = 'READY';
+    physA.visible = physB.visible = false;
+    button.visible = true;
+    setScanOpacity(splats, CALIBRATION_OPACITY); // see the room through the scan
+    clearTimers();
     showPanel(
-      'CALIBRATE\nPut the LEFT remote on marker A\nand the RIGHT remote on marker B\nPull the trigger when done',
+      'CALIBRATE\nAim at the button and pull the trigger.\nThen place the remotes:\nLEFT on marker A, RIGHT on marker B',
     );
   };
 
-  renderer.xr.addEventListener('sessionstart', startPlacement);
+  /** Trigger on the button starts the placement countdown. */
+  const startCountdown = (): void => {
+    step = 'COUNTDOWN';
+    button.visible = false;
+    setScanOpacity(splats, CALIBRATION_OPACITY);
+    clearTimers();
+    secondsLeft = PLACE_SECONDS;
+    showPanel(
+      `PLACE REMOTES\nLEFT remote on marker A (cyan)\nRIGHT remote on marker B (orange)\n${secondsLeft}s left`,
+    );
+    countdownTimer = setInterval(() => {
+      secondsLeft -= 1;
+      if (secondsLeft > 0) {
+        showPanel(
+          `PLACE REMOTES\nLEFT remote on marker A (cyan)\nRIGHT remote on marker B (orange)\n${secondsLeft}s left`,
+        );
+      } else {
+        clearInterval(countdownTimer!);
+        countdownTimer = null;
+        tryCalibrate();
+      }
+    }, 1000);
+  };
+
+  renderer.xr.addEventListener('sessionstart', enterReady);
   renderer.xr.addEventListener('sessionend', () => {
+    clearTimers();
     panel.visible = button.visible = false;
   });
 
@@ -139,17 +177,20 @@ export function setupCalibrationCapture(
     const left = byHand('left');
     const right = byHand('right');
     if (!left || !right) {
-      showPanel('BOTH remotes are needed\nWake both controllers and pull\nthe trigger again');
+      showPanel('BOTH remotes are needed\nWake both controllers, then use\nthe button to restart');
+      enterReady();
       return;
     }
     const leftPos = remotePoint(left);
     const rightPos = remotePoint(right);
     if (leftPos.length() < 0.05 || rightPos.length() < 0.05) {
-      showPanel('Remotes not tracked yet\nMove them a little, then pull\nthe trigger again');
+      showPanel('Remotes not tracked yet\nMove them a little, then use\nthe button to restart');
+      enterReady();
       return;
     }
     if (leftPos.distanceTo(rightPos) < MIN_REMOTE_SEPARATION) {
       showPanel('Remotes too close together\nPlace them on A and B separately');
+      enterReady();
       return;
     }
     const solution = solveYawTranslation([
@@ -157,7 +198,8 @@ export function setupCalibrationCapture(
       { scan: splats.localToWorld(new THREE.Vector3(...SCAN_POINT_B)).toArray() as Vec3, measured: rightPos.toArray() as Vec3 },
     ]);
     if (solution.rmsResidual > MAX_FIT_RMS) {
-      showPanel('Fit rejected — remotes inconsistent\nCheck that LEFT is on A and\nRIGHT is on B, then retry');
+      showPanel('Fit rejected — remotes inconsistent\nCheck that LEFT is on A and\nRIGHT is on B, then restart');
+      enterReady();
       return;
     }
     const composed = composeCalibration(
@@ -179,6 +221,7 @@ export function setupCalibrationCapture(
     const b = (solution.residuals[1] * 100).toFixed(1);
     step = 'DONE';
     button.visible = true;
+    setScanOpacity(splats, SCAN_OPACITY); // back to normal visibility
     showPanel(`CALIBRATED ✓\nLeft remote = A, right = B\nfit error A: ${a} cm | B: ${b} cm\nButton = recalibrate`);
     onCalibrated?.(solution);
     if (holdTimer) clearTimeout(holdTimer);
@@ -187,17 +230,14 @@ export function setupCalibrationCapture(
 
   const onSelect = (entry: ControllerEntry) => {
     if (!renderer.xr.isPresenting) return;
-    if (step === 'PLACE') {
-      tryCalibrate();
-      return;
-    }
-    // DONE: does this controller's ray hit the ⟲ button?
+    if (step === 'COUNTDOWN') return; // nothing during the countdown
+    // READY / DONE: does this controller's ray hit the ⟲ button?
     const origin = entry.ctrl.getWorldPosition(new THREE.Vector3());
     const dir = entry.ctrl.getWorldDirection(new THREE.Vector3()).negate();
     const toButton = button.getWorldPosition(new THREE.Vector3()).sub(origin);
     const t = toButton.dot(dir);
     const perpendicular = toButton.clone().addScaledVector(dir, -t).length();
-    if (t > 0.2 && t < 5 && perpendicular < 0.25) startPlacement();
+    if (t > 0.2 && t < 5 && perpendicular < 0.25) startCountdown();
   };
 
   // ---- desktop picker: click the scan to define landmark points ----------
@@ -233,6 +273,7 @@ export function setupCalibrationCapture(
 
   return {
     dispose() {
+      clearTimers();
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       camera.remove(panel, button);
       splats.remove(markerA, markerB);

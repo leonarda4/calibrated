@@ -104,6 +104,8 @@ The detailed deliverables and gates live in `docs/PROJECT_PLAN.md`; implementati
 - **HUD sticks to the view**: instruction panel and ⟲ button are parented to the camera (added to the scene) — rigid head-locked UI, no per-frame positioning, rendered above the splats.
 - Fit quality guards remain minimal and explicit: both remotes tracked, ≥ 0.3 m apart, RMS ≤ 1 m — otherwise a hint appears and nothing is applied.
 - Checks: tsc clean, solver tests 5/5, zero console errors on load. Hardware test of the simplified flow pending.
+
+2026-10-29 — Calibration UX per user request: added a CALIBRATE start screen (aim + trigger) that starts a 10-second countdown during which the user places the remotes on the floor (LEFT on A, RIGHT on B); at 0 s the remotes are read and the fit applied automatically. Scan opacity during the whole calibration process is now 50% (camera/passthrough visible through the scan), returning to 70% after a successful fit. Failures (missing remotes, untracked, too close, RMS > 1 m) return to the CALIBRATE screen with a hint. tsc clean, tests 5/5, zero console errors.
 ## Next
 
 1. ~~M0 hardware run~~ â€” **2026-10-29, user-reported from the real headset (Meta glasses, Quest Browser, HTTPS LAN): the scan loads 3Ã— and the user entered the immersive WebXR session in stereo.** Observed defect: the hallway stood vertical (scan's long axis is its local Y) â€” fixed by the new scan-root transform. Operator/assistant-run enter/exit cycling and streaming-timing numbers are still to be recorded for the full M0 protocol; the Quest-Browser variant is demonstrated, the PCâ†’Link variant is not yet tested.
