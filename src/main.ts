@@ -1,36 +1,25 @@
 // Entry point: wire the viewer rig, the XR gate, the HUD and desktop
-// inspection controls. Keep this thin — logic lives in src/viewer and src/xr.
+// inspection controls. Keep this thin — logic lives in src/viewer, src/xr,
+// and src/ui.
 
 import { createViewerRig, loadStack } from './viewer/splatViewer';
 import { attachEnterVr } from './xr/session';
+import { makeHud } from './ui/hud';
 
-const statusEl = document.getElementById('status')!;
-const hudEl = document.getElementById('hud')!;
+const hud = makeHud();
 
 const { renderer, scene, camera, splats } = createViewerRig();
 attachEnterVr(renderer);
 
-statusEl.innerHTML = 'loading splat scene × 3 …';
+hud.setStatus('loading splat scene × 3 …');
 loadStack(splats)
-  .then(() => { statusEl.innerHTML = 'loaded ✓ (3 × hallway.ply)'; })
-  .catch((err: unknown) => { statusEl.innerHTML = `load error: ${String(err)}`; });
+  .then(() => { hud.setStatus('loaded ✓ (3 × hallway.ply)'); })
+  .catch((err: unknown) => { hud.setStatus(`load error: ${String(err)}`); });
 
 // Render loop — works on desktop and inside XR (three switches cameras).
-let frames = 0;
-let last = performance.now();
 renderer.setAnimationLoop(() => {
   renderer.render(scene, camera);
-  if (!renderer.xr.isPresenting) {
-    frames++;
-    const now = performance.now();
-    if (now - last >= 1000) {
-      hudEl.textContent = `${frames} fps`;
-      frames = 0;
-      last = now;
-    }
-  } else {
-    hudEl.textContent = '';
-  }
+  hud.tickFrame(renderer.xr.isPresenting);
 });
 
 // Desktop inspection controls (never active in calibrated VR mode).
