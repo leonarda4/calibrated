@@ -55,9 +55,12 @@ export interface ViewerRig {
  * calibration transform may touch — the tracked XR rig stays at identity.
  */
 export function createViewerRig(): ViewerRig {
-  const renderer = new THREE.WebGLRenderer({ antialias: false });
+  // alpha:true — required for immersive-ar passthrough (the compositor's
+  // camera feed shows through where nothing is drawn)
+  const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
   renderer.setPixelRatio(1);
   renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setClearColor(0x000000, 0); // transparent clear for AR passthrough
   renderer.xr.enabled = true;
   document.body.appendChild(renderer.domElement);
 

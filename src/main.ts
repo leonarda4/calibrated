@@ -54,13 +54,17 @@ const calibration = setupCalibrationCapture(renderer, scene, splats, (solution) 
 // Explicit splats.viewer.update() keeps the projection uniforms current
 // (the library's callback-mesh path missed frames → black screen).
 let lastHead: [number, number, number] | null = null;
+let lastTime = performance.now();
 renderer.setAnimationLoop(() => {
+  const now = performance.now();
+  const dt = Math.min((now - lastTime) / 1000, 0.05); // clamp gaps (tab throttling)
+  lastTime = now;
   const presenting = renderer.xr.isPresenting;
   const activeCamera = presenting ? renderer.xr.getCamera() : camera;
   controls.enabled = !presenting;
   splats.viewer.update(renderer, activeCamera);
   controls.update();
-  calibration.update(activeCamera);
+  calibration.update(activeCamera, dt);
   renderer.render(scene, camera);
   hud.tickFrame(presenting);
   spawnMarker.visible = !presenting;

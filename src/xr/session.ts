@@ -6,17 +6,24 @@ import * as THREE from 'three';
 const statusEl = document.getElementById('status')!;
 const appEl = document.getElementById('app')!;
 
-export async function checkXrSupport(): Promise<boolean> {
+export async function checkXrSupport(): Promise<'immersive-ar' | 'immersive-vr' | null> {
   const xrNav = navigator as Navigator & {
     xr?: { isSessionSupported(mode: string): Promise<boolean> };
   };
   if (!xrNav.xr) {
     statusEl.innerHTML += '<br/>WebXR: not available';
-    return false;
+    return null;
   }
-  const supported = await xrNav.xr.isSessionSupported('immersive-vr').catch(() => false);
-  statusEl.innerHTML += `<br/>WebXR immersive-vr: ${supported ? 'supported ✓' : 'not supported'}`;
-  return supported;
+  // Prefer passthrough (immersive-ar): the real room stays visible, which the
+  // physical-landmark steps of the calibration need. Fall back to pure VR.
+  const arSupported = await xrNav.xr.isSessionSupported('immersive-ar').catch(() => false);
+  if (arSupported) {
+    statusEl.innerHTML += '<br/>WebXR: passthrough (immersive-ar) ✓';
+    return 'immersive-ar';
+  }
+  const vrSupported = await xrNav.xr.isSessionSupported('immersive-vr').catch(() => false);
+  statusEl.innerHTML += `<br/>WebXR immersive-vr: ${vrSupported ? 'supported ✓' : 'not supported'}`;
+  return vrSupported ? 'immersive-vr' : null;
 }
 
 /**
@@ -42,7 +49,8 @@ export function attachEnterVr(renderer: THREE.WebGLRenderer): void {
     try {
       const xr = (navigator as Navigator & { xr?: XRSystem }).xr;
       if (!xr) throw new Error('WebXR not available on this device');
-      const xrSession: XRSession = await xr.requestSession('immersive-vr', {
+      const mode = (await checkXrSupport()) ?? 'immersive-vr';
+      const xrSession: XRSession = await xr.requestSession(mode, {
         optionalFeatures: ['local-floor', 'hand-tracking'],
       });
       await renderer.xr.setSession(xrSession);
@@ -53,7 +61,7 @@ export function attachEnterVr(renderer: THREE.WebGLRenderer): void {
     }
   });
 
-  checkXrSupport().then((supported) => {
-    if (supported) btn.style.display = 'block';
+  checkXrSupport().then((mode) => {
+    if (mode) btn.style.display = 'block';
   });
 }
