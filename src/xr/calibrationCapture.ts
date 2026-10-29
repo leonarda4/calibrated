@@ -31,7 +31,7 @@ export const PROBE_TIP_OFFSET: Vec3 = [0, 0, 0];
 const HUD_DISTANCE = 1.3;          // m in front of the eyes
 const PANEL_HOLD_MS = 4000;        // final message stays this long
 const PLACE_SECONDS = 10;          // countdown to place the remotes
-const CALIBRATION_OPACITY = 0.50;   // scan visibility while calibrating (camera visible)
+const CALIBRATION_OPACITY = 0.20;   // scan visibility while calibrating (camera visible)
 const MIN_REMOTE_SEPARATION = 0.3; // m — A and B must be distinguishable
 const MAX_FIT_RMS = 1;             // m — refuse nonsense fits
 
@@ -91,7 +91,9 @@ export function setupCalibrationCapture(
   panel.renderOrder = 1000;
   button.renderOrder = 1000;
   panel.position.set(0, 0.22, -HUD_DISTANCE);
-  button.position.set(0, -0.28, -HUD_DISTANCE);
+  // button sits far below the forward line of sight: invisible when looking
+  // straight ahead — look down to find it (like a toolbar at your feet)
+  button.position.set(0, -1.4, -HUD_DISTANCE);
   camera.add(panel, button);
 
   // ---- markers at the predefined landmark points ------------------------
