@@ -164,7 +164,19 @@ export function setupCalibrationCapture(
 
   // ---- session lifecycle ------------------------------------------------
   let refSpace: XRReferenceSpace | null = null;
-  const onRefSpaceReset = () => setStep('INVALID');
+  const onRefSpaceReset = () => {
+    // A guardian/tracking recenter mid-wizard leaves captured pairs in a
+    // stale reference frame — the fit would be garbage. Restart cleanly.
+    const wizardActive = step === 'A_SCAN' || step === 'A_PHYS' || step === 'B_SCAN' || step === 'B_PHYS';
+    if (wizardActive) {
+      pairA.scanLocal = pairA.measured = null;
+      pairB.scanLocal = pairB.measured = null;
+      scanMarker.visible = physMarker.visible = false;
+      setStep('A_SCAN', 'tracking re-centered — calibration RESTARTED');
+    } else {
+      setStep('INVALID');
+    }
+  };
 
   renderer.xr.addEventListener('sessionstart', () => {
     sprite.visible = true;

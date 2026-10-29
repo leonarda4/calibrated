@@ -6,6 +6,14 @@ import * as THREE from 'three';
 
 export const MODEL_URL = '/models/hallway.ply'; // gitignored scan binary in public/models/
 
+/**
+ * Global splat opacity (0–1). 0.70 makes the scan see-through so the real
+ * room (AR passthrough) is visible through the splats during calibration.
+ * Implemented as a shader patch: the fragment shader's final alpha is
+ * multiplied by a uGlobalOpacity uniform.
+ */
+export const SCAN_OPACITY = 0.70;
+
 // ---------------------------------------------------------------------------
 // Scan-root transform — the ONLY thing allowed to move the world.
 // Per docs/PROJECT_PLAN.md the tracked XR rig (camera/controllers) stays at
@@ -103,6 +111,28 @@ export async function loadScene(splats: GaussianSplats3D.DropInViewer): Promise<
   }]);
   splats.quaternion.set(...SCAN_ROOT_ROTATION);
   applyStartPoint(splats, START_POINT);
+  const patched = patchSplatOpacity(splats, SCAN_OPACITY);
+  if (!patched) console.warn('scan opacity patch failed (shader string not found)');
+}
+
+/**
+ * Multiply the splat fragment alpha by a global opacity uniform. The
+ * library's material is patched in place; returns false when the shader
+ * signature changed and the patch no longer applies.
+ */
+function patchSplatOpacity(splats: GaussianSplats3D.DropInViewer, opacity: number): boolean {
+  const material = splats.viewer.splatMesh.material as unknown as THREE.ShaderMaterial | undefined;
+  if (!material || typeof material.fragmentShader !== 'string') return false;
+  const target = 'gl_FragColor = vec4(color.rgb, opacity);';
+  if (!material.fragmentShader.includes(target)) return false;
+  material.fragmentShader =
+    'uniform float uGlobalOpacity;\n' +
+    material.fragmentShader.replace(
+      target, 'gl_FragColor = vec4(color.rgb, opacity * uGlobalOpacity);',
+    );
+  material.uniforms.uGlobalOpacity = { value: opacity };
+  material.needsUpdate = true;
+  return true;
 }
 
 /**
