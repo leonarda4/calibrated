@@ -45,6 +45,8 @@ The detailed deliverables and gates live in `docs/PROJECT_PLAN.md`; implementati
 
 2026-10-29 — Viewer combination (Windows 11 PC, Chrome-based desktop test browser): `npm run check` (tsc --noEmit) clean after adding local ambient types for the splat library; dev servers over HTTPS (5173) and HTTP (5174, for the in-app test browser only); page loads with zero console errors; scan `hallway.ply` loads 3× stacked and renders (~29 fps observed in the test browser with ~798k total splats, gpuAcceleratedSort on, SH degree 0). **Not claimed:** any Quest/Link hardware result — M0 remains open; the earlier 60 fps reading was the animation loop without the scan loaded.
 
+2026-10-29 — Black-screen diagnosis (headset reported black window after "loaded ✓"). Frame-buffer readback + shader-uniform inspection showed the splat material's `focal`/`viewport` projection uniforms stayed `{0,0}` because the library's hidden callback-mesh update path did not run reliably with our renderer. Fix: call `splats.viewer.update(renderer, activeCamera)` explicitly at the top of every animation-loop frame (XR camera when presenting), in `src/main.ts`. Verified via manual render + readback: uniforms set (focal ≈ 577 px) and the buffer is no longer black (sampled luminance sum 3269 vs 0). Also switched to CPU sort (`gpuAcceleratedSort: false`) and `dynamicScene: true` as safer defaults for the Quest browser. Hidden in-app browser tabs throttle requestAnimationFrame, so automated pixel checks require a visible tab; headset confirmation still pending — **not claimed**.
+
 ## Next
 
 1. Run the M0 hardware protocol: Windows Chrome → wireless Link → Quest 3 with the combined viewer; record stereo, head/controller poses, three enter/exit cycles, and streaming timing.
