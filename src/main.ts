@@ -7,6 +7,7 @@ import {
   createViewerRig, loadScene, applyStartPoint, createSpawnMarker,
 } from './viewer/splatViewer';
 import { attachEnterVr } from './xr/session';
+import { setupCalibrationCapture } from './xr/calibrationCapture';
 import { makeHud } from './ui/hud';
 import { bindSpawnPanel } from './ui/spawnPanel';
 
@@ -34,6 +35,19 @@ loadScene(splats)
 // Operator panel: shift the map around the player, live, before entering VR.
 bindSpawnPanel((point) => applyStartPoint(splats, point));
 
+// Controller-based landmark calibration (in VR). On success, report the
+// solution on the flat page and retire the manual spawn panel.
+const calibration = setupCalibrationCapture(renderer, scene, splats, (solution) => {
+  const cm = solution.residuals.map((r) => `${(r * 100).toFixed(1)} cm`).join(', ');
+  const t = solution.translation.map((v) => v.toFixed(3)).join(', ');
+  hud.appendStatus(
+    `calibrated ✓ yaw ${(solution.yaw * 180 / Math.PI).toFixed(2)}°, ` +
+    `translation [${t}], fit error ${cm}`,
+  );
+  const panel = document.getElementById('spawn-panel');
+  if (panel) panel.style.display = 'none';
+});
+
 // Render loop — works on desktop and inside XR (three switches cameras).
 // Explicit splats.viewer.update() keeps the projection uniforms current
 // (the library's callback-mesh path missed frames → black screen).
@@ -44,6 +58,7 @@ renderer.setAnimationLoop(() => {
   controls.enabled = !presenting;
   splats.viewer.update(renderer, activeCamera);
   controls.update();
+  calibration.update(activeCamera);
   renderer.render(scene, camera);
   hud.tickFrame(presenting);
   spawnMarker.visible = !presenting;

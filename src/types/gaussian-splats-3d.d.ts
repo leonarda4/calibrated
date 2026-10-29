@@ -38,6 +38,7 @@ declare module '@mkkellogg/gaussian-splats-3d' {
 
   export class Viewer {
     constructor(options?: ViewerOptions);
+    splatMesh: THREE.Mesh & Record<string, unknown>;
     addSplatScene(path: string, options?: Partial<SplatSceneOptions>): Promise<void>;
     addSplatScenes(scenes: SplatSceneOptions[]): Promise<void>;
     update(renderer: THREE.WebGLRenderer, camera: THREE.Camera): void;

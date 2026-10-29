@@ -8,6 +8,7 @@
     "dev:http": "vite --config vite.http.config.ts --host 0.0.0.0",
     "build": "tsc && vite build",
     "check": "tsc --noEmit",
+    "test": "node --test tests/yawTranslationSolver.test.ts",
     "preview": "vite preview --host 0.0.0.0"
   },
   "dependencies": {
@@ -15,6 +16,7 @@
     "three": "^0.180.0"
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
     "@types/three": "^0.180.0",
     "@vitejs/plugin-basic-ssl": "^2.0.0",
     "typescript": "^5.7.0",
