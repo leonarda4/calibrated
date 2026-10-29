@@ -29,6 +29,7 @@ declare module '@mkkellogg/gaussian-splats-3d' {
 
   export class DropInViewer extends THREE.Group {
     constructor(options?: ViewerOptions);
+    viewer: Viewer;
     addSplatScene(path: string, options?: Partial<SplatSceneOptions>): Promise<void>;
     addSplatScenes(scenes: SplatSceneOptions[]): Promise<void>;
     removeSplatScene(index: number): void;

@@ -33,9 +33,9 @@ export function createViewerRig(): ViewerRig {
   camera.position.set(0, 0, 8);
 
   const splats = new GaussianSplats3D.DropInViewer({
-    gpuAcceleratedSort: true,        // sorting on GPU — leaves the CPU free for XR
+    gpuAcceleratedSort: false,       // CPU sort — more compatible across browsers
     antialiased: false,
-    dynamicScene: false,
+    dynamicScene: true,              // re-sort every frame (test; off again if slow)
     sphericalHarmonicsDegree: 0,
     sharedMemoryForWorkers: false,    // avoids SharedArrayBuffer (needs COOP/COEP otherwise)
   });

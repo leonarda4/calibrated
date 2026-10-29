@@ -8,6 +8,10 @@ This repository is currently a project plan. The user asked to plan first; do no
 
 ## Work loop
 
+0. **Git and network operations:** Never push, pull, or fetch. Commits are local only.
+   Before publishing anything, **ask the user** — they push and pull manually via
+   GitHub Desktop. Never trigger credential prompts or other network authentication.
+
 1. Record the current task and acceptance criteria in `ai/strategy.md`.
 2. Build one reviewable step at a time. Keep modules small and separate calibration mathematics from rendering and device input.
 3. Run the checks relevant to the change. Once implemented, use `npm test` for logic and `npm run check` for desktop browser behavior. These commands do not exist during the planning phase.

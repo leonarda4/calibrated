@@ -17,9 +17,20 @@ loadStack(splats)
   .catch((err: unknown) => { hud.setStatus(`load error: ${String(err)}`); });
 
 // Render loop — works on desktop and inside XR (three switches cameras).
+// DropInViewer updates its shader uniforms (focal/viewport) via a hidden
+// callback mesh's onBeforeRender; that can lag or miss frames, leaving the
+// splats degenerate (black screen). Call viewer.update explicitly with the
+// active camera each frame so the projection uniforms are always current.
 renderer.setAnimationLoop(() => {
+  const activeCamera = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+  splats.viewer.update(renderer, activeCamera);
   renderer.render(scene, camera);
   hud.tickFrame(renderer.xr.isPresenting);
+});
+
+// Debug hook for automated visual checks (readPixels etc.)
+Object.assign(window as unknown as Record<string, unknown>, {
+  __debug: { renderer, scene, camera, splats },
 });
 
 // Desktop inspection controls (never active in calibrated VR mode).
