@@ -3,7 +3,7 @@
 //
 //   1/4  A_SCAN — aim the ray at scan point A in the PLY (left remote will
 //                  represent its real-world spot). Sticks move the scan:
-//                  LEFT stick = forward/back, RIGHT stick = left/right + up/down.
+//                  LEFT stick = X/Y, RIGHT stick = forward/back (Z).
 //   2/4  B_SCAN — aim at scan point B in the PLY (right remote represents it).
 //   3/4  PLACE  — 10-second countdown: put the LEFT remote on real spot A
 //                  and the RIGHT remote on real spot B (scan faded out so
@@ -37,9 +37,9 @@ export const PROBE_TIP_OFFSET: Vec3 = [0, 0, 0];
 
 const STORAGE_KEY = 'calibrated.scanRoot.v1';
 const PLACE_SECONDS = 10;          // countdown to place both remotes
-const DOLLY_Z_SPEED = 3.0;         // m/s, left stick forward/back
-const DOLLY_X_SPEED = 2.0;         // m/s, right stick left/right
-const DOLLY_Y_SPEED = 1.5;         // m/s, right stick up/down
+const DOLLY_Z_SPEED = 3.0;         // m/s, right stick forward/back
+const DOLLY_X_SPEED = 2.0;         // m/s, left stick left/right
+const DOLLY_Y_SPEED = 1.5;         // m/s, left stick up/down
 const STICK_DEADZONE = 0.15;
 const RECAL_RMS_LIMIT = 1;         // m — above this the remotes must have moved
 // Watchdog polling is DISABLED for now: the user observed random recalibrations.
@@ -56,6 +56,7 @@ const RECAL_MAX_YAW = 45 * Math.PI / 180; // rad — sanity limit
 const POSE_STABLE_TIME = 0.5;      // s — remotes must be still before solving
 const POSE_STABLE_EPS = 0.03;      // m — allowed jitter while "still"
 const SMOOTH_TIME = 0.5;          // s — correction glide duration
+const PANEL_HOLD_SECONDS = 4;      // s the final message stays after calibrating
 
 type Step = 'A_SCAN' | 'B_SCAN' | 'PLACE_REFS' | 'ARMED' | 'INVALID';
 
@@ -102,7 +103,6 @@ export function setupCalibrationCapture(
       ctrl.visible = grip.visible = false;
     });
     ctrl.addEventListener('selectstart', () => onSelect(entry));
-    ctrl.addEventListener('squeezestart', onSqueeze);
     scene.add(ctrl, grip);
     controllers.push(entry);
   }
@@ -110,10 +110,13 @@ export function setupCalibrationCapture(
     controllers.find((c) => c.source?.handedness === hand)
     ?? controllers[hand === 'left' ? 0 : 1];
 
-  // ---- instruction panel -------------------------------------------------
+  // ---- instruction panel + return-to-calibration button -------------------
   const { sprite, setText } = makeTextPanel();
   sprite.visible = false;
   scene.add(sprite);
+  const button = makeButtonSprite();
+  button.visible = false;
+  scene.add(button);
 
   // scan markers live INSIDE the splats group (stick moves keep them glued);
   // the "measured" markers show where the remotes were read in real space.
@@ -133,10 +136,12 @@ export function setupCalibrationCapture(
   let vrMode = false;            // opaque blend → no passthrough available
   let placeTimer = 0;
   let placeTextTick = 0;
+  let uiActive = false;          // XR UI running (session in progress)
+  let panelHoldUntil = -1e9;     // show the panel briefly after a message
 
   const instructions: Record<'A_SCAN' | 'B_SCAN', string> = {
-    A_SCAN: '1/4 SCAN POINT A\nAim ray at scan point A, trigger\n(LEFT remote will mark its real spot)\nSticks move scan: L=fwd/back R=X/Y',
-    B_SCAN: '2/4 SCAN POINT B\nAim ray at scan point B, trigger\n(RIGHT remote will mark its real spot)\nSticks: L=fwd/back R=X/Y',
+    A_SCAN: '1/4 SCAN POINT A\nAim ray at scan point A, trigger\n(LEFT remote will mark its real spot)\nSticks move scan: L-stick = X/Y, R-stick = fwd/back',
+    B_SCAN: '2/4 SCAN POINT B\nAim ray at scan point B, trigger\n(RIGHT remote will mark its real spot)\nSticks: L-stick = X/Y, R-stick = fwd/back',
   };
 
   const setStep = (next: Step, extra = '') => {
@@ -160,9 +165,12 @@ export function setupCalibrationCapture(
     if (next === 'PLACE_REFS') {
       setText(`3/4 PLACE REMOTES\nLEFT remote on real spot A\nRIGHT remote on spot B\n${extra}${modeLine}`);
     } else if (next === 'ARMED') {
-      setText(`4/4 CALIBRATED ✓\nLeft remote = A, right = B\nTracking resets auto-realign now\nSqueeze = recalibrate${extra ? `\n${extra}` : ''}${modeLine}`);
+      // final message — the panel then disappears; only the
+      // "return to calibration" button remains (aim + trigger).
+      panelHoldUntil = elapsed + PANEL_HOLD_SECONDS;
+      setText(`4/4 CALIBRATED ✓\nLeft remote = A, right = B\nTrigger on the button to recalibrate${extra ? `\n${extra}` : ''}${modeLine}`);
     } else if (next === 'INVALID') {
-      setText(`REFERENCES LOST\nRemotes moved? Re-place & squeeze,\nor recalibrate manually${modeLine}`);
+      setText(`REFERENCES LOST\nRemotes moved? Re-place them, or\ntrigger the button to recalibrate${modeLine}`);
     } else {
       setText(instructions[next as 'A_SCAN' | 'B_SCAN'] + (extra ? `\n${extra}` : '') + modeLine);
     }
@@ -427,7 +435,9 @@ export function setupCalibrationCapture(
   };
 
   renderer.xr.addEventListener('sessionstart', () => {
-    sprite.visible = true;
+    uiActive = true;
+    sprite.visible = false;
+    button.visible = false;
     elapsed = 0;
     lastRecalAt = -1e9;
     stableFor = 0;
@@ -444,8 +454,8 @@ export function setupCalibrationCapture(
         // the watchdog verifies/corrects from the remotes within seconds.
         setStep('ARMED', 'restored — checking remotes…');
       } else {
-        // transform only (older save): user verifies visually, squeeze if wrong.
-        setStep('A_SCAN', 'saved calibration restored — verify, or squeeze');
+        // transform only (older save): user verifies visually, or uses the button.
+        setStep('A_SCAN', 'saved calibration restored — verify, or use the button');
       }
     } else {
       resetWizard();
@@ -457,7 +467,9 @@ export function setupCalibrationCapture(
   });
 
   renderer.xr.addEventListener('sessionend', () => {
+    uiActive = false;
     sprite.visible = false;
+    button.visible = false;
     try { refSpace?.removeEventListener('reset', onRefSpaceReset); } catch { /* noop */ }
     refSpace = null;
   });
@@ -503,14 +515,17 @@ export function setupCalibrationCapture(
         placeTextTick = 0;
         setStep('PLACE_REFS', `${PLACE_SECONDS}s left`);
       }
+    } else if (step === 'ARMED' || step === 'INVALID') {
+      // return-to-calibration button: does this controller's ray hit it?
+      const origin = entry.ctrl.getWorldPosition(new THREE.Vector3());
+      const dir = entry.ctrl.getWorldDirection(new THREE.Vector3()).negate();
+      const toButton = button.getWorldPosition(new THREE.Vector3()).sub(origin);
+      const t = toButton.dot(dir);
+      const perpendicular = toButton.clone().addScaledVector(dir, -t).length();
+      if (t > 0.2 && t < 5 && perpendicular < 0.2) resetWizard();
     }
-    // PLACE_REFS / ARMED: squeeze is the only way back to the wizard
+    // PLACE_REFS: trigger does nothing during the countdown
   };
-
-  function onSqueeze() {
-    if (!renderer.xr.isPresenting) return;
-    resetWizard();
-  }
 
   // ---- scan movement (world axes; the rig is never touched) -------------
   const stick = (hand: string): { x: number; y: number } => {
@@ -527,10 +542,10 @@ export function setupCalibrationCapture(
     if (step !== 'A_SCAN' && step !== 'B_SCAN') return;
     const left = stick('left');
     const right = stick('right');
-    // direct-manipulation feel: push stick up → scan slides forward/away
-    splats.position.z += left.y * DOLLY_Z_SPEED * dt;    // L stick up/down = world Z
-    splats.position.x += right.x * DOLLY_X_SPEED * dt;   // R stick left/right = world X
-    splats.position.y += -right.y * DOLLY_Y_SPEED * dt; // R stick up/down = world Y
+    // direct-manipulation feel: push the stick where the scan should go
+    splats.position.x += left.x * DOLLY_X_SPEED * dt;    // L stick left/right = world X
+    splats.position.y += -left.y * DOLLY_Y_SPEED * dt;  // L stick up/down = world Y
+    splats.position.z += right.y * DOLLY_Z_SPEED * dt;  // R stick up/down = world Z (corridor)
     splats.updateMatrixWorld(true);
   };
 
@@ -540,7 +555,7 @@ export function setupCalibrationCapture(
   let watchTimer = 0;
   return {
     update(activeCamera: THREE.Camera, deltaSeconds: number) {
-      if (!sprite.visible) return;
+      if (!uiActive) return;
       elapsed += deltaSeconds;
 
       // apply the smoothed correction glide
@@ -565,7 +580,7 @@ export function setupCalibrationCapture(
       // watchdog: poll the remotes for silent tracking-origin changes.
       // DISABLED (WATCHDOG_POLLING = false) — was producing random
       // recalibrations. The reference-space 'reset' event path remains,
-      // and manual recalibration (squeeze) always works.
+      // and manual recalibration (the ⟲ button) always works.
       const interval = (elapsed < FAST_WATCH_WINDOW || step === 'INVALID')
         ? FAST_WATCH : WATCH_INTERVAL;
       watchTimer += deltaSeconds;
@@ -575,8 +590,21 @@ export function setupCalibrationCapture(
       }
       activeCamera.getWorldPosition(camPos);
       activeCamera.getWorldDirection(camDir);
-      sprite.position.copy(camPos).addScaledVector(camDir, 1.6);
-      sprite.position.y -= 0.35;
+      // info panel: visible during the wizard, while invalid, or briefly
+      // after a final message — hidden otherwise (after calibration).
+      const wizardish = step === 'A_SCAN' || step === 'B_SCAN'
+        || step === 'PLACE_REFS' || step === 'INVALID';
+      sprite.visible = wizardish || (step === 'ARMED' && elapsed < panelHoldUntil);
+      if (sprite.visible) {
+        sprite.position.copy(camPos).addScaledVector(camDir, 1.6);
+        sprite.position.y -= 0.35;
+      }
+      // return-to-calibration button: shown once calibration is done
+      button.visible = step === 'ARMED' || step === 'INVALID';
+      if (button.visible) {
+        button.position.copy(camPos).addScaledVector(camDir, 1.6);
+        button.position.y -= 0.7;
+      }
     },
   };
 }
@@ -615,4 +643,31 @@ function makeTextPanel(): { sprite: THREE.Sprite; setText(text: string): void } 
     texture.needsUpdate = true;
   };
   return { sprite, setText };
+}
+
+/** Small green "⟲ CALIBRATE" button the user aims at with the ray. */
+function makeButtonSprite(): THREE.Sprite {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#6fd08c';
+  ctx.beginPath();
+  if (typeof ctx.roundRect === 'function') {
+    ctx.roundRect(6, 6, canvas.width - 12, canvas.height - 12, 28);
+  } else {
+    ctx.rect(6, 6, canvas.width - 12, canvas.height - 12);
+  }
+  ctx.fill();
+  ctx.fillStyle = '#101014';
+  ctx.font = 'bold 44px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('⟲ CALIBRATE', canvas.width / 2, canvas.height / 2);
+  const texture = new THREE.CanvasTexture(canvas);
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true }),
+  );
+  sprite.scale.set(0.5, 0.125, 1);
+  return sprite;
 }

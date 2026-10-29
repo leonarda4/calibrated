@@ -89,10 +89,14 @@ The two remotes ARE the physical landmarks (user-specified protocol):
 
 | Step | View | Action |
 | --- | --- | --- |
-| 1/4 | scan at 70% | aim the ray at **scan point A**, trigger. The LEFT remote will later mark its real-world spot. Sticks move the scan: LEFT = forward/back, RIGHT = left/right + up/down |
+| 1/4 | scan at 70% | aim the ray at **scan point A**, trigger. The LEFT remote will later mark its real-world spot. Sticks move the scan: **LEFT = X/Y, RIGHT = forward/back (Z)** |
 | 2/4 | scan at 70% | aim at **scan point B** (right remote represents it), trigger |
 | 3/4 | camera / room (scan faded) | **10-second countdown:** put the LEFT remote on real spot A and the RIGHT remote on real spot B |
 | 4/4 | done | the remotes' tracked positions are read as the measured points; yaw+translation solves and applies automatically |
+
+After 4/4 the info panel disappears (the final message stays ~4 s). A small
+green **⟲ CALIBRATE** button remains below where the panel was — aim the
+controller ray at it and pull the trigger to restart calibration.
 
 After 4/4 the remotes stay as **reference anchors**: a tracking reset
 (guardian/passthrough takeover) re-solves the alignment from wherever the
