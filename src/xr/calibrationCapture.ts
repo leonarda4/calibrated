@@ -42,6 +42,10 @@ const DOLLY_X_SPEED = 2.0;         // m/s, right stick left/right
 const DOLLY_Y_SPEED = 1.5;         // m/s, right stick up/down
 const STICK_DEADZONE = 0.15;
 const RECAL_RMS_LIMIT = 1;         // m — above this the remotes must have moved
+// Watchdog polling is DISABLED for now: the user observed random recalibrations.
+// Likely cause: remote pose jitter / remotes in hands producing drift readings.
+// Re-enable only after that is investigated (tracking quality log).
+const WATCHDOG_POLLING = false;
 const WATCH_INTERVAL = 1.5;        // s — steady-state watchdog cadence
 const FAST_WATCH = 0.5;            // s — fast cadence right after (re)entering
 const FAST_WATCH_WINDOW = 10;      // s — how long the fast cadence lasts
@@ -559,11 +563,13 @@ export function setupCalibrationCapture(
         if (placeTimer <= 0) finishCalibration();
       }
       // watchdog: poll the remotes for silent tracking-origin changes.
-      // Fast right after session start and while references are invalid.
+      // DISABLED (WATCHDOG_POLLING = false) — was producing random
+      // recalibrations. The reference-space 'reset' event path remains,
+      // and manual recalibration (squeeze) always works.
       const interval = (elapsed < FAST_WATCH_WINDOW || step === 'INVALID')
         ? FAST_WATCH : WATCH_INTERVAL;
       watchTimer += deltaSeconds;
-      if (watchTimer >= interval) {
+      if (WATCHDOG_POLLING && watchTimer >= interval) {
         watchTimer = 0;
         watchdog();
       }

@@ -93,6 +93,8 @@ The detailed deliverables and gates live in `docs/PROJECT_PLAN.md`; implementati
   - **Fast watchdog** (0.5 s) for the first 10 s of a session and while INVALID; 1.5 s steady state.
 - Checks: tsc clean, solver tests 5/5, zero console errors on load. **Hardware test of the guarded recal pending.**
 
+2026-10-29 — **Watchdog polling disabled at the user's request** (`WATCHDOG_POLLING = false`): the user observed random recalibrations on hardware. Probable causes to investigate before re-enabling: (a) remote pose jitter crossing the 10 cm drift trigger, (b) remotes held in hands producing temporarily consistent rigid shifts. Remaining auto path: the reference-space `reset` event (still guarded by cooldown/stability/sanity). Manual recalibration (squeeze) unaffected; INVALID no longer auto-recovers via polling — squeeze is required. tsc clean, tests 5/5.
+
 ## Next
 
 1. ~~M0 hardware run~~ — **2026-10-29, user-reported from the real headset (Meta glasses, Quest Browser, HTTPS LAN): the scan loads 3× and the user entered the immersive WebXR session in stereo.** Observed defect: the hallway stood vertical (scan's long axis is its local Y) — fixed by the new scan-root transform. Operator/assistant-run enter/exit cycling and streaming-timing numbers are still to be recorded for the full M0 protocol; the Quest-Browser variant is demonstrated, the PC→Link variant is not yet tested.
