@@ -58,6 +58,13 @@ act as reference anchors and the watchdog re-solves the alignment whenever
 the tracking origin is redefined. The old "Settings → Device → Tracking off"
 trick is NOT an option — it disables 6DoF tracking entirely.
 
+## Session start behaviour
+
+Every VR session starts **from the beginning**: the scan sits at its default
+transform and the calibration wizard opens at step 1/4. A page reload always
+returns the app to this default state. The last calibration is stored
+locally as a debugging record only — it is never applied automatically.
+
 ## Why the world "shifts" after a boundary event
 
 Crossing the boundary / passthrough takeovers can **redefine the tracking

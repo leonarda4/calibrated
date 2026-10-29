@@ -113,9 +113,11 @@ export function setupCalibrationCapture(
   // ---- instruction panel + return-to-calibration button -------------------
   const { sprite, setText } = makeTextPanel();
   sprite.visible = false;
+  sprite.renderOrder = 1000; // draw AFTER the splats: UI always on top
   scene.add(sprite);
   const button = makeButtonSprite();
   button.visible = false;
+  button.renderOrder = 1000;
   scene.add(button);
 
   // scan markers live INSIDE the splats group (stick moves keep them glued);
@@ -124,7 +126,10 @@ export function setupCalibrationCapture(
   const scanMarkerB = makeMarker(0x00e5ff);
   const physMarkerA = makeMarker(0xffa500);
   const physMarkerB = makeMarker(0xffa500);
-  for (const m of [scanMarkerA, scanMarkerB, physMarkerA, physMarkerB]) m.visible = false;
+  for (const m of [scanMarkerA, scanMarkerB, physMarkerA, physMarkerB]) {
+    m.visible = false;
+    m.renderOrder = 999; // markers stay visible through the splats too
+  }
   splats.add(scanMarkerA, scanMarkerB);
   scene.add(physMarkerA, physMarkerB);
 
@@ -183,7 +188,10 @@ export function setupCalibrationCapture(
     setStep('A_SCAN');
   };
 
-  // ---- persistence: saved transform is a candidate, never proof ---------
+  // ---- persistence: record only — never restored -------------------------
+  // User requirement: every session starts from the default transform and
+  // runs the calibration wizard from the beginning. The last calibration is
+  // still written to localStorage as a debugging/reporting record.
   const saveScanRoot = () => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -194,29 +202,6 @@ export function setupCalibrationCapture(
         savedAt: Date.now(),
       }));
     } catch { /* storage unavailable — session-only calibration */ }
-  };
-
-  /** Restore transform AND the landmark pairs (needed for auto-recal). */
-  const restoreScanRoot = (): boolean => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
-      const saved = JSON.parse(raw) as {
-        quaternion: Quat; position: Vec3; scanA?: Vec3; scanB?: Vec3;
-      };
-      splats.quaternion.set(...saved.quaternion);
-      splats.position.set(...saved.position);
-      splats.updateMatrixWorld(true);
-      if (saved.scanA && saved.scanB) {
-        scanLocalA.fromArray(saved.scanA);
-        scanLocalB.fromArray(saved.scanB);
-        haveA = haveB = true;
-        scanMarkerA.position.copy(scanLocalA);
-        scanMarkerB.position.copy(scanLocalB);
-        scanMarkerA.visible = scanMarkerB.visible = true;
-      }
-      return true;
-    } catch { return false; }
   };
 
   // ---- solving -----------------------------------------------------------
@@ -448,18 +433,9 @@ export function setupCalibrationCapture(
       const session = renderer.xr.getSession() as XRSession | null;
       vrMode = session?.environmentBlendMode === 'opaque';
     } catch { vrMode = false; }
-    if (restoreScanRoot()) {
-      if (haveA && haveB) {
-        // transform AND landmark pairs restored: go straight to armed —
-        // the watchdog verifies/corrects from the remotes within seconds.
-        setStep('ARMED', 'restored — checking remotes…');
-      } else {
-        // transform only (older save): user verifies visually, or uses the button.
-        setStep('A_SCAN', 'saved calibration restored — verify, or use the button');
-      }
-    } else {
-      resetWizard();
-    }
+    // User requirement: every VR session starts the calibration wizard from
+    // the beginning — nothing is restored from a previous session.
+    resetWizard();
     try {
       refSpace = renderer.xr.getReferenceSpace() as XRReferenceSpace | null;
       refSpace?.addEventListener('reset', onRefSpaceReset);
