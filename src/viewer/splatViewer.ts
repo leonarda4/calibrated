@@ -65,7 +65,7 @@ export function createViewerRig(): ViewerRig {
   const camera = new THREE.PerspectiveCamera(
     75, window.innerWidth / window.innerHeight, 0.1, 500,
   );
-  camera.position.set(0, 0, 8);
+  camera.position.set(0, 1.6, 10); // desktop inspection: eye height, some distance back
 
   const splats = new GaussianSplats3D.DropInViewer({
     gpuAcceleratedSort: false,       // CPU sort — more compatible across browsers
@@ -86,21 +86,56 @@ export function createViewerRig(): ViewerRig {
 }
 
 /**
- * Load the hallway scan ONCE, with the scan-root transform applied.
- * Change the world by editing SCAN_ROOT_ROTATION / SCAN_ROOT_POSITION /
- * START_POINT above — never by moving the XR rig.
+ * Load the hallway scan ONCE with an identity transform, then apply the
+ * scan-root transform to the viewer group (the scan root). Keeping the
+ * transform on the group (instead of baking it into the load) lets the
+ * start point be repositioned live without reloading the 17 MB scan.
  */
 export async function loadScene(splats: GaussianSplats3D.DropInViewer): Promise<void> {
-  // Shift the map so that START_POINT lands on the XR origin (your spawn).
-  const position = [
-    SCAN_ROOT_POSITION[0] - START_POINT[0],
-    SCAN_ROOT_POSITION[1] - START_POINT[1],
-    SCAN_ROOT_POSITION[2] - START_POINT[2],
-  ] as [number, number, number];
   await splats.addSplatScenes([{
     path: MODEL_URL,
-    rotation: SCAN_ROOT_ROTATION,
-    position,
+    rotation: [0, 0, 0, 1],
+    position: [0, 0, 0],
     scale: [1, 1, 1] as [number, number, number],
   }]);
+  splats.quaternion.set(...SCAN_ROOT_ROTATION);
+  applyStartPoint(splats, START_POINT);
+}
+
+/**
+ * Shift the map so that the given point (in rotated world metres) lands on
+ * the XR origin — where the user will physically stand. The player/rig is
+ * never moved; only the scan root is.
+ */
+export function applyStartPoint(
+  splats: GaussianSplats3D.DropInViewer,
+  startPoint: [number, number, number],
+): void {
+  splats.position.set(
+    SCAN_ROOT_POSITION[0] - startPoint[0],
+    SCAN_ROOT_POSITION[1] - startPoint[1],
+    SCAN_ROOT_POSITION[2] - startPoint[2],
+  );
+}
+
+/**
+ * Cyan marker at the XR origin: a ring on the floor + a vertical line.
+ * Shows in the flat preview exactly where you will stand in VR. Hidden
+ * during immersive sessions.
+ */
+export function createSpawnMarker(): THREE.Group {
+  const group = new THREE.Group();
+  const material = new THREE.LineBasicMaterial({ color: 0x00e5ff });
+  const vertical = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 2, 0),
+  ]);
+  group.add(new THREE.Line(vertical, material));
+  const ringPoints: THREE.Vector3[] = [];
+  for (let i = 0; i <= 32; i++) {
+    const a = (i / 32) * Math.PI * 2;
+    ringPoints.push(new THREE.Vector3(Math.cos(a) * 0.5, 0, Math.sin(a) * 0.5));
+  }
+  group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPoints), material));
+  return group;
 }

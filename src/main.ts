@@ -1,41 +1,60 @@
-// Entry point: wire the viewer rig, the XR gate, the HUD and desktop
-// inspection controls. Keep this thin — logic lives in src/viewer, src/xr,
-// and src/ui.
+// Entry point: wire the viewer rig, the XR gate, the spawn picker and the
+// desktop inspection controls. Keep this thin — logic lives in src/viewer,
+// src/xr and src/ui.
 
-import { createViewerRig, loadScene } from './viewer/splatViewer';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import {
+  createViewerRig, loadScene, applyStartPoint, createSpawnMarker,
+} from './viewer/splatViewer';
 import { attachEnterVr } from './xr/session';
 import { makeHud } from './ui/hud';
+import { bindSpawnPanel } from './ui/spawnPanel';
 
 const hud = makeHud();
 
 const { renderer, scene, camera, splats } = createViewerRig();
 attachEnterVr(renderer);
 
+// Desktop inspection: orbit around the spawn point with the mouse
+// (left-drag rotate, wheel zoom, right-drag pan). Disabled while in XR.
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 1.2, 0);
+controls.enableDamping = true;
+controls.update();
+
+// Cyan marker at the XR origin = where you will physically stand in VR.
+const spawnMarker = createSpawnMarker();
+scene.add(spawnMarker);
+
 hud.setStatus('loading hallway scan …');
 loadScene(splats)
   .then(() => { hud.setStatus('loaded ✓ (hallway.ply)'); })
   .catch((err: unknown) => { hud.setStatus(`load error: ${String(err)}`); });
 
+// Operator panel: shift the map around the player, live, before entering VR.
+bindSpawnPanel((point) => applyStartPoint(splats, point));
+
 // Render loop — works on desktop and inside XR (three switches cameras).
-// DropInViewer updates its shader uniforms (focal/viewport) via a hidden
-// callback mesh's onBeforeRender; that can lag or miss frames, leaving the
-// splats degenerate (black screen). Call viewer.update explicitly with the
-// active camera each frame so the projection uniforms are always current.
+// Explicit splats.viewer.update() keeps the projection uniforms current
+// (the library's callback-mesh path missed frames → black screen).
 let lastHead: [number, number, number] | null = null;
 renderer.setAnimationLoop(() => {
-  const activeCamera = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
+  const presenting = renderer.xr.isPresenting;
+  const activeCamera = presenting ? renderer.xr.getCamera() : camera;
+  controls.enabled = !presenting;
   splats.viewer.update(renderer, activeCamera);
+  controls.update();
   renderer.render(scene, camera);
-  hud.tickFrame(renderer.xr.isPresenting);
-  if (renderer.xr.isPresenting) {
-    // remember where the user's head is, so they can pick a start point
+  hud.tickFrame(presenting);
+  spawnMarker.visible = !presenting;
+  if (presenting) {
     const p = activeCamera.position;
-    lastHead = [p.x, p.y, p.z];
+    lastHead = [p.x, p.y, p.z]; // still recorded: useful when there IS room to walk
   }
 });
 
 // After leaving VR: print the last head position so it can be copied into
-// START_POINT in src/viewer/splatViewer.ts.
+// START_POINT in src/viewer/splatViewer.ts (persist across sessions).
 renderer.xr.addEventListener('sessionend', () => {
   if (lastHead) {
     hud.appendStatus(
@@ -49,15 +68,5 @@ renderer.xr.addEventListener('sessionend', () => {
 
 // Debug hook for automated visual checks (readPixels etc.)
 Object.assign(window as unknown as Record<string, unknown>, {
-  __debug: { renderer, scene, camera, splats },
-});
-
-// Desktop inspection controls (never active in calibrated VR mode).
-window.addEventListener('keydown', (e) => {
-  const s = 0.3;
-  if (e.key === 'w' || e.key === 'ArrowUp') camera.position.z -= s;
-  if (e.key === 's' || e.key === 'ArrowDown') camera.position.z += s;
-  if (e.key === 'a' || e.key === 'ArrowLeft') camera.position.x -= s;
-  if (e.key === 'd' || e.key === 'ArrowRight') camera.position.x += s;
-  camera.lookAt(0, 0, 0);
+  __debug: { renderer, scene, camera, splats, controls, spawnMarker },
 });
