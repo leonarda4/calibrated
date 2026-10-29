@@ -15,21 +15,29 @@ Environment record for the calibrated hallway experience. Last verified 2026-10-
 
 Recent Horizon OS versions have **no user-facing "off" switch** — leaving the
 boundary area pauses the app and switches to system passthrough by design.
-Options, in order of preference:
+Meta's developer-account routes (Developer Mode, MQDH, ADB) all require an
+account the user cannot create, so the workarounds are:
 
-1. **Developer Mode + Meta Quest Developer Hub (MQDH):** enable Developer Mode
-   in the phone app (needs a free developer organization), install MQDH on the
-   PC, connect the headset via USB, then Device Manager → Device Actions →
-   toggle **Boundary off** (`Ctrl+Shift+G`). Toggle back on after testing.
-2. **On-headset developer settings:** Settings → System → Developer →
-   enable Custom Settings → disable Physical Space Features / Boundary.
-   Behaviour varies by firmware version.
-3. **No developer mode:** Quick controls → Boundary → Switch to Roomscale and
-   trace the entire hallway to maximize the area before the passthrough switch.
+1. **Use AR passthrough (primary path).** Meta designed mixed reality so the
+   boundary is suppressed while passthrough is rendered — in an
+   `immersive-ar` session the "left the boundary → app paused" takeover does
+   not occur the way it does in VR. The in-headset panel now prints the
+   session's `environmentBlendMode` so this is verifiable:
+   `alpha-blend (passthrough ✓)` vs `opaque (VR — no passthrough!)`.
+2. **Draw the roomscale boundary beyond the hallway walls.** Trace the
+   boundary slightly outside the physical walls of the hallway — since the
+   walls stop you anyway, you never cross the boundary inside the corridor.
+   Mind doorways and stairs.
+3. **Enlarge the stationary boundary** (Quick controls → Boundary → adjust
+   stationary size) and re-create it where you stand before entering VR.
 
-Safety: with the boundary disabled, nothing prevents walking into real walls
-while immersed. Only run boundary-off sessions in a controlled, supervised
-environment (per the plan's supervised-trial requirement).
+Notes:
+- The old "Settings → Device → Tracking off" trick disables the guardian but
+  also switches the headset to 3DoF (world locked to your head) — unusable
+  for calibration, which needs full 6DoF head tracking.
+- Safety: a boundary that extends beyond the walls means the system will not
+  warn you near real obstacles. Only do this in a controlled, supervised
+  hallway (per the plan's supervised-trial requirement).
 
 ## Why the world "shifts" after a boundary event
 

@@ -116,19 +116,24 @@ export function setupCalibrationCapture(
 
   const setStep = (next: Step, extra = '') => {
     step = next;
-    if (next === 'RESTORED') {
-      setText(
-        'SAVED CALIBRATION RESTORED\n' +
-        'Stand where you calibrated, then verify\nthe landmarks. Squeeze = recalibrate',
-      );
-    } else if (next === 'INVALID') {
-      setText(
-        'TRACKING RE-CENTERED\nAlignment is invalid.\n' +
-        'Return to your start spot & squeeze\nto recalibrate',
-      );
-    } else {
-      setText(instructions[next] + (extra ? `\n${extra}` : ''));
-    }
+    // definitive mode evidence: 'alpha-blend'/'additive' = passthrough AR,
+    // 'opaque' = plain VR (no camera feed)
+    let modeLine = 'mode: unknown';
+    try {
+      const session = renderer.xr.getSession() as XRSession | null;
+      const blend = session?.environmentBlendMode;
+      if (blend) {
+        modeLine = blend === 'opaque'
+          ? 'mode: opaque (VR — no passthrough!)'
+          : `mode: ${blend} (passthrough ✓)`;
+      }
+    } catch { /* session not queryable here */ }
+    const body = next === 'RESTORED'
+      ? 'SAVED CALIBRATION RESTORED\nStand where you calibrated, then verify\nthe landmarks. Squeeze = recalibrate'
+      : next === 'INVALID'
+        ? 'TRACKING RE-CENTERED\nAlignment is invalid.\nReturn to your start spot & squeeze\nto recalibrate'
+        : instructions[next as Exclude<Step, 'RESTORED' | 'INVALID'>] + (extra ? `\n${extra}` : '');
+    setText(`${body}\n${modeLine}`);
   };
 
   const resetWizard = () => {
