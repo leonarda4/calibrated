@@ -40,10 +40,11 @@ export function attachEnterVr(renderer: THREE.WebGLRenderer): void {
 
   btn.addEventListener('click', async () => {
     try {
-      const xrSession: XRSession = await (window as unknown as { xr: XRSystem })
-        .xr.requestSession('immersive-vr', {
-          optionalFeatures: ['local-floor', 'hand-tracking'],
-        });
+      const xr = (navigator as Navigator & { xr?: XRSystem }).xr;
+      if (!xr) throw new Error('WebXR not available on this device');
+      const xrSession: XRSession = await xr.requestSession('immersive-vr', {
+        optionalFeatures: ['local-floor', 'hand-tracking'],
+      });
       await renderer.xr.setSession(xrSession);
       btn.style.display = 'none';
       appEl.style.display = 'none';

@@ -40,6 +40,7 @@ declare module '@mkkellogg/gaussian-splats-3d' {
     constructor(options?: ViewerOptions);
     addSplatScene(path: string, options?: Partial<SplatSceneOptions>): Promise<void>;
     addSplatScenes(scenes: SplatSceneOptions[]): Promise<void>;
+    update(renderer: THREE.WebGLRenderer, camera: THREE.Camera): void;
     start(): void;
     stop(): void;
     dispose(): Promise<void>;
