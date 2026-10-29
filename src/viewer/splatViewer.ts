@@ -5,7 +5,31 @@ import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
 
 export const MODEL_URL = '/models/hallway.ply'; // gitignored scan binary in public/models/
-export const STACK_SPACING = 6;                // vertical distance between stack copies [m]
+
+// ---------------------------------------------------------------------------
+// Scan-root transform — the ONLY thing allowed to move the world.
+// Per docs/PROJECT_PLAN.md the tracked XR rig (camera/controllers) stays at
+// identity; alignment is applied to the scan root instead.
+//
+// The scan's own axes (from the .ply header): long axis = Y (≈58 m, that's
+// why the hallway stood vertical in VR), thin axis = Z (≈4.7 m ≈ corridor
+// height), spread axis = X (≈30 m). We rotate -90° about X so that:
+//   scan Y (length)  -> world -Z (running away from you, horizontal)
+//   scan Z (height)  -> world +Y (up)
+//   scan X (width)    -> world +X
+//
+// Rotation is a quaternion [x, y, z, w]; -90° about X = [-√½, 0, 0, √½].
+// Position is an offset in metres applied AFTER the rotation.
+// Header bounds: x −26.6…3.0, y −45.9…12.8, z −2.03…2.69
+// ---------------------------------------------------------------------------
+export const SCAN_ROOT_ROTATION: [number, number, number, number] = [
+  -0.70710678, 0, 0, 0.70710678, // -90° about X
+];
+export const SCAN_ROOT_POSITION: [number, number, number] = [
+  11.8,   // -center of scan X  (−(−26.6+3.0)/2): hallway centered left/right
+  -0.33,  // -center of scan Z (−(−2.03+2.69)/2): you stand mid-corridor height
+  -16.55, // -center of scan Y after rotation (−((−45.9+12.8)/2)): hallway centered front/back
+];
 
 export interface ViewerRig {
   renderer: THREE.WebGLRenderer;
@@ -51,17 +75,15 @@ export function createViewerRig(): ViewerRig {
 }
 
 /**
- * Load the hallway scan STACK_LEN times, stacked vertically — current test
- * configuration for the 3×-duplicate stack request. Each copy gets its own
- * position offset; the transform contract is the scan root only.
+ * Load the hallway scan ONCE, with the scan-root transform applied.
+ * Change the world by editing SCAN_ROOT_ROTATION / SCAN_ROOT_POSITION above
+ * — never by moving the XR rig.
  */
-export async function loadStack(splats: GaussianSplats3D.DropInViewer, copies = 3): Promise<void> {
-  const levels = Array.from({ length: copies }, (_, i) => (i - (copies - 1) / 2) * STACK_SPACING);
-  const sceneSpecs = levels.map((y) => ({
+export async function loadScene(splats: GaussianSplats3D.DropInViewer): Promise<void> {
+  await splats.addSplatScenes([{
     path: MODEL_URL,
-    position: [0, y, 0] as [number, number, number],
-    rotation: [0, 0, 0, 1] as [number, number, number, number],
+    rotation: SCAN_ROOT_ROTATION,
+    position: SCAN_ROOT_POSITION,
     scale: [1, 1, 1] as [number, number, number],
-  }));
-  await splats.addSplatScenes(sceneSpecs);
+  }]);
 }

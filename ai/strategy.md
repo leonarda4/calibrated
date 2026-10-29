@@ -49,6 +49,6 @@ The detailed deliverables and gates live in `docs/PROJECT_PLAN.md`; implementati
 
 ## Next
 
-1. Run the M0 hardware protocol: Windows Chrome → wireless Link → Quest 3 with the combined viewer; record stereo, head/controller poses, three enter/exit cycles, and streaming timing.
-2. If M0 passes, finish the M1 gate: both-eye check of the stacked scan on hardware, then move to M2 (metric normalization of `hallway.ply`, landmark dataset).
-3. Keep committing each working state to `leonarda4/calibrated` via GitHub Desktop; keep scan binaries and captures out of Git.
+1. ~~M0 hardware run~~ — **2026-10-29, user-reported from the real headset (Meta glasses, Quest Browser, HTTPS LAN): the scan loads 3× and the user entered the immersive WebXR session in stereo.** Observed defect: the hallway stood vertical (scan's long axis is its local Y) — fixed by the new scan-root transform. Operator/assistant-run enter/exit cycling and streaming-timing numbers are still to be recorded for the full M0 protocol; the Quest-Browser variant is demonstrated, the PC→Link variant is not yet tested.
+2. M2 next: with the single-scan root transform in place, define the metric normalization properly (verify the 4.7 m thin axis really is height; align floor; then landmark dataset).
+3. Git: user pushes manually via GitHub Desktop; agent only commits locally.

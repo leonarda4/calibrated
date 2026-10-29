@@ -2,7 +2,7 @@
 // inspection controls. Keep this thin — logic lives in src/viewer, src/xr,
 // and src/ui.
 
-import { createViewerRig, loadStack } from './viewer/splatViewer';
+import { createViewerRig, loadScene } from './viewer/splatViewer';
 import { attachEnterVr } from './xr/session';
 import { makeHud } from './ui/hud';
 
@@ -11,9 +11,9 @@ const hud = makeHud();
 const { renderer, scene, camera, splats } = createViewerRig();
 attachEnterVr(renderer);
 
-hud.setStatus('loading splat scene × 3 …');
-loadStack(splats)
-  .then(() => { hud.setStatus('loaded ✓ (3 × hallway.ply)'); })
+hud.setStatus('loading hallway scan …');
+loadScene(splats)
+  .then(() => { hud.setStatus('loaded ✓ (hallway.ply)'); })
   .catch((err: unknown) => { hud.setStatus(`load error: ${String(err)}`); });
 
 // Render loop — works on desktop and inside XR (three switches cameras).
