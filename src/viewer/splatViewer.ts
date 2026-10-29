@@ -31,6 +31,17 @@ export const SCAN_ROOT_POSITION: [number, number, number] = [
   -16.55, // -center of scan Y after rotation (−((−45.9+12.8)/2)): hallway centered front/back
 ];
 
+// ---------------------------------------------------------------------------
+// Start point: the point of the map (in the ROTATED world frame) that ends up
+// at the XR origin — i.e. exactly where you physically stand when you enter VR.
+// The map is shifted so this point lands on you; the player is never moved.
+// All three values are metres. Leave [0,0,0] to keep the current centered view.
+//
+// How to find the numbers: enter VR, walk to where you want to spawn, exit —
+// the page then prints your last head position. Copy it into START_POINT.
+// ---------------------------------------------------------------------------
+export const START_POINT: [number, number, number] = [0, 0, 0];
+
 export interface ViewerRig {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
@@ -76,14 +87,20 @@ export function createViewerRig(): ViewerRig {
 
 /**
  * Load the hallway scan ONCE, with the scan-root transform applied.
- * Change the world by editing SCAN_ROOT_ROTATION / SCAN_ROOT_POSITION above
- * — never by moving the XR rig.
+ * Change the world by editing SCAN_ROOT_ROTATION / SCAN_ROOT_POSITION /
+ * START_POINT above — never by moving the XR rig.
  */
 export async function loadScene(splats: GaussianSplats3D.DropInViewer): Promise<void> {
+  // Shift the map so that START_POINT lands on the XR origin (your spawn).
+  const position = [
+    SCAN_ROOT_POSITION[0] - START_POINT[0],
+    SCAN_ROOT_POSITION[1] - START_POINT[1],
+    SCAN_ROOT_POSITION[2] - START_POINT[2],
+  ] as [number, number, number];
   await splats.addSplatScenes([{
     path: MODEL_URL,
     rotation: SCAN_ROOT_ROTATION,
-    position: SCAN_ROOT_POSITION,
+    position,
     scale: [1, 1, 1] as [number, number, number],
   }]);
 }

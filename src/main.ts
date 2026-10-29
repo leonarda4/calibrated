@@ -21,11 +21,30 @@ loadScene(splats)
 // callback mesh's onBeforeRender; that can lag or miss frames, leaving the
 // splats degenerate (black screen). Call viewer.update explicitly with the
 // active camera each frame so the projection uniforms are always current.
+let lastHead: [number, number, number] | null = null;
 renderer.setAnimationLoop(() => {
   const activeCamera = renderer.xr.isPresenting ? renderer.xr.getCamera() : camera;
   splats.viewer.update(renderer, activeCamera);
   renderer.render(scene, camera);
   hud.tickFrame(renderer.xr.isPresenting);
+  if (renderer.xr.isPresenting) {
+    // remember where the user's head is, so they can pick a start point
+    const p = activeCamera.position;
+    lastHead = [p.x, p.y, p.z];
+  }
+});
+
+// After leaving VR: print the last head position so it can be copied into
+// START_POINT in src/viewer/splatViewer.ts.
+renderer.xr.addEventListener('sessionend', () => {
+  if (lastHead) {
+    hud.appendStatus(
+      `last head position in VR: [${lastHead.map((n) => n.toFixed(2)).join(', ')}]` +
+      ' — copy into START_POINT to spawn here',
+    );
+    lastHead = null;
+  }
+  hud.showOverlay();
 });
 
 // Debug hook for automated visual checks (readPixels etc.)

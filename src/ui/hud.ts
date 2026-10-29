@@ -19,6 +19,9 @@ export function makeHud() {
       appEl.style.display = 'none'
       hudEl.textContent = ''
     },
+    showOverlay() {
+      appEl.style.display = ''
+    },
     /** call once per rendered frame */
     tickFrame(isPresenting: boolean) {
       if (isPresenting) {
