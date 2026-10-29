@@ -11,5 +11,5 @@
 
 import type { Vec3 } from './yawTranslationSolver';
 
-export const SCAN_POINT_A: Vec3 = [-18.3, -14.5, -1.3];
-export const SCAN_POINT_B: Vec3 = [-17.8, -12.0, -1.3];
+export const SCAN_POINT_A: Vec3 = [-19.45, -17.23, -1.32];
+export const SCAN_POINT_B: Vec3 = [-19.43, -16.34, -1.34];
