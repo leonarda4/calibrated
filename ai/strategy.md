@@ -71,6 +71,11 @@ The detailed deliverables and gates live in `docs/PROJECT_PLAN.md`; implementati
 - Both controllers are wired (rays, trigger capture from either, squeeze restarts). Opacity is runtime-switchable (`setScanOpacity`) and the session's `environmentBlendMode` is printed on the panel.
 - Checks: `npm run check` clean, solver tests 5/5, page loads with zero console errors. **Hardware run of the new protocol still pending — not claimed.**
 
+2026-10-29 — Final wizard protocol per user specification (remotes ARE the landmarks):
+- **1/4** pick scan point A in the PLY (left remote represents its real spot), **2/4** pick scan point B (right remote), sticks move the scan during picking (L = world Z, R = world X/Y), **3/4** 10-second countdown to place the LEFT remote on real spot A and the RIGHT remote on spot B (scan faded out — camera view), **4/4** remotes' tracked grip positions are read as the measured points, yaw+translation solved and applied, remotes armed as auto-recalibration anchors (reset event → re-solve from current remote positions, refused above 1 m RMS).
+- The wall-probing trigger steps are gone: no probe-tip-on-wall capture remains, `PROBE_TIP_OFFSET` now describes grip-origin → placed-point on the remote. Per-remote placement is not re-validated at capture time beyond the fit residuals (the fit IS the placement check).
+- Checks: `npm run check` clean, solver tests 5/5, zero console errors on load. **Hardware validation of this exact protocol pending.**
+
 ## Next
 
 1. ~~M0 hardware run~~ — **2026-10-29, user-reported from the real headset (Meta glasses, Quest Browser, HTTPS LAN): the scan loads 3× and the user entered the immersive WebXR session in stereo.** Observed defect: the hallway stood vertical (scan's long axis is its local Y) — fixed by the new scan-root transform. Operator/assistant-run enter/exit cycling and streaming-timing numbers are still to be recorded for the full M0 protocol; the Quest-Browser variant is demonstrated, the PC→Link variant is not yet tested.

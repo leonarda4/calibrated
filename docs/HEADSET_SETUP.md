@@ -57,26 +57,24 @@ alignment, or squeeze the grip button to recalibrate.
 
 ## Calibration quick reference (in-headset panel guides you)
 
-Wizard order (real spot first, then the scan point):
+The two remotes ARE the physical landmarks (user-specified protocol):
 
 | Step | View | Action |
 | --- | --- | --- |
-| 1/4 | camera / room (scan faded) | hold a controller tip on real spot A, trigger |
-| 2/4 | scan at 70% | aim the ray at scan spot A, trigger. Sticks move the scan: LEFT = forward/back, RIGHT = left/right + up/down |
-| 3/4 | camera / room | controller tip on real spot B, trigger |
-| 4/4 | scan at 70% | aim at scan spot B, trigger → transform solves & applies |
+| 1/4 | scan at 70% | aim the ray at **scan point A**, trigger. The LEFT remote will later mark its real-world spot. Sticks move the scan: LEFT = forward/back, RIGHT = left/right + up/down |
+| 2/4 | scan at 70% | aim at **scan point B** (right remote represents it), trigger |
+| 3/4 | camera / room (scan faded) | **10-second countdown:** put the LEFT remote on real spot A and the RIGHT remote on real spot B |
+| 4/4 | done | the remotes' tracked positions are read as the measured points; yaw+translation solves and applies automatically |
 
-After the fit: **10-second countdown** — place the LEFT remote on real spot A
-and the RIGHT remote on spot B, leave them there. The remotes are now the
-physical reference anchors:
+After 4/4 the remotes stay as **reference anchors**: a tracking reset
+(guardian/passthrough takeover) re-solves the alignment from wherever the
+remotes currently are ("AUTO-RECALIBRATED"). If the remotes get moved
+(residual > 1 m) the app refuses to auto-apply and asks for manual
+recalibration. Fit errors are shown in-headset and printed on the flat page.
 
-- if the tracking origin is ever redefined (guardian/passthrough takeover),
-  the app re-solves the alignment from the remotes' current tracked
-  positions automatically ("AUTO-RECALIBRATED") — the scan cannot drift to a
-  random spot while the remotes sit on their landmarks,
-- the placement quality is reported (per-remote offset in cm),
-- pick landmarks well separated and re-place remotes if they get moved.
+Grip button (squeeze) = restart calibration manually.
 
-Grip button (squeeze) = restart calibration manually. Results are also
-printed on the flat page (yaw, translation, fit errors) — record them in the
-session notes.
+Tips: pick scan points that are easy to reach with a physical remote
+(floor/waist-height corners beat ceiling points), keep A and B well
+separated, and leave the remotes undisturbed for as long as the
+auto-recalibration should work.
