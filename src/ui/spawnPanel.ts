@@ -4,7 +4,15 @@
 
 const ids = ['spawn-x', 'spawn-y', 'spawn-z'] as const;
 
-export function bindSpawnPanel(apply: (point: [number, number, number]) => void): void {
+export function bindSpawnPanel(
+  apply: (point: [number, number, number]) => void,
+  initial: [number, number, number] = [0, 0, 0],
+): void {
+  // prefill the inputs from the committed START_POINT (single source of truth)
+  for (const [i, id] of ids.entries()) {
+    const el = document.getElementById(id) as HTMLInputElement | null;
+    if (el) el.value = String(initial[i]);
+  }
   const read = (id: string): number => {
     const el = document.getElementById(id) as HTMLInputElement | null;
     const v = el ? parseFloat(el.value) : NaN;

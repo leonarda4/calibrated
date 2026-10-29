@@ -40,7 +40,7 @@ export const SCAN_ROOT_POSITION: [number, number, number] = [
 // How to find the numbers: enter VR, walk to where you want to spawn, exit —
 // the page then prints your last head position. Copy it into START_POINT.
 // ---------------------------------------------------------------------------
-export const START_POINT: [number, number, number] = [0, 0, 0];
+export const START_POINT: [number, number, number] = [-6.5, -1.6, -3];
 
 export interface ViewerRig {
   renderer: THREE.WebGLRenderer;

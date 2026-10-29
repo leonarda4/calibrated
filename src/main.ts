@@ -10,6 +10,7 @@ import { attachEnterVr } from './xr/session';
 import { setupCalibrationCapture } from './xr/calibrationCapture';
 import { makeHud } from './ui/hud';
 import { bindSpawnPanel } from './ui/spawnPanel';
+import { START_POINT } from './viewer/splatViewer';
 
 const hud = makeHud();
 
@@ -33,7 +34,8 @@ loadScene(splats)
   .catch((err: unknown) => { hud.setStatus(`load error: ${String(err)}`); });
 
 // Operator panel: shift the map around the player, live, before entering VR.
-bindSpawnPanel((point) => applyStartPoint(splats, point));
+// Prefilled with the committed START_POINT so the UI mirrors the constant.
+bindSpawnPanel((point) => applyStartPoint(splats, point), START_POINT);
 
 // Controller-based landmark calibration (in VR). On success, report the
 // solution on the flat page and retire the manual spawn panel.
