@@ -1,25 +1,29 @@
-// src/xr: guided landmark calibration using the controller as a probe.
-// Flow (two fit pairs, A and B):
-//   A_SCAN  — aim at a landmark on the hallway scan, pull trigger
-//   A_PHYS  — touch the SAME real-world spot with the controller, pull trigger
-//   B_SCAN / B_PHYS — repeat with a second, well-separated landmark
-//   DONE    — yaw+translation solved and applied to the scan root
+// src/xr: guided landmark calibration using the controllers as probes and,
+// after calibration, as fixed physical reference anchors.
 //
-// Rules honoured here (docs/PROJECT_PLAN.md + AGENTS.md invariants):
-// - The XR rig (camera/controllers) is NEVER moved. The thumbstick dollies
-//   the SCAN ROOT instead ("you" never move artificially; the map does).
-// - Scan points are stored in the scan root's LOCAL frame, so dolly moves
-//   between picks cannot corrupt the fit; they are converted to world
-//   coordinates only at solve time.
-// - Physical points are captured from the controller grip (+ measured
-//   PROBE_TIP_OFFSET), in true XR space.
-// - A solved calibration is persisted locally and re-applied on the next
-//   session as a CANDIDATE — never silently as verified alignment. A
-//   reference-space reset (guardian recenter) invalidates it explicitly.
+// Wizard (user-specified order — real spot first, then scan):
+//   1/4  A_PHYS — hold a controller tip on REAL spot A, trigger
+//                  (camera/passthrough visible, scan faded out)
+//   2/4  A_SCAN — aim the ray at SCAN spot A, trigger
+//                  (scan visible at 70%, sticks move the scan:
+//                   LEFT stick = forward/back, RIGHT stick = left/right + up/down)
+//   3/4  B_PHYS — same for REAL spot B
+//   4/4  B_SCAN — same for SCAN spot B → solve + apply immediately
+//
+// After the fit: 10-second countdown — user places the LEFT remote on real
+// spot A and the RIGHT remote on spot B. From then on the remotes are the
+// physical reference: if the tracking origin is ever redefined (guardian /
+// passthrough takeover), the transform is re-solved automatically from the
+// remotes' current tracked positions. The scan never drifts to a random spot.
+//
+// Invariants (docs/PROJECT_PLAN.md): the XR rig is never moved — the scan
+// root is the only transformed object. Scan picks are stored in the root's
+// LOCAL frame so stick moves between picks cannot corrupt the fit.
 
 import * as THREE from 'three';
 import type * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import { raycastSplatCenters } from '../viewer/splatRaycast';
+import { setScanOpacity, SCAN_OPACITY } from '../viewer/splatViewer';
 import {
   solveYawTranslation, composeCalibration,
   type YawTranslationSolution, type Vec3, type Quat,
@@ -33,9 +37,17 @@ import {
 export const PROBE_TIP_OFFSET: Vec3 = [0, 0, 0];
 
 const STORAGE_KEY = 'calibrated.scanRoot.v1';
-const DOLLY_SPEED = 2.5; // m/s while aiming at the scan with the thumbstick
+const REF_PLACEMENT_SECONDS = 10;   // countdown to place the remotes
+const DOLLY_Z_SPEED = 3.0;         // m/s, left stick forward/back
+const DOLLY_X_SPEED = 2.0;         // m/s, right stick left/right
+const DOLLY_Y_SPEED = 1.5;         // m/s, right stick up/down
+const STICK_DEADZONE = 0.15;
+const REF_MATCH_GOOD = 0.15;       // m — remotes sit on their spots
+const REF_MATCH_WARN = 0.50;       // m — suspicious but accepted with warning
 
-type Step = 'RESTORED' | 'A_SCAN' | 'A_PHYS' | 'B_SCAN' | 'B_PHYS' | 'DONE' | 'INVALID';
+type Step =
+  | 'A_PHYS' | 'A_SCAN' | 'B_PHYS' | 'B_SCAN'
+  | 'PLACE_REFS' | 'ARMED' | 'INVALID';
 
 interface Pair {
   scanLocal: THREE.Vector3 | null;  // landmark in the scan root's local frame
@@ -52,6 +64,12 @@ interface SplatMeshWithCenters {
   splatDataTextures?: { baseData?: { centers?: Float32Array } };
 }
 
+interface ControllerEntry {
+  ctrl: THREE.Group;  // target-ray space
+  grip: THREE.Group;  // grip space
+  source: XRInputSource | null;
+}
+
 export interface CalibrationCapture {
   /** Call once per frame with the active camera and the frame delta time. */
   update(activeCamera: THREE.Camera, deltaSeconds: number): void;
@@ -63,87 +81,101 @@ export function setupCalibrationCapture(
   splats: GaussianSplats3D.DropInViewer,
   onCalibrated?: (solution: YawTranslationSolution) => void,
 ): CalibrationCapture {
-  const controller = renderer.xr.getController(0); // target-ray space
-  const grip = renderer.xr.getControllerGrip(0);
-  scene.add(controller, grip);
+  // ---- both controllers --------------------------------------------------
+  const controllers: ControllerEntry[] = [];
+  for (let i = 0; i < 2; i++) {
+    const ctrl = renderer.xr.getController(i);
+    const grip = renderer.xr.getControllerGrip(i);
+    const entry: ControllerEntry = { ctrl, grip, source: null };
+    ctrl.add(new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -6),
+      ]),
+      new THREE.LineBasicMaterial({ color: 0x00e5ff }),
+    ));
+    ctrl.visible = grip.visible = false;
+    ctrl.addEventListener('connected', (e) => {
+      entry.source = (e as unknown as { data: XRInputSource }).data;
+      ctrl.visible = grip.visible = true;
+    });
+    ctrl.addEventListener('disconnected', () => {
+      entry.source = null;
+      ctrl.visible = grip.visible = false;
+    });
+    ctrl.addEventListener('selectstart', () => onSelect(entry));
+    ctrl.addEventListener('squeezestart', onSqueeze);
+    scene.add(ctrl, grip);
+    controllers.push(entry);
+  }
+  const byHand = (hand: string): ControllerEntry | undefined =>
+    controllers.find((c) => c.source?.handedness === hand)
+    ?? controllers[hand === 'left' ? 0 : 1];
 
-  // controller ray (visual)
-  const rayGeometry = new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -6),
-  ]);
-  const rayLine = new THREE.Line(
-    rayGeometry, new THREE.LineBasicMaterial({ color: 0x00e5ff }),
-  );
-  controller.add(rayLine);
-  controller.visible = false;
-  grip.visible = false;
-  let inputSource: XRInputSource | null = null;
-  controller.addEventListener('connected', (e) => {
-    controller.visible = true;
-    grip.visible = true;
-    inputSource = (e as unknown as { data: XRInputSource }).data;
-  });
-  controller.addEventListener('disconnected', () => {
-    controller.visible = false;
-    grip.visible = false;
-    inputSource = null;
-  });
-
-  // in-headset instruction panel (canvas sprite)
+  // ---- instruction panel -------------------------------------------------
   const { sprite, setText } = makeTextPanel();
   sprite.visible = false;
   scene.add(sprite);
 
-  // markers: scan marker lives INSIDE the splats group so dolly moves keep
-  // it glued to its landmark; the physical marker lives in true world space.
-  const scanMarker = makeMarker(0x00e5ff);   // cyan: picked scan landmark
-  const physMarker = makeMarker(0xffa500);   // orange: measured physical point
+  // markers: scan marker lives INSIDE the splats group so stick moves keep it
+  // glued to its landmark; the physical marker lives in true world space.
+  const scanMarker = makeMarker(0x00e5ff);
+  const physMarker = makeMarker(0xffa500);
   scanMarker.visible = physMarker.visible = false;
   splats.add(scanMarker);
   scene.add(physMarker);
 
   const pairA: Pair = { scanLocal: null, measured: null };
   const pairB: Pair = { scanLocal: null, measured: null };
-  let step: Step = 'A_SCAN';
+  let step: Step = 'A_PHYS';
+  let vrMode = false;            // opaque blend → no passthrough available
+  let placeTimer = 0;             // countdown for remote placement
+  let placeTextTick = 0;          // throttle for countdown redraws
 
-  const instructions: Record<Exclude<Step, 'INVALID' | 'RESTORED'>, string> = {
-    A_SCAN: 'CALIBRATE 1/4\nAim the ray at landmark A on the HALLWAY\nTrigger = pick. Left stick = fly',
-    A_PHYS: 'CALIBRATE 2/4\nTouch the real-world spot A\nwith the controller tip. Pull trigger',
-    B_SCAN: 'CALIBRATE 3/4\nAim the ray at landmark B on the HALLWAY\nTrigger = pick. Left stick = fly',
-    B_PHYS: 'CALIBRATE 4/4\nTouch the real-world spot B\nwith the controller tip. Pull trigger',
-    DONE: 'CALIBRATED — verify landmarks\nSqueeze = recalibrate',
+  const instructions: Record<Exclude<Step, 'PLACE_REFS' | 'ARMED' | 'INVALID'>, string> = {
+    A_PHYS: '1/4 REAL SPOT A\nHold a controller tip on real spot A\nTrigger to capture',
+    A_SCAN: '2/4 SCAN SPOT A\nAim ray at scan spot A, trigger\nSticks move scan: L=fwd/back R=X/Y',
+    B_PHYS: '3/4 REAL SPOT B\nHold controller tip on real spot B\nTrigger to capture',
+    B_SCAN: '4/4 SCAN SPOT B\nAim ray at scan spot B, trigger\nSticks: L=fwd/back R=X/Y',
   };
 
   const setStep = (next: Step, extra = '') => {
     step = next;
-    // definitive mode evidence: 'alpha-blend'/'additive' = passthrough AR,
-    // 'opaque' = plain VR (no camera feed)
-    let modeLine = 'mode: unknown';
+    // opacity per phase: real-world steps fade the scan so the camera feed
+    // (AR) dominates; scan steps bring it back.
+    const isPhysStep = next === 'A_PHYS' || next === 'B_PHYS';
+    setScanOpacity(splats, isPhysStep ? (vrMode ? 0.25 : 0.04) : SCAN_OPACITY);
+
+    let modeLine = '';
     try {
       const session = renderer.xr.getSession() as XRSession | null;
       const blend = session?.environmentBlendMode;
       if (blend) {
         modeLine = blend === 'opaque'
-          ? 'mode: opaque (VR — no passthrough!)'
-          : `mode: ${blend} (passthrough ✓)`;
+          ? '\nmode: opaque (VR — no passthrough!)'
+          : '\nmode: passthrough ✓';
       }
     } catch { /* session not queryable here */ }
-    const body = next === 'RESTORED'
-      ? 'SAVED CALIBRATION RESTORED\nStand where you calibrated, then verify\nthe landmarks. Squeeze = recalibrate'
-      : next === 'INVALID'
-        ? 'TRACKING RE-CENTERED\nAlignment is invalid.\nReturn to your start spot & squeeze\nto recalibrate'
-        : instructions[next as Exclude<Step, 'RESTORED' | 'INVALID'>] + (extra ? `\n${extra}` : '');
-    setText(`${body}\n${modeLine}`);
+
+    if (next === 'PLACE_REFS') {
+      setText(`CALIBRATED ✓\nPlace LEFT remote on spot A\nRIGHT remote on spot B\n${extra}${modeLine}`);
+    } else if (next === 'ARMED') {
+      setText(`REMOTES = REFERENCE ✓\nTracking resets auto-realign now\nSqueeze = recalibrate manually${extra ? `\n${extra}` : ''}${modeLine}`);
+    } else if (next === 'INVALID') {
+      setText(`REFERENCES LOST\nSqueeze to recalibrate manually${modeLine}`);
+    } else {
+      setText(instructions[next as keyof typeof instructions] + (extra ? `\n${extra}` : '') + modeLine);
+    }
   };
 
   const resetWizard = () => {
     pairA.scanLocal = pairA.measured = null;
     pairB.scanLocal = pairB.measured = null;
     scanMarker.visible = physMarker.visible = false;
-    setStep('A_SCAN');
+    placeTimer = 0;
+    setStep('A_PHYS');
   };
 
-  // ---- persistence: saved calibration is a candidate, never proof -------
+  // ---- persistence: saved transform is a candidate, never proof ---------
   const saveScanRoot = () => {
     try {
       const saved: SavedScanRoot = {
@@ -167,26 +199,76 @@ export function setupCalibrationCapture(
     } catch { return false; }
   };
 
-  // ---- session lifecycle ------------------------------------------------
+  // ---- session lifecycle -------------------------------------------------
   let refSpace: XRReferenceSpace | null = null;
+
+  const solveFrom = (scanLocalA: THREE.Vector3, scanLocalB: THREE.Vector3,
+    measuredA: THREE.Vector3, measuredB: THREE.Vector3): YawTranslationSolution => {
+    const scanWorldA = splats.localToWorld(scanLocalA.clone());
+    const scanWorldB = splats.localToWorld(scanLocalB.clone());
+    return solveYawTranslation([
+      { scan: scanWorldA.toArray() as Vec3, measured: measuredA.toArray() as Vec3 },
+      { scan: scanWorldB.toArray() as Vec3, measured: measuredB.toArray() as Vec3 },
+    ]);
+  };
+
+  const applySolution = (solution: YawTranslationSolution): void => {
+    const composed = composeCalibration(
+      {
+        quaternion: splats.quaternion.toArray() as Quat,
+        position: splats.position.toArray() as Vec3,
+      },
+      solution,
+    );
+    splats.quaternion.set(...composed.quaternion);
+    splats.position.set(...composed.position);
+    splats.updateMatrixWorld(true);
+    saveScanRoot();
+  };
+
+  /** remotes-as-anchors: re-read tracked remote positions and re-align. */
+  const autoRecalibrate = (): boolean => {
+    const left = byHand('left');
+    const right = byHand('right');
+    if (!pairA.scanLocal || !pairB.scanLocal || !left || !right) return false;
+    try {
+      const leftPos = left.grip.getWorldPosition(new THREE.Vector3());
+      const rightPos = right.grip.getWorldPosition(new THREE.Vector3());
+      const solution = solveFrom(pairA.scanLocal, pairB.scanLocal, leftPos, rightPos);
+      if (solution.rmsResidual > 1) return false; // remotes moved — nonsense
+      applySolution(solution);
+      const a = (solution.residuals[0] * 100).toFixed(0);
+      const b = (solution.residuals[1] * 100).toFixed(0);
+      setStep('ARMED', `AUTO-RECALIBRATED (A:${a}cm B:${b}cm)`);
+      return true;
+    } catch { return false; }
+  };
+
   const onRefSpaceReset = () => {
-    // A guardian/tracking recenter mid-wizard leaves captured pairs in a
-    // stale reference frame — the fit would be garbage. Restart cleanly.
-    const wizardActive = step === 'A_SCAN' || step === 'A_PHYS' || step === 'B_SCAN' || step === 'B_PHYS';
-    if (wizardActive) {
-      pairA.scanLocal = pairA.measured = null;
-      pairB.scanLocal = pairB.measured = null;
-      scanMarker.visible = physMarker.visible = false;
-      setStep('A_SCAN', 'tracking re-centered — calibration RESTARTED');
-    } else {
-      setStep('INVALID');
+    if (step === 'ARMED') {
+      if (!autoRecalibrate()) setStep('INVALID');
+      return;
     }
+    if (step === 'PLACE_REFS') {
+      placeTimer = REF_PLACEMENT_SECONDS; // tracking moved mid-placement: restart countdown
+      return;
+    }
+    // wizard in progress: pairs captured in a stale frame would corrupt the
+    // fit — restart cleanly.
+    resetWizard();
+    setStep('A_PHYS', 'tracking re-centered — RESTARTED');
   };
 
   renderer.xr.addEventListener('sessionstart', () => {
     sprite.visible = true;
+    try {
+      const session = renderer.xr.getSession() as XRSession | null;
+      vrMode = session?.environmentBlendMode === 'opaque';
+    } catch { vrMode = false; }
     if (restoreScanRoot()) {
-      setStep('RESTORED');
+      // restored transform is a candidate: user verifies visually, squeeze
+      // starts a fresh wizard if it is wrong.
+      setStep('A_PHYS', 'saved calibration restored — verify, or squeeze');
     } else {
       resetWizard();
     }
@@ -202,8 +284,8 @@ export function setupCalibrationCapture(
     refSpace = null;
   });
 
-  // ---- picking ----------------------------------------------------------
-  const pickScanPoint = (pair: Pair): boolean => {
+  // ---- picking -----------------------------------------------------------
+  const pickScanPoint = (entry: ControllerEntry, pair: Pair): boolean => {
     const sm = splats.viewer.splatMesh as unknown as SplatMeshWithCenters;
     const centers = sm.splatDataTextures?.baseData?.centers;
     if (!centers) {
@@ -212,101 +294,119 @@ export function setupCalibrationCapture(
     }
     splats.updateMatrixWorld(true);
     const inv = splats.matrixWorld.clone().invert();
-    const originWorld = controller.getWorldPosition(new THREE.Vector3());
-    const dirWorld = controller.getWorldDirection(new THREE.Vector3()).negate();
+    const originWorld = entry.ctrl.getWorldPosition(new THREE.Vector3());
+    const dirWorld = entry.ctrl.getWorldDirection(new THREE.Vector3()).negate();
     const originLocal = originWorld.clone().applyMatrix4(inv);
     const dirLocal = dirWorld.clone().transformDirection(inv);
     const hitLocal = raycastSplatCenters(centers, originLocal, dirLocal);
     if (!hitLocal) {
-      setText('no splat hit — aim closer at the hallway\nleft stick = fly');
+      setText('no splat hit — aim closer at the scan\nSticks move scan: L=fwd/back R=X/Y');
       return false;
     }
-    pair.scanLocal = hitLocal; // LOCAL frame: immune to later dolly moves
+    pair.scanLocal = hitLocal; // LOCAL frame: immune to stick moves afterwards
     scanMarker.position.copy(hitLocal);
     scanMarker.visible = true;
     return true;
   };
 
-  const pickPhysicalPoint = (pair: Pair): void => {
-    const gripPos = grip.getWorldPosition(new THREE.Vector3());
+  const pickPhysicalPoint = (entry: ControllerEntry, pair: Pair): void => {
+    const gripPos = entry.grip.getWorldPosition(new THREE.Vector3());
     const offset = new THREE.Vector3(...PROBE_TIP_OFFSET)
-      .applyQuaternion(grip.getWorldQuaternion(new THREE.Quaternion()));
+      .applyQuaternion(entry.grip.getWorldQuaternion(new THREE.Quaternion()));
     pair.measured = gripPos.add(offset); // true XR space
     physMarker.position.copy(pair.measured);
     physMarker.visible = true;
   };
 
-  const solveAndApply = () => {
-    // convert stored local scan points to world NOW (after any dolly moves)
-    const scanWorldA = splats.localToWorld(pairA.scanLocal!.clone());
-    const scanWorldB = splats.localToWorld(pairB.scanLocal!.clone());
-    const solution = solveYawTranslation([
-      { scan: scanWorldA.toArray() as Vec3, measured: pairA.measured!.toArray() as Vec3 },
-      { scan: scanWorldB.toArray() as Vec3, measured: pairB.measured!.toArray() as Vec3 },
-    ]);
-    const composed = composeCalibration(
-      {
-        quaternion: splats.quaternion.toArray() as Quat,
-        position: splats.position.toArray() as Vec3,
-      },
-      solution,
-    );
-    splats.quaternion.set(...composed.quaternion);
-    splats.position.set(...composed.position);
-    splats.updateMatrixWorld(true);
-    saveScanRoot();
-
-    const errA = (solution.residuals[0] * 100).toFixed(1);
-    const errB = (solution.residuals[1] * 100).toFixed(1);
-    setStep('DONE', `fit error A: ${errA} cm | B: ${errB} cm`);
+  const finishWizard = () => {
+    if (!pairA.scanLocal || !pairB.scanLocal) return;
+    const solution = solveFrom(pairA.scanLocal, pairB.scanLocal,
+      pairA.measured!, pairB.measured!);
+    applySolution(solution);
     onCalibrated?.(solution);
+    placeTimer = REF_PLACEMENT_SECONDS;
+    setStep('PLACE_REFS');
   };
 
-  controller.addEventListener('selectstart', () => {
+  const onSelect = (entry: ControllerEntry) => {
     if (!renderer.xr.isPresenting) return;
-    if (step === 'A_SCAN') { if (pickScanPoint(pairA)) setStep('A_PHYS'); }
-    else if (step === 'A_PHYS') { pickPhysicalPoint(pairA); setStep('B_SCAN'); }
-    else if (step === 'B_SCAN') { if (pickScanPoint(pairB)) setStep('B_PHYS'); }
-    else if (step === 'B_PHYS') { pickPhysicalPoint(pairB); solveAndApply(); }
-    // DONE / RESTORED: squeeze is the only way back to the wizard
-  });
+    if (step === 'A_PHYS') { pickPhysicalPoint(entry, pairA); setStep('A_SCAN'); }
+    else if (step === 'A_SCAN') { if (pickScanPoint(entry, pairA)) setStep('B_PHYS'); }
+    else if (step === 'B_PHYS') { pickPhysicalPoint(entry, pairB); setStep('B_SCAN'); }
+    else if (step === 'B_SCAN') {
+      if (pickScanPoint(entry, pairB)) finishWizard();
+    }
+    // PLACE_REFS / ARMED: squeeze is the only way back to the wizard
+  };
 
-  controller.addEventListener('squeezestart', () => {
+  function onSqueeze() {
     if (!renderer.xr.isPresenting) return;
     resetWizard();
-  });
+  }
 
-  // ---- thumbstick dolly (map moves, never the player) -------------------
-  const camForward = new THREE.Vector3();
-  const camRight = new THREE.Vector3();
-  const dolly = (activeCamera: THREE.Camera, dt: number) => {
-    if (step !== 'A_SCAN' && step !== 'B_SCAN') return; // only while aiming at the scan
-    const gamepad = inputSource?.gamepad;
-    if (!gamepad || !gamepad.axes || gamepad.axes.length < 4) return;
-    const stickX = gamepad.axes[2] ?? 0; // left/right
-    const stickY = gamepad.axes[3] ?? 0; // forward/back
-    if (Math.abs(stickX) < 0.15 && Math.abs(stickY) < 0.15) return;
+  // ---- scan movement (world axes; the rig is never touched) -------------
+  const stick = (hand: string): { x: number; y: number } => {
+    const gamepad = byHand(hand)?.source?.gamepad;
+    if (!gamepad || !gamepad.axes || gamepad.axes.length < 4) return { x: 0, y: 0 };
+    const raw = { x: gamepad.axes[2] ?? 0, y: gamepad.axes[3] ?? 0 };
+    return {
+      x: Math.abs(raw.x) > STICK_DEADZONE ? raw.x : 0,
+      y: Math.abs(raw.y) > STICK_DEADZONE ? raw.y : 0,
+    };
+  };
 
-    activeCamera.getWorldDirection(camForward);
-    camForward.y = 0;
-    if (camForward.lengthSq() < 1e-6) return;
-    camForward.normalize();
-    camRight.set(camForward.z, 0, -camForward.x); // horizontal right vector
-
-    // world moves OPPOSITE the stick => you appear to fly through the map
-    const v = DOLLY_SPEED * dt;
-    splats.position.x -= (camRight.x * stickX + camForward.x * stickY) * v;
-    splats.position.z -= (camRight.z * stickX + camForward.z * stickY) * v;
+  const moveScanWithSticks = (dt: number): void => {
+    if (step !== 'A_SCAN' && step !== 'B_SCAN') return;
+    const left = stick('left');
+    const right = stick('right');
+    // direct-manipulation feel: push stick up → scan slides forward/away
+    splats.position.z += left.y * DOLLY_Z_SPEED * dt;   // L stick up/down = world Z
+    splats.position.x += right.x * DOLLY_X_SPEED * dt;  // R stick left/right = world X
+    splats.position.y += -right.y * DOLLY_Y_SPEED * dt; // R stick up/down = world Y
     splats.updateMatrixWorld(true);
   };
 
-  // per-frame: dolly + keep the instruction panel in front of the face
+  // ---- countdown: place both remotes on their spots ----------------------
+  const captureReferences = (): void => {
+    const left = byHand('left');
+    const right = byHand('right');
+    if (!left || !right || !pairA.scanLocal || !pairB.scanLocal) {
+      setStep('ARMED', 'auto-recal unavailable (missing remote)');
+      return;
+    }
+    const leftPos = left.grip.getWorldPosition(new THREE.Vector3());
+    const rightPos = right.grip.getWorldPosition(new THREE.Vector3());
+    const scanWorldA = splats.localToWorld(pairA.scanLocal.clone());
+    const scanWorldB = splats.localToWorld(pairB.scanLocal.clone());
+    const errA = leftPos.distanceTo(scanWorldA);
+    const errB = rightPos.distanceTo(scanWorldB);
+    const worst = Math.max(errA, errB);
+    const msg = `refs A:${(errA * 100).toFixed(0)}cm B:${(errB * 100).toFixed(0)}cm`;
+    if (worst > REF_MATCH_WARN) {
+      setStep('ARMED', `PLACE MISMATCH ${msg} — check remotes!`);
+    } else if (worst > REF_MATCH_GOOD) {
+      setStep('ARMED', `refs rough ${msg}`);
+    } else {
+      setStep('ARMED', msg);
+    }
+  };
+
+  // per-frame: sticks, countdown, panel in front of the face
   const camPos = new THREE.Vector3();
   const camDir = new THREE.Vector3();
   return {
     update(activeCamera: THREE.Camera, deltaSeconds: number) {
       if (!sprite.visible) return;
-      dolly(activeCamera, deltaSeconds);
+      moveScanWithSticks(deltaSeconds);
+      if (step === 'PLACE_REFS') {
+        placeTimer -= deltaSeconds;
+        placeTextTick -= deltaSeconds;
+        if (placeTextTick <= 0) {
+          placeTextTick = 0.25;
+          setStep('PLACE_REFS', `${Math.max(0, placeTimer).toFixed(0)}s left`);
+        }
+        if (placeTimer <= 0) captureReferences();
+      }
       activeCamera.getWorldPosition(camPos);
       activeCamera.getWorldDirection(camDir);
       sprite.position.copy(camPos).addScaledVector(camDir, 1.6);
@@ -325,13 +425,13 @@ function makeMarker(color: number): THREE.Mesh {
 function makeTextPanel(): { sprite: THREE.Sprite; setText(text: string): void } {
   const canvas = document.createElement('canvas');
   canvas.width = 1024;
-  canvas.height = 256;
+  canvas.height = 320;
   const ctx = canvas.getContext('2d')!;
   const texture = new THREE.CanvasTexture(canvas);
   const sprite = new THREE.Sprite(
     new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true }),
   );
-  sprite.scale.set(1.7, 0.42, 1);
+  sprite.scale.set(1.7, 0.53, 1);
   const setText = (text: string) => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = 'rgba(10, 10, 14, 0.82)';
@@ -339,11 +439,11 @@ function makeTextPanel(): { sprite: THREE.Sprite; setText(text: string): void } 
     ctx.strokeStyle = '#444';
     ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
     ctx.fillStyle = '#6fd08c';
-    ctx.font = 'bold 36px monospace';
+    ctx.font = 'bold 34px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const lines = text.split('\n');
-    const lineH = 48;
+    const lineH = 46;
     const startY = canvas.height / 2 - ((lines.length - 1) * lineH) / 2;
     lines.forEach((line, i) => ctx.fillText(line, canvas.width / 2, startY + i * lineH));
     texture.needsUpdate = true;

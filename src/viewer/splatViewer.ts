@@ -136,6 +136,18 @@ function patchSplatOpacity(splats: GaussianSplats3D.DropInViewer, opacity: numbe
 }
 
 /**
+ * Change the scan's global opacity at RUNTIME (e.g. fade the scan out during
+ * the real-world calibration steps so the camera feed is visible, and back in
+ * for the scan-picking steps). No-op if the shader patch is not applied.
+ */
+export function setScanOpacity(splats: GaussianSplats3D.DropInViewer, opacity: number): void {
+  const material = splats.viewer.splatMesh.material as unknown as THREE.ShaderMaterial | undefined;
+  if (material && material.uniforms && material.uniforms.uGlobalOpacity) {
+    material.uniforms.uGlobalOpacity.value = opacity;
+  }
+}
+
+/**
  * Shift the map so that the given point (in rotated world metres) lands on
  * the XR origin — where the user will physically stand. The player/rig is
  * never moved; only the scan root is.

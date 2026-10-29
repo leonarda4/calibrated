@@ -57,12 +57,26 @@ alignment, or squeeze the grip button to recalibrate.
 
 ## Calibration quick reference (in-headset panel guides you)
 
-| Step | Action |
-| --- | --- |
-| 1/4 | Aim the ray at landmark A on the scan, trigger (left stick = fly) |
-| 2/4 | Touch the real-world spot A with the controller tip, trigger |
-| 3/4 | Aim at landmark B (well separated from A), trigger |
-| 4/4 | Touch real spot B, trigger → transform applies, fit error shown |
+Wizard order (real spot first, then the scan point):
 
-Grip button (squeeze) = restart calibration. Results are also printed on the
-flat page (yaw, translation, fit errors) — record them in the session notes.
+| Step | View | Action |
+| --- | --- | --- |
+| 1/4 | camera / room (scan faded) | hold a controller tip on real spot A, trigger |
+| 2/4 | scan at 70% | aim the ray at scan spot A, trigger. Sticks move the scan: LEFT = forward/back, RIGHT = left/right + up/down |
+| 3/4 | camera / room | controller tip on real spot B, trigger |
+| 4/4 | scan at 70% | aim at scan spot B, trigger → transform solves & applies |
+
+After the fit: **10-second countdown** — place the LEFT remote on real spot A
+and the RIGHT remote on spot B, leave them there. The remotes are now the
+physical reference anchors:
+
+- if the tracking origin is ever redefined (guardian/passthrough takeover),
+  the app re-solves the alignment from the remotes' current tracked
+  positions automatically ("AUTO-RECALIBRATED") — the scan cannot drift to a
+  random spot while the remotes sit on their landmarks,
+- the placement quality is reported (per-remote offset in cm),
+- pick landmarks well separated and re-place remotes if they get moved.
+
+Grip button (squeeze) = restart calibration manually. Results are also
+printed on the flat page (yaw, translation, fit errors) — record them in the
+session notes.
