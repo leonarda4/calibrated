@@ -41,7 +41,10 @@ const DOLLY_Z_SPEED = 3.0;         // m/s, left stick forward/back
 const DOLLY_X_SPEED = 2.0;         // m/s, right stick left/right
 const DOLLY_Y_SPEED = 1.5;         // m/s, right stick up/down
 const STICK_DEADZONE = 0.15;
-const RECAL_RMS_LIMIT = 1;         // m — above this, remotes must have moved
+const RECAL_RMS_LIMIT = 1;         // m — above this the remotes must have moved
+const WATCH_INTERVAL = 1.5;        // s — watchdog cadence while armed
+const PREFIT_TRIGGER = 0.10;       // m — min scan↔remote drift before recal
+const CONSISTENT_AGAIN = 0.05;     // m — drift below which references are OK again
 
 type Step = 'A_SCAN' | 'B_SCAN' | 'PLACE_REFS' | 'ARMED' | 'INVALID';
 
@@ -167,19 +170,32 @@ export function setupCalibrationCapture(
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         quaternion: splats.quaternion.toArray() as Quat,
         position: splats.position.toArray() as Vec3,
+        scanA: scanLocalA.toArray() as Vec3,
+        scanB: scanLocalB.toArray() as Vec3,
         savedAt: Date.now(),
       }));
     } catch { /* storage unavailable — session-only calibration */ }
   };
 
+  /** Restore transform AND the landmark pairs (needed for auto-recal). */
   const restoreScanRoot = (): boolean => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return false;
-      const saved = JSON.parse(raw) as { quaternion: Quat; position: Vec3 };
+      const saved = JSON.parse(raw) as {
+        quaternion: Quat; position: Vec3; scanA?: Vec3; scanB?: Vec3;
+      };
       splats.quaternion.set(...saved.quaternion);
       splats.position.set(...saved.position);
       splats.updateMatrixWorld(true);
+      if (saved.scanA && saved.scanB) {
+        scanLocalA.fromArray(saved.scanA);
+        scanLocalB.fromArray(saved.scanB);
+        haveA = haveB = true;
+        scanMarkerA.position.copy(scanLocalA);
+        scanMarkerB.position.copy(scanLocalB);
+        scanMarkerA.visible = scanMarkerB.visible = true;
+      }
       return true;
     } catch { return false; }
   };
@@ -249,6 +265,52 @@ export function setupCalibrationCapture(
     return true;
   };
 
+  /**
+   * Watchdog: the Quest rarely fires the reference-space 'reset' event, so
+   * the remotes are polled instead. If the scan points drift away from the
+   * remotes' tracked positions by a rigid transform (small post-fit
+   * residual), the tracking origin was redefined → re-solve and re-apply.
+   * If the remotes themselves were moved (large post-fit residual), mark
+   * the references invalid and wait for them to be re-placed.
+   */
+  const watchdog = (): void => {
+    if (step !== 'ARMED' && step !== 'INVALID') return;
+    const left = byHand('left');
+    const right = byHand('right');
+    if (!left || !right || !haveA || !haveB) return;
+    const leftPos = remotePoint(left);
+    const rightPos = remotePoint(right);
+    // plausibility: both poses tracked and distinct
+    if (leftPos.length() < 0.05 || rightPos.length() < 0.05) return;
+    if (leftPos.distanceTo(rightPos) < 0.1) return;
+
+    const solution = solveFromRemotes();
+    if (!solution) return;
+    const scanWorldA = splats.localToWorld(scanLocalA.clone());
+    const scanWorldB = splats.localToWorld(scanLocalB.clone());
+    const maxPrefit = Math.max(
+      scanWorldA.distanceTo(leftPos),
+      scanWorldB.distanceTo(rightPos),
+    );
+
+    if (maxPrefit < PREFIT_TRIGGER) {
+      if (step === 'INVALID') setStep('ARMED', 'references consistent again ✓');
+      return;
+    }
+    if (solution.rmsResidual > RECAL_RMS_LIMIT) {
+      // remotes moved (not a rigid origin shift) — refuse to apply
+      if (step !== 'INVALID') {
+        setStep('INVALID', `remotes moved? (A/B mismatch) — re-place them\nLEFT on spot A, RIGHT on spot B`);
+      }
+      return;
+    }
+    // consistent rigid shift → the tracking origin was redefined
+    applySolution(solution);
+    const a = (solution.residuals[0] * 100).toFixed(0);
+    const b = (solution.residuals[1] * 100).toFixed(0);
+    setStep('ARMED', `AUTO-RECALIBRATED (A:${a}cm B:${b}cm)`);
+  };
+
   // ---- session lifecycle -------------------------------------------------
   let refSpace: XRReferenceSpace | null = null;
 
@@ -273,8 +335,14 @@ export function setupCalibrationCapture(
       vrMode = session?.environmentBlendMode === 'opaque';
     } catch { vrMode = false; }
     if (restoreScanRoot()) {
-      // restored transform is a candidate: verify visually, squeeze if wrong.
-      setStep('A_SCAN', 'saved calibration restored — verify, or squeeze');
+      if (haveA && haveB) {
+        // transform AND landmark pairs restored: go straight to armed —
+        // the watchdog verifies/corrects from the remotes within seconds.
+        setStep('ARMED', 'restored — checking remotes…');
+      } else {
+        // transform only (older save): user verifies visually, squeeze if wrong.
+        setStep('A_SCAN', 'saved calibration restored — verify, or squeeze');
+      }
     } else {
       resetWizard();
     }
@@ -362,9 +430,10 @@ export function setupCalibrationCapture(
     splats.updateMatrixWorld(true);
   };
 
-  // per-frame: sticks, countdown, panel in front of the face
+  // per-frame: sticks, countdown, watchdog, panel in front of the face
   const camPos = new THREE.Vector3();
   const camDir = new THREE.Vector3();
+  let watchTimer = 0;
   return {
     update(activeCamera: THREE.Camera, deltaSeconds: number) {
       if (!sprite.visible) return;
@@ -377,6 +446,12 @@ export function setupCalibrationCapture(
           setStep('PLACE_REFS', `${Math.max(0, placeTimer).toFixed(0)}s left`);
         }
         if (placeTimer <= 0) finishCalibration();
+      }
+      // watchdog: poll the remotes for silent tracking-origin changes
+      watchTimer += deltaSeconds;
+      if (watchTimer >= WATCH_INTERVAL) {
+        watchTimer = 0;
+        watchdog();
       }
       activeCamera.getWorldPosition(camPos);
       activeCamera.getWorldDirection(camDir);

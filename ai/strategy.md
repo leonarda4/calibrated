@@ -76,6 +76,12 @@ The detailed deliverables and gates live in `docs/PROJECT_PLAN.md`; implementati
 - The wall-probing trigger steps are gone: no probe-tip-on-wall capture remains, `PROBE_TIP_OFFSET` now describes grip-origin → placed-point on the remote. Per-remote placement is not re-validated at capture time beyond the fit residuals (the fit IS the placement check).
 - Checks: `npm run check` clean, solver tests 5/5, zero console errors on load. **Hardware validation of this exact protocol pending.**
 
+2026-10-29 — **User confirmed the wizard (steps 1–3, and the countdown/fit) works on hardware; auto-recalibration did not.** Two root causes identified and fixed:
+- **Landmark pairs were session-only.** The saved transform was restored on re-entry, but the scan points A/B (needed to re-solve from the remotes) lived only in memory — after a reload there was nothing to recalibrate from. The pairs (and their left/right remote assignment) are now persisted with the transform; a session that restores both goes straight to ARMED and the watchdog verifies/corrects within seconds.
+- **The reference-space `reset` event rarely fires on Quest**, so in-session recenters went unnoticed. Added a watchdog that polls the remotes every 1.5 s: a rigid, consistent drift between scan points and remotes (post-fit RMS below the limit) is treated as a tracking-origin redefinition and re-solved automatically ("AUTO-RECALIBRATED"); a non-rigid change (post-fit RMS > 1 m) is treated as moved remotes and marks the references INVALID until they are re-placed — re-placement auto-recovers to ARMED.
+- Honest limitation recorded: a user rigidly carrying both remotes in both hands can look like an origin shift; the discriminator is the post-fit residual, which normally exceeds the limit when remotes are handled independently.
+- Checks: tsc clean, solver tests 5/5, zero console errors. **Hardware re-test of auto-recal pending.**
+
 ## Next
 
 1. ~~M0 hardware run~~ — **2026-10-29, user-reported from the real headset (Meta glasses, Quest Browser, HTTPS LAN): the scan loads 3× and the user entered the immersive WebXR session in stereo.** Observed defect: the hallway stood vertical (scan's long axis is its local Y) — fixed by the new scan-root transform. Operator/assistant-run enter/exit cycling and streaming-timing numbers are still to be recorded for the full M0 protocol; the Quest-Browser variant is demonstrated, the PC→Link variant is not yet tested.
