@@ -78,27 +78,3 @@ Tips: pick scan points that are easy to reach with a physical remote
 (floor/waist-height corners beat ceiling points), keep A and B well
 separated, and leave the remotes undisturbed for as long as the
 auto-recalibration should work.
-
-## Tour mode — walk a ~30 m scan inside a small boundary
-
-The scan is much larger than any practical boundary box, so the walkthrough
-uses **virtual locomotion**: the MAP moves around the user, never the user's
-tracking. The boundary is never left, so no recenter/passthrough takeover is
-triggered by touring.
-
-Press **A** (right remote) or **X** (left remote) to switch between
-calibration mode and tour mode:
-
-| Input | Action |
-| --- | --- |
-| Left stick | walk forward/back + strafe |
-| Right stick ◄ ► | turn (the map rotates around you) |
-| Right stick ▲ ▼ | elevate up/down |
-| Hold trigger | auto-walk forward at walking pace |
-| Squeeze / A / X | back to calibration mode |
-
-Notes:
-- Turning rotates the map about the user's head — the XR rig stays at
-  identity, which is why tracking/boundary stay undisturbed.
-- The calibration watchdog is paused during tour mode; returning to
-  calibration mode re-verifies the remotes within ~2 s.

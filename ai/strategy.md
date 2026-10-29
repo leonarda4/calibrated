@@ -82,8 +82,6 @@ The detailed deliverables and gates live in `docs/PROJECT_PLAN.md`; implementati
 - Honest limitation recorded: a user rigidly carrying both remotes in both hands can look like an origin shift; the discriminator is the post-fit residual, which normally exceeds the limit when remotes are handled independently.
 - Checks: tsc clean, solver tests 5/5, zero console errors. **Hardware re-test of auto-recal pending.**
 
-2026-10-29 — **Tour mode added** (user asked how to guide people through the ~30 m scan without leaving the boundary): virtual locomotion via the existing world-dolly machinery — the map moves/turns around the user, the XR rig is never touched, so the boundary and tracking are never disturbed by touring. Controls: A/X toggles calibration ↔ tour; left stick walks/strafes, right stick turns (map rotates about the user's head) and elevates, holding the trigger auto-walks at walking pace. The calibration watchdog pauses during tour and re-verifies the remotes on return. This is explicitly a separate mode from "calibrated mode" — the plan's no-locomotion invariant continues to hold for the calibrated experience itself. Checks: tsc clean, tests 5/5, zero console errors on load; **hardware feel/comfort test pending**.
-
 ## Next
 
 1. ~~M0 hardware run~~ — **2026-10-29, user-reported from the real headset (Meta glasses, Quest Browser, HTTPS LAN): the scan loads 3× and the user entered the immersive WebXR session in stereo.** Observed defect: the hallway stood vertical (scan's long axis is its local Y) — fixed by the new scan-root transform. Operator/assistant-run enter/exit cycling and streaming-timing numbers are still to be recorded for the full M0 protocol; the Quest-Browser variant is demonstrated, the PC→Link variant is not yet tested.

@@ -46,13 +46,6 @@ const WATCH_INTERVAL = 1.5;        // s — watchdog cadence while armed
 const PREFIT_TRIGGER = 0.10;       // m — min scan↔remote drift before recal
 const CONSISTENT_AGAIN = 0.05;     // m — drift below which references are OK again
 
-// Tour mode (immersive walkthrough of a ~30 m scan from inside a small
-// boundary): virtual locomotion by moving the MAP — the rig is never moved.
-const TOUR_WALK_SPEED = 2.2;       // m/s, left stick
-const TOUR_TURN_SPEED = 45;        // deg/s, right stick left/right
-const TOUR_ELEVATE_SPEED = 1.2;    // m/s, right stick up/down
-const TOUR_AUTOWALK_SPEED = 1.2;   // m/s, hold trigger
-
 type Step = 'A_SCAN' | 'B_SCAN' | 'PLACE_REFS' | 'ARMED' | 'INVALID';
 
 interface SplatMeshWithCenters {
@@ -98,7 +91,6 @@ export function setupCalibrationCapture(
       ctrl.visible = grip.visible = false;
     });
     ctrl.addEventListener('selectstart', () => onSelect(entry));
-    ctrl.addEventListener('selectend', () => { triggerHeld = false; });
     ctrl.addEventListener('squeezestart', onSqueeze);
     scene.add(ctrl, grip);
     controllers.push(entry);
@@ -106,36 +98,6 @@ export function setupCalibrationCapture(
   const byHand = (hand: string): ControllerEntry | undefined =>
     controllers.find((c) => c.source?.handedness === hand)
     ?? controllers[hand === 'left' ? 0 : 1];
-
-  // ---- mode: wizard (calibration) vs tour (immersive walkthrough) --------
-  let mode: 'wiz' | 'tour' = 'wiz';
-  let triggerHeld = false;
-  const tourButtonWas = [false, false]; // A/X edge detection per controller
-
-  const modeLineText = (): string => {
-    try {
-      const session = renderer.xr.getSession() as XRSession | null;
-      const blend = session?.environmentBlendMode;
-      if (blend === 'opaque') return '\nmode: opaque (VR — no passthrough!)';
-      if (blend) return '\nmode: passthrough ✓';
-    } catch { /* session not queryable here */ }
-    return '';
-  };
-
-  const enterTour = () => {
-    mode = 'tour';
-    triggerHeld = false;
-    setScanOpacity(splats, SCAN_OPACITY);
-    setText(
-      'TOUR MODE\nL stick: walk fwd/back + strafe\nR stick: turn + up/down\nHold trigger: auto-walk\nA/X: back to calibration\nSqueeze: back to calibration' +
-      modeLineText(),
-    );
-  };
-
-  const exitTour = () => {
-    mode = 'wiz';
-    setStep(step); // refresh the wizard panel for the current step
-  };
 
   // ---- instruction panel -------------------------------------------------
   const { sprite, setText } = makeTextPanel();
@@ -421,7 +383,6 @@ export function setupCalibrationCapture(
 
   const onSelect = (entry: ControllerEntry) => {
     if (!renderer.xr.isPresenting) return;
-    if (mode === 'tour') { triggerHeld = true; return; } // trigger = auto-walk
     if (step === 'A_SCAN') {
       if (pickScanPoint(entry, scanLocalA)) {
         haveA = true;
@@ -444,7 +405,6 @@ export function setupCalibrationCapture(
 
   function onSqueeze() {
     if (!renderer.xr.isPresenting) return;
-    if (mode === 'tour') { exitTour(); return; }
     resetWizard();
   }
 
@@ -470,87 +430,28 @@ export function setupCalibrationCapture(
     splats.updateMatrixWorld(true);
   };
 
-  // ---- tour mode: virtual locomotion (map moves, rig untouched) ----------
-  const tourFwd = new THREE.Vector3();
-  const tourRight = new THREE.Vector3();
-  const tourPivot = new THREE.Vector3();
-  const tourYaw = new THREE.Quaternion();
-  const UP = new THREE.Vector3(0, 1, 0);
-
-  const tourUpdate = (activeCamera: THREE.Camera, dt: number): void => {
-    const left = stick('left');
-    const right = stick('right');
-
-    activeCamera.getWorldDirection(tourFwd);
-    tourFwd.y = 0;
-    if (tourFwd.lengthSq() < 1e-6) return;
-    tourFwd.normalize();
-    tourRight.set(tourFwd.z, 0, -tourFwd.x);
-
-    // walk: pushing forward moves the MAP backward → you advance into it
-    let speed = -left.y * TOUR_WALK_SPEED;           // fwd/back
-    if (triggerHeld) speed -= TOUR_AUTOWALK_SPEED;   // guided auto-walk
-    splats.position.addScaledVector(tourFwd, speed * dt);
-    splats.position.addScaledVector(tourRight, -left.x * TOUR_WALK_SPEED * dt); // strafe
-
-    // elevation: right stick up/down
-    splats.position.y += -right.y * TOUR_ELEVATE_SPEED * dt;
-
-    // turn: rotate the map about the user's head (XZ pivot) — the user's
-    // tracking never changes, so the boundary stays where it is.
-    if (right.x !== 0) {
-      const angle = -right.x * TOUR_TURN_SPEED * Math.PI / 180 * dt;
-      activeCamera.getWorldPosition(tourPivot);
-      const dx = splats.position.x - tourPivot.x;
-      const dz = splats.position.z - tourPivot.z;
-      const c = Math.cos(angle), s = Math.sin(angle);
-      splats.position.x = tourPivot.x + c * dx + s * dz;
-      splats.position.z = tourPivot.z - s * dx + c * dz;
-      tourYaw.setFromAxisAngle(UP, angle);
-      splats.quaternion.premultiply(tourYaw);
-    }
-    splats.updateMatrixWorld(true);
-
-    // A/X button toggles back to calibration (edge-detected)
-    for (let i = 0; i < controllers.length; i++) {
-      const pressed = controllers[i].source?.gamepad?.buttons?.[4]?.pressed ?? false;
-      if (pressed && !tourButtonWas[i]) exitTour();
-      tourButtonWas[i] = pressed;
-    }
-  };
-
-  // per-frame: sticks, countdown, watchdog, tour, panel in front of the face
+  // per-frame: sticks, countdown, watchdog, panel in front of the face
   const camPos = new THREE.Vector3();
   const camDir = new THREE.Vector3();
   let watchTimer = 0;
   return {
     update(activeCamera: THREE.Camera, deltaSeconds: number) {
       if (!sprite.visible) return;
-      if (mode === 'tour') {
-        tourUpdate(activeCamera, deltaSeconds);
-      } else {
-        moveScanWithSticks(deltaSeconds);
-        if (step === 'PLACE_REFS') {
-          placeTimer -= deltaSeconds;
-          placeTextTick -= deltaSeconds;
-          if (placeTextTick <= 0) {
-            placeTextTick = 0.25;
-            setStep('PLACE_REFS', `${Math.max(0, placeTimer).toFixed(0)}s left`);
-          }
-          if (placeTimer <= 0) finishCalibration();
+      moveScanWithSticks(deltaSeconds);
+      if (step === 'PLACE_REFS') {
+        placeTimer -= deltaSeconds;
+        placeTextTick -= deltaSeconds;
+        if (placeTextTick <= 0) {
+          placeTextTick = 0.25;
+          setStep('PLACE_REFS', `${Math.max(0, placeTimer).toFixed(0)}s left`);
         }
-        // watchdog: poll the remotes for silent tracking-origin changes
-        watchTimer += deltaSeconds;
-        if (watchTimer >= WATCH_INTERVAL) {
-          watchTimer = 0;
-          watchdog();
-        }
-        // A/X button enters tour mode (edge-detected)
-        for (let i = 0; i < controllers.length; i++) {
-          const pressed = controllers[i].source?.gamepad?.buttons?.[4]?.pressed ?? false;
-          if (pressed && !tourButtonWas[i]) enterTour();
-          tourButtonWas[i] = pressed;
-        }
+        if (placeTimer <= 0) finishCalibration();
+      }
+      // watchdog: poll the remotes for silent tracking-origin changes
+      watchTimer += deltaSeconds;
+      if (watchTimer >= WATCH_INTERVAL) {
+        watchTimer = 0;
+        watchdog();
       }
       activeCamera.getWorldPosition(camPos);
       activeCamera.getWorldDirection(camDir);
