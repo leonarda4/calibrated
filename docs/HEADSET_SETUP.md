@@ -15,29 +15,48 @@ Environment record for the calibrated hallway experience. Last verified 2026-10-
 
 Recent Horizon OS versions have **no user-facing "off" switch** — leaving the
 boundary area pauses the app and switches to system passthrough by design.
-Meta's developer-account routes (Developer Mode, MQDH, ADB) all require an
-account the user cannot create, so the workarounds are:
+The reliable way to disable it is a developer account (procedure adopted
+2026-10-29; the existing headset Meta account is sufficient — no new
+account):
 
-1. **Use AR passthrough (primary path).** Meta designed mixed reality so the
-   boundary is suppressed while passthrough is rendered — in an
-   `immersive-ar` session the "left the boundary → app paused" takeover does
-   not occur the way it does in VR. The in-headset panel now prints the
-   session's `environmentBlendMode` so this is verifiable:
-   `alpha-blend (passthrough ✓)` vs `opaque (VR — no passthrough!)`.
-2. **Draw the roomscale boundary beyond the hallway walls.** Trace the
-   boundary slightly outside the physical walls of the hallway — since the
-   walls stop you anyway, you never cross the boundary inside the corridor.
-   Mind doorways and stairs.
-3. **Enlarge the stationary boundary** (Quick controls → Boundary → adjust
-   stationary size) and re-create it where you stand before entering VR.
+1. Register as a developer at `developers.meta.com/horizon/sign-up` with the
+   SAME Meta account the headset uses.
+2. **Verify the account** — the step where most attempts fail. Requires
+   either a mobile phone number (SMS 2FA) **or** a credit/debit card
+   (PayPal is not accepted). Status: `developers.meta.com/manage/verify`.
+3. Create a **developer team** in the Developer Dashboard (Org Manager →
+   Select Team → Create). The team name is permanent. Requirements: 18+,
+   no device-level restrictions.
+4. Enable **Developer Mode**: Meta Horizon phone app → headset → Headset
+   Settings → Developer Mode → ON (headset reboots).
+5. Disable the boundary — either on-headset (Settings → System → Developer →
+   boundary/physical-space features off; availability varies by firmware) or
+   via **Meta Quest Developer Hub (MQDH)** on the PC:
+   - Install MQDH from `developers.meta.com/downloads/package/meta-quest-developer-hub`
+   - Sign in with the developer account
+   - Connect the headset with a **USB-C DATA cable** — the cable included in
+     the Quest box is charge-only and will NOT work
+   - Allow USB debugging in the headset ("Always allow from this computer")
+   - Device Manager → Device Actions → **Boundary: OFF** (`Ctrl+Shift+G`)
 
-Notes:
-- The old "Settings → Device → Tracking off" trick disables the guardian but
-  also switches the headset to 3DoF (world locked to your head) — unusable
-  for calibration, which needs full 6DoF head tracking.
-- Safety: a boundary that extends beyond the walls means the system will not
-  warn you near real obstacles. Only do this in a controlled, supervised
-  hallway (per the plan's supervised-trial requirement).
+Safety: with the boundary disabled, nothing prevents walking into real walls
+while immersed. Only run boundary-off sessions in a controlled, supervised
+environment (per the plan's supervised-trial requirement).
+
+Fallbacks if boundary-off is unavailable at any point:
+
+1. **Use AR passthrough** — in an `immersive-ar` session the "left the
+   boundary → app paused" takeover is far less disruptive; the in-headset
+   panel prints `environmentBlendMode` to verify
+   (`alpha-blend (passthrough ✓)` vs `opaque (VR — no passthrough!)`).
+2. **Draw the roomscale boundary beyond the hallway walls** — the walls stop
+   you anyway; mind doorways and stairs.
+3. **Enlarge the stationary boundary** around the standing position.
+
+The app-level safety net is independent of the boundary setting: the remotes
+act as reference anchors and the watchdog re-solves the alignment whenever
+the tracking origin is redefined. The old "Settings → Device → Tracking off"
+trick is NOT an option — it disables 6DoF tracking entirely.
 
 ## Why the world "shifts" after a boundary event
 
