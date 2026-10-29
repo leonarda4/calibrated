@@ -1,0 +1,33 @@
+# Dependencies and generated output
+node_modules/
+dist/
+coverage/
+.check/
+test-results/
+playwright-report/
+
+# Local credentials
+.env*
+!.env.example
+
+# Physical-space scans and private session data
+public/splats/*
+!public/splats/.gitkeep
+!public/splats/README.md
+private/
+captures/
+calibration-local/
+*.ply
+*.spz
+*.splat
+*.ksplat
+*.sog
+*.rad
+
+# Deliberately public synthetic fixtures and metadata may be tracked here.
+!tests/fixtures/synthetic/**
+
+# Local system/editor files
+.DS_Store
+Thumbs.db
+*.log

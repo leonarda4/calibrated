@@ -1,0 +1,9 @@
+# Search exclusions; these do not replace .gitignore.
+node_modules/
+dist/
+.check/
+public/splats/
+private/
+captures/
+calibration-local/
+.env*
