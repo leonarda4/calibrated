@@ -82,6 +82,17 @@ The detailed deliverables and gates live in `docs/PROJECT_PLAN.md`; implementati
 - Honest limitation recorded: a user rigidly carrying both remotes in both hands can look like an origin shift; the discriminator is the post-fit residual, which normally exceeds the limit when remotes are handled independently.
 - Checks: tsc clean, solver tests 5/5, zero console errors. **Hardware re-test of auto-recal pending.**
 
+2026-10-29 — Tour mode was added and then **reverted at the user's request** (implemented without being asked; the user wanted approaches discussed first). Repo state is clean at the auto-recalibration fix. The 30 m-inside-small-boundary question remains open — options (scaled diorama, auto-guided path, stick locomotion, walk-in-place, redirected walking) were presented for decision.
+
+2026-10-29 — **Guarded auto-recalibration implemented** (design agreed with the user before execution, following the loop-safety discussion):
+- **Loop-proof by construction:** the recal is a one-shot closed-form solve against stationary remotes — a correction removes the error that triggered it, so the sequence converges in one step. Explicit guards on top:
+  - **Cooldown:** no second auto-recal within 5 s (a rate limit, NOT a delay — the first correction is immediate; total user-visible interruption ≤ ~1.5 s plus the 0.5 s glide).
+  - **Pose stability:** remotes must be tracked, distinct, and unmoving for ≥ 0.5 s before solving (no stale/garbage poses at session resume).
+  - **Sanity limits:** a re-anchor is refused above 3 m translation or 45° yaw (that pattern means the remotes moved, not the origin).
+  - **Smoothed application:** the correction glides over ~0.5 s ("REALIGNING…"), then a convergence re-check must confirm the drift is gone before "AUTO-RECALIBRATED" is declared; otherwise the references are marked INVALID.
+  - **Fast watchdog** (0.5 s) for the first 10 s of a session and while INVALID; 1.5 s steady state.
+- Checks: tsc clean, solver tests 5/5, zero console errors on load. **Hardware test of the guarded recal pending.**
+
 ## Next
 
 1. ~~M0 hardware run~~ — **2026-10-29, user-reported from the real headset (Meta glasses, Quest Browser, HTTPS LAN): the scan loads 3× and the user entered the immersive WebXR session in stereo.** Observed defect: the hallway stood vertical (scan's long axis is its local Y) — fixed by the new scan-root transform. Operator/assistant-run enter/exit cycling and streaming-timing numbers are still to be recorded for the full M0 protocol; the Quest-Browser variant is demonstrated, the PC→Link variant is not yet tested.

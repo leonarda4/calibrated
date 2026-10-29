@@ -42,9 +42,16 @@ const DOLLY_X_SPEED = 2.0;         // m/s, right stick left/right
 const DOLLY_Y_SPEED = 1.5;         // m/s, right stick up/down
 const STICK_DEADZONE = 0.15;
 const RECAL_RMS_LIMIT = 1;         // m — above this the remotes must have moved
-const WATCH_INTERVAL = 1.5;        // s — watchdog cadence while armed
+const WATCH_INTERVAL = 1.5;        // s — steady-state watchdog cadence
+const FAST_WATCH = 0.5;            // s — fast cadence right after (re)entering
+const FAST_WATCH_WINDOW = 10;      // s — how long the fast cadence lasts
 const PREFIT_TRIGGER = 0.10;       // m — min scan↔remote drift before recal
-const CONSISTENT_AGAIN = 0.05;     // m — drift below which references are OK again
+const RECAL_COOLDOWN = 5;          // s — min time between auto-recals (loop guard)
+const RECAL_MAX_TRANSLATION = 3;   // m — sanity: a re-anchor is never bigger
+const RECAL_MAX_YAW = 45 * Math.PI / 180; // rad — sanity limit
+const POSE_STABLE_TIME = 0.5;      // s — remotes must be still before solving
+const POSE_STABLE_EPS = 0.03;      // m — allowed jitter while "still"
+const SMOOTH_TIME = 0.5;          // s — correction glide duration
 
 type Step = 'A_SCAN' | 'B_SCAN' | 'PLACE_REFS' | 'ARMED' | 'INVALID';
 
@@ -265,50 +272,135 @@ export function setupCalibrationCapture(
     return true;
   };
 
-  /**
-   * Watchdog: the Quest rarely fires the reference-space 'reset' event, so
-   * the remotes are polled instead. If the scan points drift away from the
-   * remotes' tracked positions by a rigid transform (small post-fit
-   * residual), the tracking origin was redefined → re-solve and re-apply.
-   * If the remotes themselves were moved (large post-fit residual), mark
-   * the references invalid and wait for them to be re-placed.
-   */
-  const watchdog = (): void => {
-    if (step !== 'ARMED' && step !== 'INVALID') return;
+  // ---- guarded auto-recalibration ----------------------------------------
+  // Loop-proof by design: one-shot closed-form solve against stationary
+  // remotes, plus explicit guards — cooldown (no repeat within 5 s), pose
+  // stability (remotes still for ≥ 0.5 s), sanity limits (a re-anchor is
+  // never > 3 m / > 45°), smoothed application (~0.5 s) and a convergence
+  // re-check that must confirm the fix before success is declared.
+  let elapsed = 0;                  // s since session start (monotonic clock)
+  let lastRecalAt = -1e9;
+  let stableFor = 0;
+  let prevSampleAt = -1e9;
+  const prevLeft = new THREE.Vector3();
+  const prevRight = new THREE.Vector3();
+  let smoothActive = false;
+  let smoothStart = 0;
+  let smoothSolution: YawTranslationSolution | null = null;
+  const smoothFromQ = new THREE.Quaternion();
+  const smoothToQ = new THREE.Quaternion();
+  const smoothFromP = new THREE.Vector3();
+  const smoothToP = new THREE.Vector3();
+
+  /** Read the remotes, verify plausibility, sample stability, solve. */
+  const readReferences = ():
+    | { maxPrefit: number; solution: YawTranslationSolution }
+    | null => {
     const left = byHand('left');
     const right = byHand('right');
-    if (!left || !right || !haveA || !haveB) return;
+    if (!left || !right || !haveA || !haveB) return null;
     const leftPos = remotePoint(left);
     const rightPos = remotePoint(right);
-    // plausibility: both poses tracked and distinct
-    if (leftPos.length() < 0.05 || rightPos.length() < 0.05) return;
-    if (leftPos.distanceTo(rightPos) < 0.1) return;
-
+    if (leftPos.length() < 0.05 || rightPos.length() < 0.05) return null; // untracked
+    if (leftPos.distanceTo(rightPos) < 0.1) return null;                  // implausible
     const solution = solveFromRemotes();
-    if (!solution) return;
+    if (!solution) return null;
     const scanWorldA = splats.localToWorld(scanLocalA.clone());
     const scanWorldB = splats.localToWorld(scanLocalB.clone());
     const maxPrefit = Math.max(
       scanWorldA.distanceTo(leftPos),
       scanWorldB.distanceTo(rightPos),
     );
+    // stability sampling across calls
+    if (prevSampleAt >= 0) {
+      const disp = Math.max(leftPos.distanceTo(prevLeft), rightPos.distanceTo(prevRight));
+      stableFor = disp < POSE_STABLE_EPS ? stableFor + (elapsed - prevSampleAt) : 0;
+    }
+    prevLeft.copy(leftPos);
+    prevRight.copy(rightPos);
+    prevSampleAt = elapsed;
+    return { maxPrefit, solution };
+  };
 
-    if (maxPrefit < PREFIT_TRIGGER) {
+  const beginSmoothedRecal = (solution: YawTranslationSolution): void => {
+    const composed = composeCalibration(
+      {
+        quaternion: splats.quaternion.toArray() as Quat,
+        position: splats.position.toArray() as Vec3,
+      },
+      solution,
+    );
+    smoothFromQ.copy(splats.quaternion);
+    smoothFromP.copy(splats.position);
+    smoothToQ.set(composed.quaternion[0], composed.quaternion[1], composed.quaternion[2], composed.quaternion[3]);
+    smoothToP.set(composed.position[0], composed.position[1], composed.position[2]);
+    smoothSolution = solution;
+    smoothActive = true;
+    smoothStart = elapsed;
+    lastRecalAt = elapsed; // cooldown starts at correction start, not end
+    setStep('ARMED', 'REALIGNING…');
+  };
+
+  /** Full guard pipeline. Returns true when a correction was started. */
+  const attemptRecal = (): boolean => {
+    if (smoothActive) return false;
+    if (elapsed - lastRecalAt < RECAL_COOLDOWN) return false; // rate limit
+    const refs = readReferences();
+    if (!refs) return false;
+    if (refs.maxPrefit < PREFIT_TRIGGER) return false;  // nothing to fix
+    if (stableFor < POSE_STABLE_TIME) return false;     // wait for still remotes
+    if (refs.solution.rmsResidual > RECAL_RMS_LIMIT) {
+      // remotes moved (not a rigid origin shift) — refuse to apply
+      if (step !== 'INVALID') {
+        setStep('INVALID', 'remotes moved? — re-place LEFT on A, RIGHT on B');
+      }
+      return false;
+    }
+    const t = refs.solution.translation;
+    const tLen = Math.hypot(t[0], t[1], t[2]);
+    if (tLen > RECAL_MAX_TRANSLATION || Math.abs(refs.solution.yaw) > RECAL_MAX_YAW) {
+      if (step !== 'INVALID') {
+        setStep('INVALID', 'correction too large — remotes moved?');
+      }
+      return false;
+    }
+    beginSmoothedRecal(refs.solution);
+    return true;
+  };
+
+  /** Called by the render loop once the glide is finished: verify + report. */
+  const finishSmoothedRecal = (): void => {
+    smoothActive = false;
+    splats.quaternion.copy(smoothToQ);
+    splats.position.copy(smoothToP);
+    splats.updateMatrixWorld(true);
+    saveScanRoot();
+    // convergence check: the correction must have removed the drift
+    const refs = readReferences();
+    if (refs && refs.maxPrefit < PREFIT_TRIGGER + 0.05 && smoothSolution) {
+      const a = (smoothSolution.residuals[0] * 100).toFixed(0);
+      const b = (smoothSolution.residuals[1] * 100).toFixed(0);
+      setStep('ARMED', `AUTO-RECALIBRATED (A:${a}cm B:${b}cm)`);
+    } else {
+      setStep('INVALID', 'recheck failed — re-place remotes or squeeze');
+    }
+    smoothSolution = null;
+  };
+
+  /**
+   * Watchdog: the Quest rarely fires the reference-space 'reset' event, so
+   * the remotes are polled instead (fast right after entering a session,
+   * slower in steady state, fast again while references are invalid).
+   */
+  const watchdog = (): void => {
+    if (step !== 'ARMED' && step !== 'INVALID') return;
+    const refs = readReferences();
+    if (!refs) return;
+    if (refs.maxPrefit < PREFIT_TRIGGER) {
       if (step === 'INVALID') setStep('ARMED', 'references consistent again ✓');
       return;
     }
-    if (solution.rmsResidual > RECAL_RMS_LIMIT) {
-      // remotes moved (not a rigid origin shift) — refuse to apply
-      if (step !== 'INVALID') {
-        setStep('INVALID', `remotes moved? (A/B mismatch) — re-place them\nLEFT on spot A, RIGHT on spot B`);
-      }
-      return;
-    }
-    // consistent rigid shift → the tracking origin was redefined
-    applySolution(solution);
-    const a = (solution.residuals[0] * 100).toFixed(0);
-    const b = (solution.residuals[1] * 100).toFixed(0);
-    setStep('ARMED', `AUTO-RECALIBRATED (A:${a}cm B:${b}cm)`);
+    attemptRecal();
   };
 
   // ---- session lifecycle -------------------------------------------------
@@ -316,7 +408,9 @@ export function setupCalibrationCapture(
 
   const onRefSpaceReset = () => {
     if (step === 'ARMED') {
-      if (!autoRecalibrate()) setStep('INVALID');
+      // guarded pipeline (cooldown / stability / sanity / smoothing); the
+      // watchdog re-checks on the next tick if no correction was started.
+      attemptRecal();
       return;
     }
     if (step === 'PLACE_REFS') {
@@ -330,6 +424,12 @@ export function setupCalibrationCapture(
 
   renderer.xr.addEventListener('sessionstart', () => {
     sprite.visible = true;
+    elapsed = 0;
+    lastRecalAt = -1e9;
+    stableFor = 0;
+    prevSampleAt = -1e9;
+    smoothActive = false;
+    smoothSolution = null;
     try {
       const session = renderer.xr.getSession() as XRSession | null;
       vrMode = session?.environmentBlendMode === 'opaque';
@@ -430,13 +530,24 @@ export function setupCalibrationCapture(
     splats.updateMatrixWorld(true);
   };
 
-  // per-frame: sticks, countdown, watchdog, panel in front of the face
+  // per-frame: sticks, countdown, watchdog, smoothing, panel position
   const camPos = new THREE.Vector3();
   const camDir = new THREE.Vector3();
   let watchTimer = 0;
   return {
     update(activeCamera: THREE.Camera, deltaSeconds: number) {
       if (!sprite.visible) return;
+      elapsed += deltaSeconds;
+
+      // apply the smoothed correction glide
+      if (smoothActive) {
+        const t = Math.min(1, (elapsed - smoothStart) / SMOOTH_TIME);
+        splats.quaternion.slerpQuaternions(smoothFromQ, smoothToQ, t);
+        splats.position.lerpVectors(smoothFromP, smoothToP, t);
+        splats.updateMatrixWorld(true);
+        if (t >= 1) finishSmoothedRecal();
+      }
+
       moveScanWithSticks(deltaSeconds);
       if (step === 'PLACE_REFS') {
         placeTimer -= deltaSeconds;
@@ -447,9 +558,12 @@ export function setupCalibrationCapture(
         }
         if (placeTimer <= 0) finishCalibration();
       }
-      // watchdog: poll the remotes for silent tracking-origin changes
+      // watchdog: poll the remotes for silent tracking-origin changes.
+      // Fast right after session start and while references are invalid.
+      const interval = (elapsed < FAST_WATCH_WINDOW || step === 'INVALID')
+        ? FAST_WATCH : WATCH_INTERVAL;
       watchTimer += deltaSeconds;
-      if (watchTimer >= WATCH_INTERVAL) {
+      if (watchTimer >= interval) {
         watchTimer = 0;
         watchdog();
       }

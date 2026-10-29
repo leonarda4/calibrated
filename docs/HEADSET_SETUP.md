@@ -74,6 +74,15 @@ Procedure after a boundary interruption: return to roughly the same physical
 spot and facing as during calibration, re-enter, verify the restored
 alignment, or squeeze the grip button to recalibrate.
 
+With remotes armed as references this is automatic: within ~1.5 s of resuming
+(faster right after entering) the app re-solves from the remotes and glides
+the correction in over ~0.5 s ("REALIGNING…" → "AUTO-RECALIBRATED"). A second
+correction is rate-limited to one per 5 s — this is a loop guard, not a
+delay; the first correction itself is immediate. Corrections larger than
+3 m or 45° are refused (that means the remotes moved, not the tracking
+origin) and the references are marked invalid until the remotes are
+re-placed.
+
 ## Calibration quick reference (in-headset panel guides you)
 
 The two remotes ARE the physical landmarks (user-specified protocol):
