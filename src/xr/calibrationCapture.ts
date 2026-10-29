@@ -15,7 +15,7 @@
 import * as THREE from 'three';
 import type * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import { raycastSplatCenters } from '../viewer/splatRaycast';
-import { setScanOpacity, SCAN_OPACITY } from '../viewer/splatViewer';
+import { setScanOpacity } from '../viewer/splatViewer';
 import { SCAN_POINT_A, SCAN_POINT_B } from '../calibration/landmarks';
 import {
   solveYawTranslation, composeCalibration,
@@ -32,6 +32,7 @@ const HUD_DISTANCE = 1.3;          // m in front of the eyes
 const PANEL_HOLD_MS = 4000;        // final message stays this long
 const PLACE_SECONDS = 10;          // countdown to place the remotes
 const CALIBRATION_OPACITY = 0.20;   // scan visibility while calibrating (camera visible)
+const EXPERIENCE_OPACITY = 1.0;     // full quality once calibrated
 const MIN_REMOTE_SEPARATION = 0.3; // m — A and B must be distinguishable
 const MAX_FIT_RMS = 1;             // m — refuse nonsense fits
 
@@ -223,7 +224,7 @@ export function setupCalibrationCapture(
     const b = (solution.residuals[1] * 100).toFixed(1);
     step = 'DONE';
     button.visible = true;
-    setScanOpacity(splats, SCAN_OPACITY); // back to normal visibility
+    setScanOpacity(splats, EXPERIENCE_OPACITY); // full quality after calibration
     showPanel(`CALIBRATED ✓\nLeft remote = A, right = B\nfit error A: ${a} cm | B: ${b} cm\nButton = recalibrate`);
     onCalibrated?.(solution);
     if (holdTimer) clearTimeout(holdTimer);

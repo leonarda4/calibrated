@@ -4,7 +4,9 @@
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
 
-export const MODEL_URL = '/models/hallway.ply'; // gitignored scan binary in public/models/
+// High-detail scan: point_cloud_2 export (1.06M splats, 69 MB) — 4× the
+// detail of the previous 266k export. Gitignored binary in public/models/.
+export const MODEL_URL = '/models/hallway_high.ply';
 
 /**
  * Global splat opacity (0–1). 0.70 makes the scan see-through so the real
@@ -70,6 +72,7 @@ export function createViewerRig(): ViewerRig {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x000000, 0); // transparent clear for AR passthrough
   renderer.xr.enabled = true;
+  renderer.xr.setFoveation(0); // 0 = no fixed foveation → sharp peripheral vision
   document.body.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
@@ -81,8 +84,8 @@ export function createViewerRig(): ViewerRig {
 
   const splats = new GaussianSplats3D.DropInViewer({
     gpuAcceleratedSort: false,       // CPU sort — more compatible across browsers
-    antialiased: false,
-    dynamicScene: true,              // re-sort every frame (test; off again if slow)
+    antialiased: true,                // smoother splat edges
+    dynamicScene: true,               // re-sort every frame
     sphericalHarmonicsDegree: 0,
     sharedMemoryForWorkers: false,    // avoids SharedArrayBuffer (needs COOP/COEP otherwise)
   });
@@ -109,6 +112,7 @@ export async function loadScene(splats: GaussianSplats3D.DropInViewer): Promise<
     rotation: [0, 0, 0, 1],
     position: [0, 0, 0],
     scale: [1, 1, 1] as [number, number, number],
+    splatAlphaRemovalThreshold: 20, // cull faint flyer splats → cleaner image
   }]);
   splats.quaternion.set(...SCAN_ROOT_ROTATION);
   applyStartPoint(splats, START_POINT);
