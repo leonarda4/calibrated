@@ -4,9 +4,25 @@
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
 
-// High-detail scan: point_cloud_2 export (1.06M splats, 69 MB) — 4× the
-// detail of the previous 266k export. Gitignored binary in public/models/.
-export const MODEL_URL = '/models/hallway_high.ply';
+// Quality ladder — the same scan at 4 export levels. Switch on the headset
+// with a URL parameter: https://<pc>:5173/?scan=std|high|ultra|max
+//   std   = 266k splats (  17 MB)  fastest
+//   high  = 1.06M splats ( 69 MB)  default
+//   ultra = 2.13M splats (138 MB)
+//   max   = 4.25M splats (276 MB)  PC-grade; headset will likely struggle
+const SCAN_VARIANTS: Record<string, string> = {
+  std: '/models/hallway.ply',
+  high: '/models/hallway_high.ply',
+  ultra: '/models/hallway_ultra.ply',
+  max: '/models/hallway_max.ply',
+};
+export type ScanVariant = keyof typeof SCAN_VARIANTS;
+
+/** Resolve the scan file from ?scan=… (defaults to 'high'). */
+export function getScanUrl(): string {
+  const requested = new URLSearchParams(window.location.search).get('scan');
+  return SCAN_VARIANTS[requested ?? ''] ?? SCAN_VARIANTS.high;
+}
 
 /**
  * Global splat opacity (0–1). 0.70 makes the scan see-through so the real
@@ -107,8 +123,9 @@ export function createViewerRig(): ViewerRig {
  * start point be repositioned live without reloading the 17 MB scan.
  */
 export async function loadScene(splats: GaussianSplats3D.DropInViewer): Promise<void> {
+  const modelUrl = getScanUrl();
   await splats.addSplatScenes([{
-    path: MODEL_URL,
+    path: modelUrl,
     rotation: [0, 0, 0, 1],
     position: [0, 0, 0],
     scale: [1, 1, 1] as [number, number, number],
