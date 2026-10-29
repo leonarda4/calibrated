@@ -37,18 +37,28 @@ loadScene(splats)
 // Prefilled with the committed START_POINT so the UI mirrors the constant.
 bindSpawnPanel((point) => applyStartPoint(splats, point), START_POINT);
 
-// Controller-based landmark calibration (in VR). On success, report the
-// solution on the flat page and retire the manual spawn panel.
-const calibration = setupCalibrationCapture(renderer, scene, splats, (solution) => {
-  const cm = solution.residuals.map((r) => `${(r * 100).toFixed(1)} cm`).join(', ');
-  const t = solution.translation.map((v) => v.toFixed(3)).join(', ');
-  hud.appendStatus(
-    `calibrated ✓ yaw ${(solution.yaw * 180 / Math.PI).toFixed(2)}°, ` +
-    `translation [${t}], fit error ${cm}`,
-  );
-  const panel = document.getElementById('spawn-panel');
-  if (panel) panel.style.display = 'none';
-});
+// Placement-only calibration: predefined landmarks, remotes as probes.
+// Desktop clicks on the scan pick landmark coordinates (copy into
+// src/calibration/landmarks.ts).
+const calibration = setupCalibrationCapture(
+  renderer, scene, camera, splats,
+  (solution) => {
+    const cm = solution.residuals.map((r) => `${(r * 100).toFixed(1)} cm`).join(', ');
+    const t = solution.translation.map((v) => v.toFixed(3)).join(', ');
+    hud.appendStatus(
+      `calibrated ✓ yaw ${(solution.yaw * 180 / Math.PI).toFixed(2)}°, ` +
+      `translation [${t}], fit error ${cm}`,
+    );
+    const panel = document.getElementById('spawn-panel');
+    if (panel) panel.style.display = 'none';
+  },
+  (which, point) => {
+    hud.appendStatus(
+      `landmark ${which}: [${point.map((n) => n.toFixed(2)).join(', ')}] ` +
+      '→ copy into src/calibration/landmarks.ts',
+    );
+  },
+);
 
 // Render loop — works on desktop and inside XR (three switches cameras).
 // Explicit splats.viewer.update() keeps the projection uniforms current
@@ -64,7 +74,6 @@ renderer.setAnimationLoop(() => {
   controls.enabled = !presenting;
   splats.viewer.update(renderer, activeCamera);
   controls.update();
-  calibration.update(activeCamera, dt);
   renderer.render(scene, camera);
   hud.tickFrame(presenting);
   spawnMarker.visible = !presenting;

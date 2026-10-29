@@ -90,20 +90,27 @@ delay; the first correction itself is immediate. Corrections larger than
 origin) and the references are marked invalid until the remotes are
 re-placed.
 
-## Calibration quick reference (in-headset panel guides you)
+## Calibration quick reference
 
-The two remotes ARE the physical landmarks (user-specified protocol):
+The landmark points A and B are **predefined** in
+`src/calibration/landmarks.ts` (scan coordinates). Define them once with the
+desktop picker: click on the scan in the PC browser — 1st click prints
+point A, 2nd point B, further clicks alternate — and copy the printed
+coordinates into the constants.
 
-| Step | View | Action |
-| --- | --- | --- |
-| 1/4 | scan at 70% | aim the ray at **scan point A**, trigger. The LEFT remote will later mark its real-world spot. Sticks move the scan: **LEFT = X/Y, RIGHT = forward/back (Z)** |
-| 2/4 | scan at 70% | aim at **scan point B** (right remote represents it), trigger |
-| 3/4 | camera / room (scan faded) | **10-second countdown:** put the LEFT remote on real spot A and the RIGHT remote on real spot B |
-| 4/4 | done | the remotes' tracked positions are read as the measured points; yaw+translation solves and applies automatically |
+Then in VR the flow is placement-only:
 
-After 4/4 the info panel disappears (the final message stays ~4 s). A small
-green **⟲ CALIBRATE** button remains below where the panel was — aim the
-controller ray at it and pull the trigger to restart calibration.
+| View | Action |
+| --- | --- |
+| scan with markers **A** (cyan) and **B** (orange) | put the **LEFT** remote on real spot A, the **RIGHT** remote on spot B |
+| HUD (sticks to your view) | pull the trigger → solved and applied, fit errors shown |
+
+The instruction HUD is parented to the camera, so it never drifts or hides
+behind the scan. After calibration the message fades after ~4 s and only the
+green **⟲ CALIBRATE** button remains — aim at it + trigger to recalibrate
+(e.g. after the world shifted from leaving the boundary box). There is no
+automatic re-arrangement: if the scan shifts after a boundary event,
+re-place the remotes and pull the trigger again.
 
 After 4/4 the remotes stay as **reference anchors**: a tracking reset
 (guardian/passthrough takeover) re-solves the alignment from wherever the

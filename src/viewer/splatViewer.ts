@@ -77,6 +77,7 @@ export function createViewerRig(): ViewerRig {
     75, window.innerWidth / window.innerHeight, 0.1, 500,
   );
   camera.position.set(0, 1.6, 10); // desktop inspection: eye height, some distance back
+  scene.add(camera); // the XR HUD (calibration panel/button) parents to the camera
 
   const splats = new GaussianSplats3D.DropInViewer({
     gpuAcceleratedSort: false,       // CPU sort — more compatible across browsers
