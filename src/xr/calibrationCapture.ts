@@ -55,7 +55,8 @@ export function setupCalibrationCapture(
   splats: GaussianSplats3D.DropInViewer,
   onCalibrated?: (solution: YawTranslationSolution) => void,
   onLandmarkPicked?: LandmarkPickCallback,
-): { dispose(): void } {
+  onStatus?: (text: string) => void,
+): { startCalibration(): void; dispose(): void } {
   // ---- both controllers --------------------------------------------------
   const controllers: ControllerEntry[] = [];
   for (let i = 0; i < 2; i++) {
@@ -118,6 +119,7 @@ export function setupCalibrationCapture(
   const showPanel = (text: string): void => {
     panel.visible = true;
     setText(text);
+    onStatus?.(text); // mirror to the PC operator panel
   };
 
   const clearTimers = (): void => {
@@ -275,6 +277,15 @@ export function setupCalibrationCapture(
   renderer.domElement.addEventListener('pointerdown', onPointerDown);
 
   return {
+    /** PC operator entry point (Link route): start the placement countdown. */
+    startCalibration() {
+      if (renderer.xr.isPresenting) {
+        startCountdown();
+      } else {
+        showPanel('No VR session running\nStart the session first (Enter VR),\nthen press CALIBRATE');
+        onStatus?.('no VR session running');
+      }
+    },
     dispose() {
       clearTimers();
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);

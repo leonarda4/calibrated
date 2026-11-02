@@ -10,6 +10,7 @@ import { attachEnterVr } from './xr/session';
 import { setupCalibrationCapture } from './xr/calibrationCapture';
 import { makeHud } from './ui/hud';
 import { bindSpawnPanel } from './ui/spawnPanel';
+import { bindOperatorPanel } from './ui/operatorPanel';
 import { START_POINT } from './viewer/splatViewer';
 
 const hud = makeHud();
@@ -37,6 +38,10 @@ loadScene(splats)
 // Prefilled with the committed START_POINT so the UI mirrors the constant.
 bindSpawnPanel((point) => applyStartPoint(splats, point), START_POINT);
 
+// PC operator panel: drives the calibration from the flat page while the
+// person in the headset (Link route) only places the remotes.
+const operatorPanel = bindOperatorPanel();
+
 // Placement-only calibration: predefined landmarks, remotes as probes.
 // Desktop clicks on the scan pick landmark coordinates (copy into
 // src/calibration/landmarks.ts).
@@ -58,7 +63,9 @@ const calibration = setupCalibrationCapture(
       '→ copy into src/calibration/landmarks.ts',
     );
   },
+  (text) => { operatorPanel.setStatus(text); },
 );
+operatorPanel.onCalibrateClick(() => calibration.startCalibration());
 
 // Render loop — works on desktop and inside XR (three switches cameras).
 // Explicit splats.viewer.update() keeps the projection uniforms current

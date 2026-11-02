@@ -58,6 +58,36 @@ act as reference anchors and the watchdog re-solves the alignment whenever
 the tracking origin is redefined. The old "Settings → Device → Tracking off"
 trick is NOT an option — it disables 6DoF tracking entirely.
 
+## Delivery route 2 — PC renders, streams via Meta Link
+
+The headset renders nothing itself; the PC GPU does and Link (Air Link / USB)
+streams the picture. Setup:
+
+1. Install the **Meta Quest Link** app on the PC; under Settings → General
+   enable **"Set Meta Quest Link as active OpenXR runtime"** (Chrome's WebXR
+   goes through OpenXR — without this, "Enter VR" won't appear).
+2. Connect the headset: Quick Settings → **Air Link** (or USB cable → Quest
+   Link).
+3. On the PC open Chrome → `https://localhost:5173` (accept the self-signed
+   cert warning once). Add `?scan=ultra` or `?scan=max` — the PC GPU can
+   handle the heavy variants.
+4. Click **Enter VR** — the session renders on the PC and streams to the
+   headset.
+
+Differences vs. the Quest Browser route: no passthrough (desktop Chrome has
+no AR over Link — calibration runs against a black background instead of the
+camera image), and splat resolution can go up to the 4.25M variant.
+
+**Calibration runs entirely from the PC in this route**: the flat page has a
+CALIBRATE button (bottom-left) plus a live status line. The person in the
+headset only places the remotes on the markers — the operator clicks
+CALIBRATE on the PC, watches the 10-second countdown on screen, and reads
+the fit result there. The in-headset HUD mirrors the same instructions.
+
+Networking: prefer Ethernet from the PC to the router, 5 GHz WiFi with clear
+line of sight to the headset; if Air Link stutters, test with USB first to
+separate network from GPU problems.
+
 ## Session start behaviour
 
 Every VR session starts **from the beginning**: the scan sits at its default
