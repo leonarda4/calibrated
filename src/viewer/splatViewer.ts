@@ -122,7 +122,10 @@ export function createViewerRig(): ViewerRig {
  * transform on the group (instead of baking it into the load) lets the
  * start point be repositioned live without reloading the 17 MB scan.
  */
-export async function loadScene(splats: GaussianSplats3D.DropInViewer): Promise<void> {
+export async function loadScene(
+  splats: GaussianSplats3D.DropInViewer,
+  onProgress?: (percent: number) => void,
+): Promise<string> {
   const modelUrl = getScanUrl();
   await splats.addSplatScenes([{
     path: modelUrl,
@@ -130,11 +133,13 @@ export async function loadScene(splats: GaussianSplats3D.DropInViewer): Promise<
     position: [0, 0, 0],
     scale: [1, 1, 1] as [number, number, number],
     splatAlphaRemovalThreshold: 20, // cull faint flyer splats → cleaner image
+    onProgress: (percent: number) => onProgress?.(percent),
   }]);
   splats.quaternion.set(...SCAN_ROOT_ROTATION);
   applyStartPoint(splats, START_POINT);
   const patched = patchSplatOpacity(splats, SCAN_OPACITY);
   if (!patched) console.warn('scan opacity patch failed (shader string not found)');
+  return modelUrl;
 }
 
 /**

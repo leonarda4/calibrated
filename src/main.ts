@@ -4,7 +4,7 @@
 
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
-  createViewerRig, loadScene, applyStartPoint, createSpawnMarker,
+  createViewerRig, loadScene, applyStartPoint, createSpawnMarker, getScanUrl,
 } from './viewer/splatViewer';
 import { attachEnterVr } from './xr/session';
 import { setupCalibrationCapture } from './xr/calibrationCapture';
@@ -30,8 +30,11 @@ const spawnMarker = createSpawnMarker();
 scene.add(spawnMarker);
 
 hud.setStatus('loading hallway scan …');
-loadScene(splats)
-  .then(() => { hud.setStatus('loaded ✓ (hallway.ply)'); })
+loadScene(splats, (percent) => {
+  // ultra/max parse for minutes — a live percentage prevents "stuck" looks
+  hud.setStatus(`loading ${getScanUrl().split('/').pop()} … ${Math.round(percent)}%`);
+})
+  .then((url) => { hud.setStatus(`loaded ✓ (${url.split('/').pop()})`); })
   .catch((err: unknown) => { hud.setStatus(`load error: ${String(err)}`); });
 
 // Operator panel: shift the map around the player, live, before entering VR.
