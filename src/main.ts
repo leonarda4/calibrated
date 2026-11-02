@@ -67,8 +67,14 @@ const calibration = setupCalibrationCapture(
     );
   },
   (text) => { operatorPanel.setStatus(text); },
+  (editActive) => { operatorPanel.setEditActive(editActive); },
 );
 operatorPanel.onCalibrateClick(() => calibration.startCalibration());
+operatorPanel.onEditClick(() => {
+  // toggle via the module (it owns the state and reports it back)
+  const active = !document.getElementById('calib-edit')?.classList.contains('active');
+  calibration.setLandmarkEdit(active);
+});
 
 // Render loop — works on desktop and inside XR (three switches cameras).
 // Explicit splats.viewer.update() keeps the projection uniforms current

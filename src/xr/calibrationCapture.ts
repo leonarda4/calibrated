@@ -56,7 +56,8 @@ export function setupCalibrationCapture(
   onCalibrated?: (solution: YawTranslationSolution) => void,
   onLandmarkPicked?: LandmarkPickCallback,
   onStatus?: (text: string) => void,
-): { startCalibration(): void; dispose(): void } {
+  onLandmarkEdit?: (active: boolean) => void,
+): { startCalibration(): void; setLandmarkEdit(on: boolean): void; dispose(): void } {
   // ---- both controllers --------------------------------------------------
   const controllers: ControllerEntry[] = [];
   for (let i = 0; i < 2; i++) {
@@ -98,20 +99,26 @@ export function setupCalibrationCapture(
   button.position.set(0, -1.4, -HUD_DISTANCE);
   camera.add(panel, button);
 
+  // Session-active landmark points: start from the committed constants and
+  // can only be changed through the EDIT A/B button (never by idle clicks).
+  const activeA = new THREE.Vector3(...SCAN_POINT_A);
+  const activeB = new THREE.Vector3(...SCAN_POINT_B);
+
   // ---- markers at the predefined landmark points ------------------------
   const markerA = makeMarker(0x00e5ff, 'A');   // cyan = point A (left remote)
   const markerB = makeMarker(0xffa500, 'B');  // orange = point B (right remote)
   const physA = makeMarker(0x00e5ff, null);
   const physB = makeMarker(0xffa500, null);
   physA.visible = physB.visible = false;
-  markerA.position.fromArray(SCAN_POINT_A);
-  markerB.position.fromArray(SCAN_POINT_B);
+  markerA.position.copy(activeA);
+  markerB.position.copy(activeB);
   // scan markers live inside the splats group; measured markers in world space
   splats.add(markerA, markerB);
   scene.add(physA, physB);
 
   let step: 'READY' | 'COUNTDOWN' | 'DONE' = 'READY';
   let pickToggle: 'A' | 'B' = 'A';
+  let landmarkEdit = false; // gate: idle state must NOT modify landmarks
   let holdTimer: ReturnType<typeof setTimeout> | null = null;
   let countdownTimer: ReturnType<typeof setInterval> | null = null;
   let secondsLeft = 0;
@@ -199,8 +206,8 @@ export function setupCalibrationCapture(
       return;
     }
     const solution = solveYawTranslation([
-      { scan: splats.localToWorld(new THREE.Vector3(...SCAN_POINT_A)).toArray() as Vec3, measured: leftPos.toArray() as Vec3 },
-      { scan: splats.localToWorld(new THREE.Vector3(...SCAN_POINT_B)).toArray() as Vec3, measured: rightPos.toArray() as Vec3 },
+      { scan: splats.localToWorld(activeA.clone()).toArray() as Vec3, measured: leftPos.toArray() as Vec3 },
+      { scan: splats.localToWorld(activeB.clone()).toArray() as Vec3, measured: rightPos.toArray() as Vec3 },
     ]);
     if (solution.rmsResidual > MAX_FIT_RMS) {
       showPanel('Fit rejected — remotes inconsistent\nCheck that LEFT is on A and\nRIGHT is on B, then restart');
@@ -245,11 +252,23 @@ export function setupCalibrationCapture(
     if (t > 0.2 && t < 5 && perpendicular < 0.25) startCountdown();
   };
 
-  // ---- desktop picker: click the scan to define landmark points ----------
+  // ---- desktop picker: ONLY active in landmark-edit mode (EDIT A/B button).
+  // Idle clicks never modify the calibration points.
+  const setLandmarkEdit = (on: boolean): void => {
+    landmarkEdit = on;
+    onLandmarkEdit?.(on);
+    if (on) {
+      pickToggle = 'A';
+      onStatus?.(`landmark edit ON\nClick the scan: 1st click = A, 2nd = B\nAuto-off after B`);
+    } else {
+      onStatus?.('landmark edit OFF\nIdle clicks do not modify A/B');
+    }
+  };
+
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
   const onPointerDown = (e: PointerEvent): void => {
-    if (renderer.xr.isPresenting) return;
+    if (!landmarkEdit || renderer.xr.isPresenting) return;
     const sm = splats.viewer.splatMesh as unknown as SplatMeshWithCenters;
     const centers = sm.splatDataTextures?.baseData?.centers;
     if (!centers) return;
@@ -263,16 +282,20 @@ export function setupCalibrationCapture(
     const dirLocal = raycaster.ray.direction.clone().transformDirection(inv);
     const hit = raycastSplatCenters(centers, originLocal, dirLocal);
     if (!hit) return;
-    if (pickToggle === 'A') {
+    const which = pickToggle;
+    if (which === 'A') {
+      activeA.copy(hit);
       markerA.position.copy(hit);
       markerA.visible = true;
       pickToggle = 'B';
     } else {
+      activeB.copy(hit);
       markerB.position.copy(hit);
       markerB.visible = true;
       pickToggle = 'A';
     }
-    onLandmarkPicked?.(pickToggle === 'B' ? 'A' : 'B', hit.toArray() as Vec3);
+    onLandmarkPicked?.(which, hit.toArray() as Vec3);
+    if (which === 'B') setLandmarkEdit(false); // both points set → leave edit mode
   };
   renderer.domElement.addEventListener('pointerdown', onPointerDown);
 
@@ -285,6 +308,10 @@ export function setupCalibrationCapture(
         showPanel('No VR session running\nStart the session first (Enter VR),\nthen press CALIBRATE');
         onStatus?.('no VR session running');
       }
+    },
+    /** The ONLY way to enable landmark re-picking (idle clicks are ignored). */
+    setLandmarkEdit(on: boolean) {
+      setLandmarkEdit(on);
     },
     dispose() {
       clearTimers();

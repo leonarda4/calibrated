@@ -123,10 +123,12 @@ re-placed.
 ## Calibration quick reference
 
 The landmark points A and B are **predefined** in
-`src/calibration/landmarks.ts` (scan coordinates). Define them once with the
-desktop picker: click on the scan in the PC browser — 1st click prints
-point A, 2nd point B, further clicks alternate — and copy the printed
-coordinates into the constants.
+`src/calibration/landmarks.ts` (scan coordinates). To change them at
+runtime, press the **EDIT A/B** button on the flat page first — idle clicks
+on the scan are ignored and never modify the calibration points. In edit
+mode, the 1st scan click sets A, the 2nd sets B (both take effect
+immediately for the session and are printed for copying into the
+constants); the mode switches itself off after B.
 
 Then in VR the flow is:
 
