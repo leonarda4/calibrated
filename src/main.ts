@@ -113,7 +113,7 @@ renderer.setAnimationLoop(() => {
   spawnMarker.visible = !presenting;
   if (presenting) {
     enterVr.noteXrFrame(); // first-frame + watchdog accounting
-    calibration.sample(dt); // buffer remote positions + PLY fade-in
+    calibration.sample();  // buffer remote positions (hand-takeover guard)
   }
   // periodic fps sample in the console (every 5 s)
   fpsFrames++;
