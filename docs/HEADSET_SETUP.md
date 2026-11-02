@@ -78,6 +78,24 @@ Differences vs. the Quest Browser route: no passthrough (desktop Chrome has
 no AR over Link — calibration runs against a black background instead of the
 camera image), and splat resolution can go up to the 4.25M variant.
 
+**Status 2026-11-02: Link route currently BLOCKED by an upstream bug.**
+Measured evidence: `requestSession` resolves after ~66 s, session starts
+(blend=opaque), controllers connect — but **three.js content never presents
+in the headset** ("Diese Seite reagiert nicht"). Confirmed identical with
+the official `threejs.org/examples/webxr_vr_sandbox` sample, with and
+without the `--disable-features=XRSandbox` flag. A second Enter VR click
+fails with "There is already an active, immersive XRSession" (the session
+exists but is not presenting). Community reports (Oct 2026) match: raw-WebGL
+WebXR presents over Link, three.js sessions do not; unresolved on Meta's
+side in Horizon Link 208. Note: an `OVRServer_x64.exe` crash (0xc0000409)
+was also observed in the Windows event log the same day.
+
+Retry the Link route after the next Horizon Link / Chrome update — remove
+the XRSandbox flag from the Chrome shortcut first if it was added.
+Alternative PCVR runtime if needed earlier: **SteamVR** (install Steam +
+SteamVR on the PC, "Steam Link" app on the headset, set SteamVR as active
+OpenXR runtime) — historically the more stable Chrome WebXR combination.
+
 **Known behaviour over Link (measured 2026-11-02, Horizon Link 208):**
 - `requestSession` takes **~66 seconds** to resolve (Chrome's XR sandbox;
   known Meta/Chromium issue). Click Enter VR **once**, keep the headset ON,
