@@ -16,6 +16,7 @@ import * as THREE from 'three';
 import type * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import { raycastSplatCenters } from '../viewer/splatRaycast';
 import { setScanOpacity } from '../viewer/splatViewer';
+import { logger } from '../debug/logger';
 import { SCAN_POINT_A, SCAN_POINT_B } from '../calibration/landmarks';
 import {
   solveYawTranslation, composeCalibration,
@@ -74,10 +75,15 @@ export function setupCalibrationCapture(
     ctrl.addEventListener('connected', (e) => {
       entry.source = (e as unknown as { data: XRInputSource }).data;
       ctrl.visible = grip.visible = true;
+      const gp = entry.source?.gamepad;
+      logger.info('calib', `controller #${i} connected — ` +
+        `hand=${entry.source?.handedness ?? '?'}, ` +
+        `gamepad=${gp ? `yes (${gp.axes.length} axes, ${gp.buttons.length} buttons)` : 'NO'}`);
     });
     ctrl.addEventListener('disconnected', () => {
       entry.source = null;
       ctrl.visible = grip.visible = false;
+      logger.warn('calib', `controller #${i} disconnected`);
     });
     ctrl.addEventListener('selectstart', () => onSelect(entry));
     scene.add(ctrl, grip);
@@ -127,6 +133,7 @@ export function setupCalibrationCapture(
     panel.visible = true;
     setText(text);
     onStatus?.(text); // mirror to the PC operator panel
+    logger.debug('calib', `panel: ${text.split('\n')[0]}`);
   };
 
   const clearTimers = (): void => {
@@ -209,6 +216,12 @@ export function setupCalibrationCapture(
       { scan: splats.localToWorld(activeA.clone()).toArray() as Vec3, measured: leftPos.toArray() as Vec3 },
       { scan: splats.localToWorld(activeB.clone()).toArray() as Vec3, measured: rightPos.toArray() as Vec3 },
     ]);
+    logger.info('calib', 'solving — ' +
+      `scanA=[${splats.localToWorld(activeA.clone()).toArray().map(n => n.toFixed(2))}] ` +
+      `left=[${leftPos.toArray().map(n => n.toFixed(2))}] | ` +
+      `scanB=[${splats.localToWorld(activeB.clone()).toArray().map(n => n.toFixed(2))}] ` +
+      `right=[${rightPos.toArray().map(n => n.toFixed(2))}] ` +
+      `rms=${solution.rmsResidual.toFixed(3)}m`);
     if (solution.rmsResidual > MAX_FIT_RMS) {
       showPanel('Fit rejected — remotes inconsistent\nCheck that LEFT is on A and\nRIGHT is on B, then restart');
       enterReady();
@@ -257,6 +270,7 @@ export function setupCalibrationCapture(
   const setLandmarkEdit = (on: boolean): void => {
     landmarkEdit = on;
     onLandmarkEdit?.(on);
+    logger.info('calib', `landmark edit ${on ? 'ON' : 'OFF'}`);
     if (on) {
       pickToggle = 'A';
       onStatus?.(`landmark edit ON\nClick the scan: 1st click = A, 2nd = B\nAuto-off after B`);

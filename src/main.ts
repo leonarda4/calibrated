@@ -11,7 +11,10 @@ import { setupCalibrationCapture } from './xr/calibrationCapture';
 import { makeHud } from './ui/hud';
 import { bindSpawnPanel } from './ui/spawnPanel';
 import { bindOperatorPanel } from './ui/operatorPanel';
+import { logger } from './debug/logger';
 import { START_POINT } from './viewer/splatViewer';
+
+logger.info('boot', 'app starting');
 
 const hud = makeHud();
 
@@ -30,12 +33,17 @@ const spawnMarker = createSpawnMarker();
 scene.add(spawnMarker);
 
 hud.setStatus('loading hallway scan …');
+let lastLoggedPercent = 0;
 loadScene(splats, (percent) => {
   // ultra/max parse for minutes — a live percentage prevents "stuck" looks
   hud.setStatus(`loading ${getScanUrl().split('/').pop()} … ${Math.round(percent)}%`);
+  if (percent - lastLoggedPercent >= 25) {           // log every 25%
+    lastLoggedPercent = percent;
+    logger.info('load', `scan ${Math.round(percent)}%`);
+  }
 })
-  .then((url) => { hud.setStatus(`loaded ✓ (${url.split('/').pop()})`); })
-  .catch((err: unknown) => { hud.setStatus(`load error: ${String(err)}`); });
+  .then((url) => { logger.info('load', `scan loaded: ${url}`); hud.setStatus(`loaded ✓ (${url.split('/').pop()})`); })
+  .catch((err: unknown) => { logger.error('load', 'scan load FAILED:', err); hud.setStatus(`load error: ${String(err)}`); });
 
 // Operator panel: shift the map around the player, live, before entering VR.
 // Prefilled with the committed START_POINT so the UI mirrors the constant.
@@ -81,6 +89,8 @@ operatorPanel.onEditClick(() => {
 // (the library's callback-mesh path missed frames → black screen).
 let lastHead: [number, number, number] | null = null;
 let lastTime = performance.now();
+let fpsWindowStart = lastTime;
+let fpsFrames = 0;
 renderer.setAnimationLoop(() => {
   const now = performance.now();
   const dt = Math.min((now - lastTime) / 1000, 0.05); // clamp gaps (tab throttling)
@@ -93,6 +103,14 @@ renderer.setAnimationLoop(() => {
   renderer.render(scene, camera);
   hud.tickFrame(presenting);
   spawnMarker.visible = !presenting;
+  // periodic fps sample in the console (every 5 s)
+  fpsFrames++;
+  if (now - fpsWindowStart >= 5000) {
+    const fps = (fpsFrames * 1000) / (now - fpsWindowStart);
+    logger.debug('fps', `${fps.toFixed(1)} fps (${presenting ? 'XR presenting' : 'flat view'})`);
+    fpsWindowStart = now;
+    fpsFrames = 0;
+  }
   if (presenting) {
     const p = activeCamera.position;
     lastHead = [p.x, p.y, p.z]; // still recorded: useful when there IS room to walk
