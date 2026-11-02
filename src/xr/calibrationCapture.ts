@@ -180,6 +180,7 @@ export function setupCalibrationCapture(
 
   /** Trigger on the button starts the placement countdown. */
   const startCountdown = (): void => {
+    logger.info('calib', `countdown started — ${PLACE_SECONDS}s to place the remotes`);
     step = 'COUNTDOWN';
     button.visible = false;
     setScanOpacity(splats, CALIBRATION_OPACITY);
@@ -197,6 +198,7 @@ export function setupCalibrationCapture(
       } else {
         clearInterval(countdownTimer!);
         countdownTimer = null;
+        logger.info('calib', 'countdown ended — reading remotes now');
         tryCalibrate();
       }
     }, 1000);
@@ -220,18 +222,25 @@ export function setupCalibrationCapture(
     const left = byHand('left');
     const right = byHand('right');
     if (!left || !right) {
+      logger.error('calib', 'fit aborted: not both remotes found ' +
+        '(hands are excluded) — wake both physical controllers');
       showPanel('BOTH remotes are needed\n(hands do NOT count)\nWake both controllers, then use\nthe button to restart');
       enterReady();
       return;
     }
     const leftPos = remotePoint(left);
     const rightPos = remotePoint(right);
+    logger.info('calib', `remotes read — LEFT=[${leftPos.toArray().map(n => n.toFixed(2))}] ` +
+      `RIGHT=[${rightPos.toArray().map(n => n.toFixed(2))}]`);
     if (leftPos.length() < 0.05 || rightPos.length() < 0.05) {
+      logger.error('calib', 'fit aborted: remote positions untracked (near origin)');
       showPanel('Remotes not tracked yet\nMove them a little, then use\nthe button to restart');
       enterReady();
       return;
     }
     if (leftPos.distanceTo(rightPos) < MIN_REMOTE_SEPARATION) {
+      logger.error('calib', `fit aborted: remotes only ` +
+        `${leftPos.distanceTo(rightPos).toFixed(2)} m apart (min ${MIN_REMOTE_SEPARATION} m)`);
       showPanel('Remotes too close together\nPlace them on A and B separately');
       enterReady();
       return;
@@ -247,6 +256,8 @@ export function setupCalibrationCapture(
       `right=[${rightPos.toArray().map(n => n.toFixed(2))}] ` +
       `rms=${solution.rmsResidual.toFixed(3)}m`);
     if (solution.rmsResidual > MAX_FIT_RMS) {
+      logger.error('calib', `fit REJECTED — rms=${solution.rmsResidual.toFixed(3)} m ` +
+        `(limit ${MAX_FIT_RMS}); remotes do not match the two-point geometry`);
       showPanel('Fit rejected — remotes inconsistent\nCheck that LEFT is on A and\nRIGHT is on B, then restart');
       enterReady();
       return;
@@ -290,7 +301,14 @@ export function setupCalibrationCapture(
     const toButton = button.getWorldPosition(new THREE.Vector3()).sub(origin);
     const t = toButton.dot(dir);
     const perpendicular = toButton.clone().addScaledVector(dir, -t).length();
-    if (t > 0.2 && t < 5 && perpendicular < 0.25) startCountdown();
+    const hit = t > 0.2 && t < 5 && perpendicular < 0.25;
+    logger.debug('calib', `selectstart (${entry.source?.handedness ?? '?'} remote) — ` +
+      `step=${step}, buttonRayDist=${t.toFixed(2)}m, off=${perpendicular.toFixed(2)}m → ` +
+      `${hit ? 'HIT' : 'MISS'}`);
+    if (hit) startCountdown();
+    else if (step === 'READY') {
+      showPanel('Trigger registered, but the ray\nMISSED the button.\nLook DOWN — the green button\nsits below your view.');
+    }
   };
 
   // ---- desktop picker: ONLY active in landmark-edit mode (EDIT A/B button).
