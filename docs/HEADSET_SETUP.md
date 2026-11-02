@@ -78,6 +78,22 @@ Differences vs. the Quest Browser route: no passthrough (desktop Chrome has
 no AR over Link — calibration runs against a black background instead of the
 camera image), and splat resolution can go up to the 4.25M variant.
 
+**Known behaviour over Link (measured 2026-11-02, Horizon Link 208):**
+- `requestSession` takes **~66 seconds** to resolve (Chrome's XR sandbox;
+  known Meta/Chromium issue). Click Enter VR **once**, keep the headset ON,
+  and wait.
+- Do **not** take the headset off during the wait — the proximity sensor
+  ends the session.
+- After a session ends, the next `requestSession` in the same Chrome run
+  often fails ("Something went wrong initializing the session in the
+  runtime"). **Restart Chrome** before each new attempt.
+- Optional testing flag: launch Chrome with `--disable-features=XRSandbox`
+  to cut the wait to ~1 s (disables a Chrome security layer — do not use
+  for daily browsing).
+- If it fails instantly instead of slowly: check whether `OVRServer_x64.exe`
+  crashed (Windows Event Viewer → Application). Restart the Link app and
+  reconnect.
+
 **Calibration runs entirely from the PC in this route**: the flat page has a
 CALIBRATE button (bottom-left) plus a live status line. The person in the
 headset only places the remotes on the markers — the operator clicks
