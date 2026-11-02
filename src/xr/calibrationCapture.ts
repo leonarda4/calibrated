@@ -67,7 +67,7 @@ export function setupCalibrationCapture(
   onLandmarkPicked?: LandmarkPickCallback,
   onStatus?: (text: string) => void,
   onLandmarkEdit?: (active: boolean) => void,
-): { startCalibration(): void; setLandmarkEdit(on: boolean): void; dispose(): void } {
+): { startCalibration(): void; setLandmarkEdit(on: boolean): void; sample(): void; dispose(): void } {
   // ---- input sources: up to 4 slots (2 remotes + 2 hands) ------------------
   // Steam Link passes Quest hand tracking through as input sources; hands
   // are classified and IGNORED — only physical remotes drive the calibration.
@@ -120,6 +120,25 @@ export function setupCalibrationCapture(
     return pool.find((c) => c.source?.handedness === hand)
       ?? pool[hand === 'left' ? 0 : pool.length - 1];
   };
+
+  // ---- hand-takeover guard (Steam Link) -----------------------------------
+  // SteamVR switches inputs to the user's HANDS as soon as the remotes are
+  // put down (hand tracking resumes). The grip position streamed while a
+  // remote was live is its true placement spot — so we buffer every frame
+  // and read the BUFFER at countdown end. If hands took over, the buffer
+  // still holds where each remote was last seen (lying on the floor).
+  const lastRemotePos: Record<'left' | 'right', THREE.Vector3 | null> = {
+    left: null, right: null,
+  };
+  const sampleRemotePositions = (): void => {
+    for (const entry of remotes()) {
+      const hand = entry.source?.handedness;
+      if (hand !== 'left' && hand !== 'right') continue;
+      lastRemotePos[hand] = remotePoint(entry);
+    }
+  };
+  const left0 = (): ControllerEntry | undefined => byHand('left');
+  const right0 = (): ControllerEntry | undefined => byHand('right');
 
   // ---- HUD: parented to the camera → sticks rigidly to the view ----------
   const { sprite: panel, setText } = makeTextPanel();
@@ -234,22 +253,23 @@ export function setupCalibrationCapture(
   };
 
   const tryCalibrate = (): void => {
-    const left = byHand('left');
-    const right = byHand('right');
-    if (!left || !right) {
-      logger.error('calib', 'fit aborted: not both remotes found ' +
-        '(hands are excluded) — wake both physical controllers');
-      showPanel('BOTH remotes are needed\n(hands do NOT count)\nWake both controllers, then use\nthe button to restart');
+    // Prefer the BUFFERED remote positions: they were streamed while the
+    // remotes were live. If hands took over after the remotes were placed
+    // down, the buffer still holds their true floor spots. Fall back to a
+    // live read only when there is no buffer (remotes never streamed).
+    sampleRemotePositions(); // last frame sample before deciding
+    const leftPos = lastRemotePos.left ?? (left0() ? remotePoint(left0()!) : null);
+    const rightPos = lastRemotePos.right ?? (right0() ? remotePoint(right0()!) : null);
+    if (!leftPos || !rightPos) {
+      logger.error('calib', 'fit aborted: no remote positions — ' +
+        'hold/wake BOTH physical remotes, trigger the button, then place them');
+      showPanel('No remote positions.\nHold BOTH remotes while\npressing the button, then\nplace them on the floor');
       enterReady();
       return;
     }
-    const leftPos = remotePoint(left);
-    const rightPos = remotePoint(right);
     logger.info('calib', `remotes read — ` +
-      `LEFT(#${controllers.indexOf(left)},${left.source?.handedness ?? '?'})=` +
-      `[${leftPos.toArray().map(n => n.toFixed(2)).join(', ')}] ` +
-      `RIGHT(#${controllers.indexOf(right)},${right.source?.handedness ?? '?'})=` +
-      `[${rightPos.toArray().map(n => n.toFixed(2)).join(', ')}] ` +
+      `LEFT(buffered=${!!lastRemotePos.left})=[${leftPos.toArray().map(n => n.toFixed(2)).join(', ')}] ` +
+      `RIGHT(buffered=${!!lastRemotePos.right})=[${rightPos.toArray().map(n => n.toFixed(2)).join(', ')}] ` +
       `distance=${leftPos.distanceTo(rightPos).toFixed(2)} m`);
     if (leftPos.length() < 0.05 || rightPos.length() < 0.05) {
       logger.error('calib', 'fit aborted: remote positions untracked (near origin)');
@@ -260,8 +280,8 @@ export function setupCalibrationCapture(
     if (leftPos.distanceTo(rightPos) < MIN_REMOTE_SEPARATION) {
       logger.error('calib', `fit aborted: remotes only ` +
         `${leftPos.distanceTo(rightPos).toFixed(2)} m apart (min ${MIN_REMOTE_SEPARATION} m). ` +
-        `Suspicion: Steam Link passed HANDS as remotes (not distinguishable via XRInputSource.hand on this runtime)`);
-      showPanel(`Remotes only ${leftPos.distanceTo(rightPos).toFixed(2)} m apart.\nIf that was your two HANDS:\npress a button on each physical\nremote, place them ≥1 m apart`);
+        `Place the remotes ≥1 m apart on the floor.`);
+      showPanel(`Remotes only ${leftPos.distanceTo(rightPos).toFixed(2)} m apart.\nPlace them at least 1 m apart\non the floor — widely separated\nspots give a precise fit`);
       enterReady();
       return;
     }
@@ -392,6 +412,15 @@ export function setupCalibrationCapture(
     /** The ONLY way to enable landmark re-picking (idle clicks are ignored). */
     setLandmarkEdit(on: boolean) {
       setLandmarkEdit(on);
+    },
+    /**
+     * Call once per rendered frame while presenting: continuously buffers
+     * the remotes' streamed grip positions, so the calibration can use the
+     * true floor spots even after SteamVR switches the inputs to the user's
+     * hands (which happens as soon as the remotes are put down).
+     */
+    sample() {
+      if (renderer.xr.isPresenting) sampleRemotePositions();
     },
     dispose() {
       clearTimers();

@@ -107,6 +107,21 @@ Link" app on the headset, set SteamVR as active OpenXR runtime, then
 show the `XRWebGLLayer` base layer, frames counting, and the first-frame
 time in the console. The Quest browser route must keep working unchanged.
 
+**Hand-tracking takeover on Steam Link (user-verified behaviour):** SteamVR
+registers the remotes, but as soon as they are put down on the floor, the
+freed hands become tracked and SteamVR switches the inputs to them — the
+calibration then reads hand positions instead of the remotes. Two fixes:
+
+1. **System level (recommended):** turn hand tracking OFF in the headset
+   settings (Settings → Movement Tracking → Hand Tracking) while using the
+   Steam Link route — then SteamVR never sees hands at all.
+2. **In-app (built in):** the app buffers each remote's streamed grip
+   position every frame; at countdown end the buffered floor spots are used
+   (with the hands excluded from the inputs where the runtime allows it).
+   Recommended flow regardless: **HOLD both remotes when triggering the
+   CALIBRATE button**, place them during the countdown, and keep your hands
+   away from where the remotes lie.
+
 **Status 2026-11-02: Link route currently BLOCKED by an upstream bug.**
 Measured evidence: `requestSession` resolves after ~66 s, session starts
 (blend=opaque), controllers connect — but **three.js content never presents
