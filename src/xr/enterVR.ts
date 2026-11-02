@@ -119,6 +119,7 @@ export interface EnterVr {
 }
 
 const NO_XR_FRAME_WARNING_SECONDS = 5;
+const tmpVec = new THREE.Vector3();
 
 export function setupEnterVr(renderer: THREE.WebGLRenderer): EnterVr {
   const statusEl = document.getElementById('status');
@@ -160,6 +161,12 @@ export function setupEnterVr(renderer: THREE.WebGLRenderer): EnterVr {
     frames = 0;
     firstFrameSeconds = null;
     watchdogFired = false;
+    // Floor-calibration check: with a correct 'local-floor' space the head
+    // sits ~1.5–1.8 m above y=0. Near 0.0 → the runtime's floor is at eye
+    // height (SteamVR Room Setup needed).
+    renderer.xr.getCamera().getWorldPosition(tmpVec);
+    logger.info(TAG, `reference head height at start: ` +
+      `${tmpVec.y.toFixed(2)} m ${tmpVec.y < 0.8 ? '(LOW! runtime floor at eye height? run SteamVR Room Setup)' : '(ok)'}`);
     btn.textContent = 'Exit VR';
     if (appEl) appEl.style.display = 'none';
     watchdogTimer = setTimeout(() => {

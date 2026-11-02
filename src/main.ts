@@ -94,6 +94,8 @@ operatorPanel.onEditClick(() => {
 // Explicit splats.viewer.update() keeps the projection uniforms current
 // (the library's callback-mesh path missed frames → black screen).
 let lastHead: [number, number, number] | null = null;
+let headY: number | null = null;
+let headLogAt = 0;
 let lastTime = performance.now();
 let fpsWindowStart = lastTime;
 let fpsFrames = 0;
@@ -130,12 +132,22 @@ renderer.setAnimationLoop(() => {
         `presenting: ${s.presenting ? 'yes' : 'no'}\n` +
         `frames: ${s.frames}\n` +
         `first frame: ${s.firstFrameSeconds !== null ? s.firstFrameSeconds.toFixed(2) + 's' : '—'}\n` +
-        `watchdog: ${s.watchdogFired ? 'NO XR FRAMES!' : 'ok'}`);
+        `watchdog: ${s.watchdogFired ? 'NO XR FRAMES!' : 'ok'}\n` +
+        `head y: ${headY !== null ? headY.toFixed(2) + ' m' : '—'}`);
     }
   }
   if (presenting) {
     const p = activeCamera.position;
     lastHead = [p.x, p.y, p.z]; // still recorded: useful when there IS room to walk
+    // head-height telemetry: with a correct floor calibration the head sits
+    // at ~1.5–1.8 m; near 0.0 m means the runtime's floor is at eye height
+    // (fix in SteamVR Room Setup), and the world appears "floor at head".
+    headY = p.y;
+    headLogAt += dt;
+    if (headLogAt >= 2) {
+      headLogAt = 0;
+      logger.debug('xr-head', `head y=${p.y.toFixed(2)} m (floor-calibration check)`);
+    }
   }
 });
 

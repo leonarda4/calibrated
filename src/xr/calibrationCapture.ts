@@ -150,7 +150,7 @@ export function setupCalibrationCapture(
     setScanOpacity(splats, CALIBRATION_OPACITY); // see the room through the scan
     clearTimers();
     showPanel(
-      'CALIBRATE\nAim at the button and pull the trigger.\nThen place the remotes:\nLEFT on marker A, RIGHT on marker B',
+      'CALIBRATE\nAim at the button and pull the trigger.\nThen place the remotes on the floor:\nLEFT remote = spot A, RIGHT = spot B\n(any two spots, at least 1 m apart)',
     );
   };
 
@@ -162,13 +162,13 @@ export function setupCalibrationCapture(
     clearTimers();
     secondsLeft = PLACE_SECONDS;
     showPanel(
-      `PLACE REMOTES\nLEFT remote on marker A (cyan)\nRIGHT remote on marker B (orange)\n${secondsLeft}s left`,
+      `PLACE REMOTES\nPut the remotes on the FLOOR:\nLEFT = spot A, RIGHT = spot B\n(any spots ≥1 m apart —\nthe SCAN aligns TO the remotes)\n${secondsLeft}s left`,
     );
     countdownTimer = setInterval(() => {
       secondsLeft -= 1;
       if (secondsLeft > 0) {
         showPanel(
-          `PLACE REMOTES\nLEFT remote on marker A (cyan)\nRIGHT remote on marker B (orange)\n${secondsLeft}s left`,
+          `PLACE REMOTES\nPut the remotes on the FLOOR:\nLEFT = spot A, RIGHT = spot B\n(any spots ≥1 m apart —\nthe SCAN aligns TO the remotes)\n${secondsLeft}s left`,
         );
       } else {
         clearInterval(countdownTimer!);
@@ -244,10 +244,13 @@ export function setupCalibrationCapture(
 
     const a = (solution.residuals[0] * 100).toFixed(1);
     const b = (solution.residuals[1] * 100).toFixed(1);
+    logger.info('calib', `fit applied — yaw=${(solution.yaw * 180 / Math.PI).toFixed(2)}°, ` +
+      `translation=[${solution.translation.map(v => v.toFixed(2)).join(', ')}]m, ` +
+      `fit error A=${a}cm B=${b}cm`);
     step = 'DONE';
     button.visible = true;
     setScanOpacity(splats, EXPERIENCE_OPACITY); // full quality after calibration
-    showPanel(`CALIBRATED ✓\nLeft remote = A, right = B\nfit error A: ${a} cm | B: ${b} cm\nButton = recalibrate`);
+    showPanel(`CALIBRATED ✓\nThe scan moved TO your remotes.\nCheck: markers now sit\non LEFT (A) and RIGHT (B).\nA: ${a} cm | B: ${b} cm`);
     onCalibrated?.(solution);
     if (holdTimer) clearTimeout(holdTimer);
     holdTimer = setTimeout(() => { panel.visible = false; }, PANEL_HOLD_MS);
