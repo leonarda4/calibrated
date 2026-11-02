@@ -67,6 +67,12 @@ export function attachEnterVr(renderer: THREE.WebGLRenderer): void {
   });
 
   btn.addEventListener('click', async () => {
+    if (renderer.xr.isPresenting) {
+      // second click while a session is alive — Chrome would throw
+      // "There is already an active, immersive XRSession" (known Link trap)
+      logger.warn(TAG, 'Enter VR clicked while a session is already presenting — ignored');
+      return;
+    }
     logger.info(TAG, 'Enter VR clicked — requesting session…');
     const t0 = performance.now();
     try {
