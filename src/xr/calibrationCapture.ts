@@ -92,10 +92,13 @@ export function setupCalibrationCapture(
       ctrl.visible = grip.visible = show;
       ray.visible = show;
       const gp = entry.source?.gamepad;
+      const s = entry.source as unknown as { profiles?: readonly string[] };
       logger.info('calib', `input #${i} connected — ` +
         `hand=${entry.source?.handedness ?? '?'}, ` +
         `type=${entry.isHand ? 'HAND (ignored)' : 'remote'}, ` +
+        `profiles=${(s?.profiles ?? []).join('|') || 'none'}, ` +
         `gamepad=${gp ? `yes (${gp.axes.length} axes, ${gp.buttons.length} buttons)` : 'NO'}`);
+      if (step === 'READY') showPanel(readyText()); // live remote count
     });
     ctrl.addEventListener('disconnected', () => {
       entry.source = null;
@@ -103,6 +106,7 @@ export function setupCalibrationCapture(
       ctrl.visible = grip.visible = false;
       ray.visible = false;
       logger.warn('calib', `input #${i} disconnected`);
+      if (step === 'READY') showPanel(readyText()); // live remote count
     });
     ctrl.addEventListener('selectstart', () => onSelect(entry));
     scene.add(ctrl, grip);
@@ -166,6 +170,19 @@ export function setupCalibrationCapture(
     holdTimer = countdownTimer = null;
   };
 
+  /** READY screen text including the live remote count (hands excluded). */
+  const readyText = (): string => {
+    const pool = remotes();
+    const left = pool.some((c) => c.source?.handedness === 'left');
+    const right = pool.some((c) => c.source?.handedness === 'right');
+    const hands = controllers.filter((c) => c.isHand).length;
+    const countLine = pool.length === 0
+      ? 'Remotes found: NONE\n(press a button on each remote)'
+      : `Remotes found: ${pool.length}${left && right ? ' (L+R)' : ''}` +
+        `${hands ? ` — hands ignored: ${hands}` : ''}`;
+    return `CALIBRATE\n${countLine}\nTrigger the green button below.\nThen: LEFT remote = spot A,\nRIGHT = spot B, ≥1 m apart on floor`;
+  };
+
   /** "CALIBRATE" start screen: button + instructions, scan at 50%. */
   const enterReady = (): void => {
     step = 'READY';
@@ -173,9 +190,7 @@ export function setupCalibrationCapture(
     button.visible = true;
     setScanOpacity(splats, CALIBRATION_OPACITY); // see the room through the scan
     clearTimers();
-    showPanel(
-      'CALIBRATE\nAim at the button and pull the trigger.\nThen place the remotes on the floor:\nLEFT remote = spot A, RIGHT = spot B\n(any two spots, at least 1 m apart)',
-    );
+    showPanel(readyText());
   };
 
   /** Trigger on the button starts the placement countdown. */
@@ -230,8 +245,12 @@ export function setupCalibrationCapture(
     }
     const leftPos = remotePoint(left);
     const rightPos = remotePoint(right);
-    logger.info('calib', `remotes read — LEFT=[${leftPos.toArray().map(n => n.toFixed(2))}] ` +
-      `RIGHT=[${rightPos.toArray().map(n => n.toFixed(2))}]`);
+    logger.info('calib', `remotes read — ` +
+      `LEFT(#${controllers.indexOf(left)},${left.source?.handedness ?? '?'})=` +
+      `[${leftPos.toArray().map(n => n.toFixed(2)).join(', ')}] ` +
+      `RIGHT(#${controllers.indexOf(right)},${right.source?.handedness ?? '?'})=` +
+      `[${rightPos.toArray().map(n => n.toFixed(2)).join(', ')}] ` +
+      `distance=${leftPos.distanceTo(rightPos).toFixed(2)} m`);
     if (leftPos.length() < 0.05 || rightPos.length() < 0.05) {
       logger.error('calib', 'fit aborted: remote positions untracked (near origin)');
       showPanel('Remotes not tracked yet\nMove them a little, then use\nthe button to restart');
@@ -240,8 +259,9 @@ export function setupCalibrationCapture(
     }
     if (leftPos.distanceTo(rightPos) < MIN_REMOTE_SEPARATION) {
       logger.error('calib', `fit aborted: remotes only ` +
-        `${leftPos.distanceTo(rightPos).toFixed(2)} m apart (min ${MIN_REMOTE_SEPARATION} m)`);
-      showPanel('Remotes too close together\nPlace them on A and B separately');
+        `${leftPos.distanceTo(rightPos).toFixed(2)} m apart (min ${MIN_REMOTE_SEPARATION} m). ` +
+        `Suspicion: Steam Link passed HANDS as remotes (not distinguishable via XRInputSource.hand on this runtime)`);
+      showPanel(`Remotes only ${leftPos.distanceTo(rightPos).toFixed(2)} m apart.\nIf that was your two HANDS:\npress a button on each physical\nremote, place them ≥1 m apart`);
       enterReady();
       return;
     }
