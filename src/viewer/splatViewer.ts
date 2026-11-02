@@ -3,6 +3,7 @@
 
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
+import { resolveLayerPath, withHiddenXrWebGlBinding } from '../xr/enterVR';
 
 // Quality ladder — the same scan at 4 export levels. Switch on the headset
 // with a URL parameter: https://<pc>:5173/?scan=std|high|ultra|max
@@ -81,9 +82,28 @@ export interface ViewerRig {
  * calibration transform may touch — the tracked XR rig stays at identity.
  */
 export function createViewerRig(): ViewerRig {
-  // alpha:true — required for immersive-ar passthrough (the compositor's
-  // camera feed shows through where nothing is drawn)
-  const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true });
+  // Task spec: create the WebGL2 context ourselves — XR-compatible and on
+  // the discrete GPU — and hand it to the renderer.
+  const WEBGL_ANTIALIAS = false; // splat rendering: fill-rate beats MSAA
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('webgl2', {
+    xrCompatible: true,
+    antialias: WEBGL_ANTIALIAS,
+    alpha: true, // required for immersive-ar passthrough
+    powerPreference: 'high-performance',
+  });
+  if (!context) throw new Error('WebGL2 not available in this browser');
+
+  // PCVR fix (see src/xr/enterVR.ts header): in classic mode hide
+  // XRWebGLBinding while the renderer is constructed so three.js wires the
+  // proven XRWebGLLayer path instead of the frame-less projection layers.
+  const rendererOptions = {
+    canvas, context, antialias: WEBGL_ANTIALIAS, alpha: true,
+  } as THREE.WebGLRendererParameters;
+  const renderer = resolveLayerPath() === 'classic'
+    ? withHiddenXrWebGlBinding(() => new THREE.WebGLRenderer(rendererOptions))
+    : new THREE.WebGLRenderer(rendererOptions);
+
   renderer.setPixelRatio(1);
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x000000, 0); // transparent clear for AR passthrough
@@ -108,6 +128,8 @@ export function createViewerRig(): ViewerRig {
   scene.add(splats as unknown as THREE.Object3D);
 
   window.addEventListener('resize', () => {
+    // never resize while presenting — the XR session owns the framebuffer
+    if (renderer.xr.isPresenting) return;
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);

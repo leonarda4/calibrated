@@ -78,6 +78,35 @@ Differences vs. the Quest Browser route: no passthrough (desktop Chrome has
 no AR over Link — calibration runs against a black background instead of the
 camera image), and splat resolution can go up to the 4.25M variant.
 
+## PCVR via SteamVR / Steam Link (classic XRWebGLLayer path)
+
+Root cause found by the user: three.js (r180 AND current r187) always takes
+the WebXR **projection-layer** path when the browser exposes
+`XRWebGLBinding` — checked at renderer construction, regardless of requested
+features. On desktop Chrome over PCVR this path delivers **no frames**; the
+classic `XRWebGLLayer` path works. Fix implemented in `src/xr/enterVR.ts`:
+
+- In classic mode, `XRWebGLBinding` is hidden from the global scope **only
+  while the renderer is constructed** (restored immediately, try/finally) —
+  three.js then wires the classic path for that renderer.
+- Additionally `renderState.layers` is hidden on the session instance
+  (own-property proxy, never prototype patching) for three.js versions that
+  check it.
+- Path selection: classic on desktop by default, projection layers on the
+  standalone Quest browser (OculusBrowser UA) where they work and are
+  faster. Overrides: `?xrLayers=1` forces layers, `?xrLayers=0` forces
+  classic. Diagnostics: `?xrDebug=1` shows GPU, layer path, frame count and
+  a 5-second "no XR frames delivered" watchdog on the flat page.
+- The WebGL2 context is created by the app (`xrCompatible`,
+  `powerPreference: high-performance`, antialias off); the renderer is never
+  resized while presenting.
+
+Acceptance test (SteamVR route): install Steam + SteamVR on the PC, "Steam
+Link" app on the headset, set SteamVR as active OpenXR runtime, then
+`https://localhost:5173/?xrDebug=1` in Chrome → Enter VR → the overlay must
+show the `XRWebGLLayer` base layer, frames counting, and the first-frame
+time in the console. The Quest browser route must keep working unchanged.
+
 **Status 2026-11-02: Link route currently BLOCKED by an upstream bug.**
 Measured evidence: `requestSession` resolves after ~66 s, session starts
 (blend=opaque), controllers connect — but **three.js content never presents

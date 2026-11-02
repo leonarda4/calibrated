@@ -6,11 +6,12 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
   createViewerRig, loadScene, applyStartPoint, createSpawnMarker, getScanUrl,
 } from './viewer/splatViewer';
-import { attachEnterVr } from './xr/session';
+import { setupEnterVr } from './xr/enterVR';
 import { setupCalibrationCapture } from './xr/calibrationCapture';
 import { makeHud } from './ui/hud';
 import { bindSpawnPanel } from './ui/spawnPanel';
 import { bindOperatorPanel } from './ui/operatorPanel';
+import { createXrDebugOverlay, gpuRendererString } from './ui/xrDebugOverlay';
 import { logger } from './debug/logger';
 import { START_POINT } from './viewer/splatViewer';
 
@@ -19,7 +20,12 @@ logger.info('boot', 'app starting');
 const hud = makeHud();
 
 const { renderer, scene, camera, splats } = createViewerRig();
-attachEnterVr(renderer);
+const enterVr = setupEnterVr(renderer);
+const xrDebug = createXrDebugOverlay();
+const gpuInfo = xrDebug
+  ? gpuRendererString(renderer.getContext() as WebGL2RenderingContext)
+  : '';
+let debugTick = 0;
 
 // Desktop inspection: orbit around the spawn point with the mouse
 // (left-drag rotate, wheel zoom, right-drag pan). Disabled while in XR.
@@ -103,6 +109,7 @@ renderer.setAnimationLoop(() => {
   renderer.render(scene, camera);
   hud.tickFrame(presenting);
   spawnMarker.visible = !presenting;
+  if (presenting) enterVr.noteXrFrame(); // first-frame + watchdog accounting
   // periodic fps sample in the console (every 5 s)
   fpsFrames++;
   if (now - fpsWindowStart >= 5000) {
@@ -110,6 +117,21 @@ renderer.setAnimationLoop(() => {
     logger.debug('fps', `${fps.toFixed(1)} fps (${presenting ? 'XR presenting' : 'flat view'})`);
     fpsWindowStart = now;
     fpsFrames = 0;
+  }
+  // ?xrDebug=1 overlay (PC operator view): GPU, layer path, frame counts
+  if (xrDebug) {
+    debugTick += dt;
+    if (debugTick >= 0.5) {
+      debugTick = 0;
+      const s = enterVr.stats();
+      xrDebug.update(
+        `gpu: ${gpuInfo}\n` +
+        `layer path: ${s.path}\n` +
+        `presenting: ${s.presenting ? 'yes' : 'no'}\n` +
+        `frames: ${s.frames}\n` +
+        `first frame: ${s.firstFrameSeconds !== null ? s.firstFrameSeconds.toFixed(2) + 's' : '—'}\n` +
+        `watchdog: ${s.watchdogFired ? 'NO XR FRAMES!' : 'ok'}`);
+    }
   }
   if (presenting) {
     const p = activeCamera.position;
