@@ -33,6 +33,7 @@ const HUD_DISTANCE = 1.3;          // m in front of the eyes
 const PANEL_HOLD_MS = 4000;        // final message stays this long
 const PLACE_SECONDS = 10;          // countdown to place the remotes
 const CALIBRATION_OPACITY = 0.20;   // scan visibility while calibrating (camera visible)
+const OPAQUE_CALIBRATION_OPACITY = 0.5; // opaque (SteamVR) route: no passthrough → keep the scan visible
 const EXPERIENCE_OPACITY = 1.0;     // full quality once calibrated
 const MIN_REMOTE_SEPARATION = 0.3; // m — A and B must be distinguishable
 const MAX_FIT_RMS = 1;             // m — refuse nonsense fits
@@ -169,7 +170,7 @@ export function setupCalibrationCapture(
   splats.add(markerA, markerB);
   scene.add(physA, physB);
 
-  let step: 'READY' | 'COUNTDOWN' | 'DONE' = 'READY';
+  let step: 'READY' | 'COUNTDOWN' | 'CONFIRM' | 'DONE' = 'READY';
   let pickToggle: 'A' | 'B' = 'A';
   let landmarkEdit = false; // gate: idle state must NOT modify landmarks
   let holdTimer: ReturnType<typeof setTimeout> | null = null;
@@ -202,12 +203,23 @@ export function setupCalibrationCapture(
     return `CALIBRATE\n${countLine}\nTrigger the green button below.\nThen: LEFT remote = spot A,\nRIGHT = spot B, ≥1 m apart on floor`;
   };
 
+  /** Calibration opacity depends on the route: passthrough routes keep the
+   *  scan faint (camera visible); opaque routes (SteamVR) have no camera —
+   *  the scan stays clearly visible instead. */
+  const calibrationOpacity = (): number => {
+    try {
+      return renderer.xr.getSession()?.environmentBlendMode === 'opaque'
+        ? OPAQUE_CALIBRATION_OPACITY : CALIBRATION_OPACITY;
+    } catch { return CALIBRATION_OPACITY; }
+  };
+
   /** "CALIBRATE" start screen: button + instructions, scan at 50%. */
   const enterReady = (): void => {
     step = 'READY';
     physA.visible = physB.visible = false;
     button.visible = true;
-    setScanOpacity(splats, CALIBRATION_OPACITY); // see the room through the scan
+    lastRemotePos.left = lastRemotePos.right = null; // fresh attempt
+    setScanOpacity(splats, calibrationOpacity());
     clearTimers();
     showPanel(readyText());
   };
@@ -217,7 +229,7 @@ export function setupCalibrationCapture(
     logger.info('calib', `countdown started — ${PLACE_SECONDS}s to place the remotes`);
     step = 'COUNTDOWN';
     button.visible = false;
-    setScanOpacity(splats, CALIBRATION_OPACITY);
+    setScanOpacity(splats, calibrationOpacity());
     clearTimers();
     secondsLeft = PLACE_SECONDS;
     showPanel(
@@ -261,10 +273,12 @@ export function setupCalibrationCapture(
     const leftPos = lastRemotePos.left ?? (left0() ? remotePoint(left0()!) : null);
     const rightPos = lastRemotePos.right ?? (right0() ? remotePoint(right0()!) : null);
     if (!leftPos || !rightPos) {
-      logger.error('calib', 'fit aborted: no remote positions — ' +
-        'hold/wake BOTH physical remotes, trigger the button, then place them');
-      showPanel('No remote positions.\nHold BOTH remotes while\npressing the button, then\nplace them on the floor');
-      enterReady();
+      // SteamVR hands take over the inputs the moment the remotes are put
+      // down — the buffer may be empty if no remote streamed during the
+      // countdown. Instead of aborting: wait for a CONFIRM trigger.
+      logger.warn('calib', 'no buffered remote positions at countdown end — entering CONFIRM state (pinch or trigger to read)');
+      step = 'CONFIRM';
+      showPanel('WAITING FOR REMOTES\nHold BOTH remotes up briefly\nso they register, place them on\nthe floor, then PINCH (hand) or\nPULL A TRIGGER to confirm');
       return;
     }
     logger.info('calib', `remotes read — ` +
@@ -333,8 +347,20 @@ export function setupCalibrationCapture(
 
   const onSelect = (entry: ControllerEntry) => {
     if (!renderer.xr.isPresenting) return;
-    if (entry.isHand) return; // pinch gestures must never drive the wizard
+    // Hands may CONFIRM the reading (SteamVR hands take over when the
+    // remotes are placed down) but never drive the wizard or measure.
+    if (entry.isHand && step !== 'CONFIRM') return;
     if (step === 'COUNTDOWN') return; // nothing during the countdown
+    if (step === 'CONFIRM') {
+      sampleRemotePositions(); // freshest buffered positions
+      if (lastRemotePos.left && lastRemotePos.right) {
+        logger.info('calib', 'confirm trigger — reading buffered remote positions');
+        tryCalibrate();
+      } else {
+        showPanel('Remotes not seen yet.\nHold BOTH remotes up briefly\n(they must register), place them,\nthen pinch / trigger again');
+      }
+      return;
+    }
     // READY / DONE: does this controller's ray hit the ⟲ button?
     const origin = entry.ctrl.getWorldPosition(new THREE.Vector3());
     const dir = entry.ctrl.getWorldDirection(new THREE.Vector3()).negate();
@@ -342,7 +368,7 @@ export function setupCalibrationCapture(
     const t = toButton.dot(dir);
     const perpendicular = toButton.clone().addScaledVector(dir, -t).length();
     const hit = t > 0.2 && t < 5 && perpendicular < 0.25;
-    logger.debug('calib', `selectstart (${entry.source?.handedness ?? '?'} remote) — ` +
+    logger.debug('calib', `selectstart (${entry.source?.handedness ?? '?'}) — ` +
       `step=${step}, buttonRayDist=${t.toFixed(2)}m, off=${perpendicular.toFixed(2)}m → ` +
       `${hit ? 'HIT' : 'MISS'}`);
     if (hit) startCountdown();
