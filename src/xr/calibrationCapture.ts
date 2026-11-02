@@ -32,9 +32,14 @@ export const PROBE_TIP_OFFSET: Vec3 = [0, 0, 0];
 const HUD_DISTANCE = 1.3;          // m in front of the eyes
 const PANEL_HOLD_MS = 4000;        // final message stays this long
 const PLACE_SECONDS = 10;          // countdown to place the remotes
-const CALIBRATION_OPACITY = 0.20;   // scan visibility while calibrating (camera visible)
+// Guided-experience protocol (user-specified): during calibration the person
+// sees ONLY the real world (camera passthrough) + GUI — the scan is fully
+// hidden, so first-time users can see where to place the remotes. The PLY
+// fades in only after a successful fit.
+const CALIBRATION_OPACITY = 0.0;
 const OPAQUE_CALIBRATION_OPACITY = 0.5; // opaque (SteamVR) route: no passthrough → keep the scan visible
 const EXPERIENCE_OPACITY = 1.0;     // full quality once calibrated
+const FADE_IN_SPEED = 0.8;          // opacity per second when the PLY appears
 const MIN_REMOTE_SEPARATION = 0.3; // m — A and B must be distinguishable
 const MAX_FIT_RMS = 1;             // m — refuse nonsense fits
 
@@ -68,7 +73,7 @@ export function setupCalibrationCapture(
   onLandmarkPicked?: LandmarkPickCallback,
   onStatus?: (text: string) => void,
   onLandmarkEdit?: (active: boolean) => void,
-): { startCalibration(): void; setLandmarkEdit(on: boolean): void; sample(): void; dispose(): void } {
+): { startCalibration(): void; setLandmarkEdit(on: boolean): void; sample(deltaSeconds?: number): void; dispose(): void } {
   // ---- input sources: up to 4 slots (2 remotes + 2 hands) ------------------
   // Steam Link passes Quest hand tracking through as input sources; hands
   // are classified and IGNORED — only physical remotes drive the calibration.
@@ -213,12 +218,18 @@ export function setupCalibrationCapture(
     } catch { return CALIBRATION_OPACITY; }
   };
 
-  /** "CALIBRATE" start screen: button + instructions, scan at 50%. */
+  // Smooth opacity target — lerped every frame in sample() so the PLY can
+  // FADE IN after a successful fit instead of popping.
+  let targetOpacity: number | null = null; // null = no fade running
+
+  /** "CALIBRATE" start screen: camera + GUI only, scan fully hidden. */
   const enterReady = (): void => {
     step = 'READY';
     physA.visible = physB.visible = false;
+    markerA.visible = markerB.visible = false; // no floating markers while guiding
     button.visible = true;
     lastRemotePos.left = lastRemotePos.right = null; // fresh attempt
+    targetOpacity = null;
     setScanOpacity(splats, calibrationOpacity());
     clearTimers();
     showPanel(readyText());
@@ -330,6 +341,7 @@ export function setupCalibrationCapture(
     physA.position.copy(leftPos);
     physB.position.copy(rightPos);
     physA.visible = physB.visible = true;
+    markerA.visible = markerB.visible = true; // verification: markers sit on the remotes
 
     const a = (solution.residuals[0] * 100).toFixed(1);
     const b = (solution.residuals[1] * 100).toFixed(1);
@@ -338,7 +350,8 @@ export function setupCalibrationCapture(
       `fit error A=${a}cm B=${b}cm`);
     step = 'DONE';
     button.visible = true;
-    setScanOpacity(splats, EXPERIENCE_OPACITY); // full quality after calibration
+    // The PLY fades in over the camera: the guided-experience moment
+    targetOpacity = EXPERIENCE_OPACITY;
     showPanel(`CALIBRATED ✓\nThe scan moved TO your remotes.\nCheck: markers now sit\non LEFT (A) and RIGHT (B).\nA: ${a} cm | B: ${b} cm`);
     onCalibrated?.(solution);
     if (holdTimer) clearTimeout(holdTimer);
@@ -441,12 +454,20 @@ export function setupCalibrationCapture(
     },
     /**
      * Call once per rendered frame while presenting: continuously buffers
-     * the remotes' streamed grip positions, so the calibration can use the
-     * true floor spots even after SteamVR switches the inputs to the user's
-     * hands (which happens as soon as the remotes are put down).
+     * the remotes' streamed grip positions (hand-takeover guard) and runs
+     * the PLY fade-in after a successful fit.
      */
-    sample() {
-      if (renderer.xr.isPresenting) sampleRemotePositions();
+    sample(deltaSeconds = 1 / 60) {
+      if (!renderer.xr.isPresenting) return;
+      sampleRemotePositions();
+      if (targetOpacity !== null) {
+        const material = splats.viewer.splatMesh.material as unknown as
+          { uniforms?: { uGlobalOpacity?: { value: number } } };
+        const current = material?.uniforms?.uGlobalOpacity?.value ?? 0;
+        const next = Math.min(targetOpacity, current + FADE_IN_SPEED * deltaSeconds);
+        setScanOpacity(splats, next);
+        if (next >= targetOpacity - 1e-4) targetOpacity = null; // fade complete
+      }
     },
     dispose() {
       clearTimers();
