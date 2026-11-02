@@ -45,6 +45,15 @@ interface ControllerEntry {
   ctrl: THREE.Group;
   grip: THREE.Group;
   source: XRInputSource | null;
+  /** true for hand-tracking inputs (Steam Link passes Quest hands through) —
+   *  these are NOT remotes and are ignored by the calibration. */
+  isHand: boolean;
+}
+
+/** Input source classification: hands (tracked via hand tracking) vs remotes. */
+function isHandInput(source: XRInputSource): boolean {
+  const s = source as unknown as { hand?: unknown; profiles?: readonly string[] };
+  return s.hand != null || (s.profiles ?? []).some((p) => String(p).includes('hand'));
 }
 
 export type LandmarkPickCallback = (which: 'A' | 'B', point: Vec3) => void;
@@ -59,39 +68,54 @@ export function setupCalibrationCapture(
   onStatus?: (text: string) => void,
   onLandmarkEdit?: (active: boolean) => void,
 ): { startCalibration(): void; setLandmarkEdit(on: boolean): void; dispose(): void } {
-  // ---- both controllers --------------------------------------------------
+  // ---- input sources: up to 4 slots (2 remotes + 2 hands) ------------------
+  // Steam Link passes Quest hand tracking through as input sources; hands
+  // are classified and IGNORED — only physical remotes drive the calibration.
   const controllers: ControllerEntry[] = [];
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 4; i++) {
     const ctrl = renderer.xr.getController(i);
     const grip = renderer.xr.getControllerGrip(i);
-    const entry: ControllerEntry = { ctrl, grip, source: null };
-    ctrl.add(new THREE.Line(
+    const entry: ControllerEntry = { ctrl, grip, source: null, isHand: false };
+    const ray = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -6),
       ]),
       new THREE.LineBasicMaterial({ color: 0x00e5ff }),
-    ));
+    );
+    ctrl.add(ray);
     ctrl.visible = grip.visible = false;
     ctrl.addEventListener('connected', (e) => {
       entry.source = (e as unknown as { data: XRInputSource }).data;
-      ctrl.visible = grip.visible = true;
+      entry.isHand = entry.source ? isHandInput(entry.source) : false;
+      // hands get no ray and stay invisible; they must not look like remotes
+      const show = !entry.isHand;
+      ctrl.visible = grip.visible = show;
+      ray.visible = show;
       const gp = entry.source?.gamepad;
-      logger.info('calib', `controller #${i} connected — ` +
+      logger.info('calib', `input #${i} connected — ` +
         `hand=${entry.source?.handedness ?? '?'}, ` +
+        `type=${entry.isHand ? 'HAND (ignored)' : 'remote'}, ` +
         `gamepad=${gp ? `yes (${gp.axes.length} axes, ${gp.buttons.length} buttons)` : 'NO'}`);
     });
     ctrl.addEventListener('disconnected', () => {
       entry.source = null;
+      entry.isHand = false;
       ctrl.visible = grip.visible = false;
-      logger.warn('calib', `controller #${i} disconnected`);
+      ray.visible = false;
+      logger.warn('calib', `input #${i} disconnected`);
     });
     ctrl.addEventListener('selectstart', () => onSelect(entry));
     scene.add(ctrl, grip);
     controllers.push(entry);
   }
-  const byHand = (hand: string): ControllerEntry | undefined =>
-    controllers.find((c) => c.source?.handedness === hand)
-    ?? controllers[hand === 'left' ? 0 : 1];
+  /** Physical remotes only (hands excluded). */
+  const remotes = (): ControllerEntry[] =>
+    controllers.filter((c) => c.source && !c.isHand && c.source.gamepad);
+  const byHand = (hand: string): ControllerEntry | undefined => {
+    const pool = remotes();
+    return pool.find((c) => c.source?.handedness === hand)
+      ?? pool[hand === 'left' ? 0 : pool.length - 1];
+  };
 
   // ---- HUD: parented to the camera → sticks rigidly to the view ----------
   const { sprite: panel, setText } = makeTextPanel();
@@ -196,7 +220,7 @@ export function setupCalibrationCapture(
     const left = byHand('left');
     const right = byHand('right');
     if (!left || !right) {
-      showPanel('BOTH remotes are needed\nWake both controllers, then use\nthe button to restart');
+      showPanel('BOTH remotes are needed\n(hands do NOT count)\nWake both controllers, then use\nthe button to restart');
       enterReady();
       return;
     }
@@ -258,6 +282,7 @@ export function setupCalibrationCapture(
 
   const onSelect = (entry: ControllerEntry) => {
     if (!renderer.xr.isPresenting) return;
+    if (entry.isHand) return; // pinch gestures must never drive the wizard
     if (step === 'COUNTDOWN') return; // nothing during the countdown
     // READY / DONE: does this controller's ray hit the ⟲ button?
     const origin = entry.ctrl.getWorldPosition(new THREE.Vector3());
