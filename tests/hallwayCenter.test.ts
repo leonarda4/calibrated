@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { estimateHallwayCenter, type HallwayPoint, type HallwayCenterResult } from '../src/experience/hallwayCenter.ts';
+import { estimateHallwayCenter, measureWallDistances, type HallwayPoint, type HallwayCenterResult } from '../src/experience/hallwayCenter.ts';
 
 const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const near = (actual: number, expected: number, tolerance = 0.012) =>
@@ -65,6 +65,26 @@ test('parallel wall direction is fitted within the approximate corridor heading'
   near(result.directionWorld[2], 1 / Math.sqrt(1 + slope * slope));
 });
 
+test('accepted nonparallel walls use a normalised bisector and independent measured clearances', () => {
+  const leftSlope = -0.02, rightSlope = 0.05;
+  const result = success(fit(walls({ slope: leftSlope, rightSlope })));
+  const nl = Math.hypot(1, leftSlope), nr = Math.hypot(1, rightSlope);
+  const expected = (-0.9 / nl + 1.2 / nr) / (1 / nl + 1 / nr);
+  near(result.centerWorld[0], expected, 1e-10);
+  assert.ok(Math.abs(expected - 0.15) > 0.0005, 'fixture must expose the arithmetic-midpoint error');
+  const independent = measureWallDistances(result.wallPlanes, result.centerWorld);
+  near(independent.left, result.clearanceLeft, 1e-12);
+  near(independent.right, result.clearanceRight, 1e-12);
+  near(independent.imbalance, 0, 1e-12);
+  near(result.width, independent.left + independent.right, 1e-12);
+  for (const wall of Object.values(result.wallPlanes)) {
+    near(Math.hypot(...wall.normal), 1, 1e-12);
+    assert.equal(wall.normal[1], 0);
+  }
+  const offset = measureWallDistances(result.wallPlanes, [result.centerWorld[0] + 0.1, 0, result.centerWorld[2]]);
+  assert.ok(offset.imbalance > 0.19, 'offset points must not inherit the centre width/2 answer');
+});
+
 test('yaw and translation are applied once and the returned raw point maps back to world', () => {
   const angle = 0.73, c = Math.cos(angle), s = Math.sin(angle);
   const matrix = [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 8, 2, -6, 1];
@@ -80,6 +100,10 @@ test('yaw and translation are applied once and the returned raw point maps back 
   assert.equal(result.centerWorld[1], 2);
   near(result.directionWorld[0], s);
   near(result.directionWorld[2], c);
+  const measurements = measureWallDistances(result.wallPlanes, result.centerWorld);
+  near(measurements.left, 1.05, 1e-12);
+  near(measurements.right, 1.05, 1e-12);
+  near(measurements.imbalance, 0, 1e-12);
 });
 
 test('the current raw-Y corridor orientation preserves the station and existing XR floor', () => {
@@ -98,6 +122,23 @@ test('the current raw-Y corridor orientation preserves the station and existing 
   near(result.centerWorld[0], 0.025);
   near(result.centerWorld[2], 2.5, 1e-12);
   assert.equal(result.centerWorld[1], 0);
+  for (const wall of Object.values(result.wallPlanes)) {
+    near(Math.hypot(...wall.normal), 1, 1e-12);
+    assert.equal(wall.normal[1], 0);
+  }
+  near(measureWallDistances(result.wallPlanes, [result.centerWorld[0], 0.215, result.centerWorld[2]]).imbalance, 0, 1e-12);
+});
+
+test('point-to-plane checks use unit inward normals and signed world-space distances', () => {
+  const walls = {
+    left: { point: [-1, 4, 3] as const, normal: [1, 0, 0] as const, residual: 0.01 },
+    right: { point: [2, 4, 3] as const, normal: [-1, 0, 0] as const, residual: 0.02 },
+  };
+  assert.deepEqual(measureWallDistances(walls, [0.5, -8, 7]), { left: 1.5, right: 1.5, imbalance: 0 });
+  assert.deepEqual(measureWallDistances(walls, [3, 0, 0]), { left: 4, right: -1, imbalance: 5 });
+  assert.throws(() => measureWallDistances({ ...walls, left: { ...walls.left, normal: [2, 0, 0] } }, [0, 0, 0]), /unit/);
+  assert.throws(() => measureWallDistances({ ...walls, left: { ...walls.left, point: [NaN, 0, 0] } }, [0, 0, 0]), /finite/);
+  assert.throws(() => measureWallDistances(walls, [0, Infinity, 0]), /finite/);
 });
 
 test('supplied floor height takes precedence over a seed above the floor', () => {

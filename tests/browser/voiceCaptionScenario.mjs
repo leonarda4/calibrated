@@ -18,6 +18,7 @@ export async function runVoiceCaptionScenario(page) {
       class AudioNode {
         gain = { value: 0, setValueAtTime() {} };
         pan = { value: 0 };
+        playbackRate = { value: 1 };
         stopped = false;
         connect(next) { return next; }
         disconnect() {}

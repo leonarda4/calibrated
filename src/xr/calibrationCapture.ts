@@ -16,7 +16,7 @@
 import * as THREE from 'three';
 import type * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import { raycastSplatCenters } from '../viewer/splatRaycast';
-import { setScanOpacity } from '../viewer/splatViewer';
+import { getSourceCenters, setScanOpacity } from '../viewer/splatViewer';
 import { logger } from '../debug/logger';
 import { SCAN_LANDMARKS, type ScanLandmarkPair } from '../calibration/landmarks';
 import { classifyCalibrationInput, type CalibrationInputKind } from './calibrationInput';
@@ -45,10 +45,6 @@ const MIN_REMOTE_SEPARATION = 0.3; // m â€” A and B must be distinguishable
 const MAX_FIT_RMS = 1;             // m â€” refuse nonsense fits
 const CONFIRM_MAX_ATTEMPTS = 3;
 const CONFIRM_TIMEOUT_MS = 30_000;
-
-interface SplatMeshWithCenters {
-  splatDataTextures?: { baseData?: { centers?: Float32Array } };
-}
 
 interface ControllerEntry {
   slot: number;
@@ -511,8 +507,7 @@ export function setupCalibrationCapture(
   const pointer = new THREE.Vector2();
   const onPointerDown = (e: PointerEvent): void => {
     if (!landmarkEdit || renderer.xr.isPresenting) return;
-    const sm = splats.viewer.splatMesh as unknown as SplatMeshWithCenters;
-    const centers = sm.splatDataTextures?.baseData?.centers;
+    const centers = getSourceCenters(splats);
     if (!centers) return;
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;

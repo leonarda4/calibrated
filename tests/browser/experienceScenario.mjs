@@ -94,12 +94,25 @@ export async function runExperienceScenario(page) {
       };
       const state = () => installation.snapshot();
       const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const expectSecondCleared = reason => {
+        ensure(!state().secondBox.placed && !state().secondBox.visible,
+          `${reason}: second-box placement or reveal authority survived`);
+        ensure(scene.getObjectByName('installation-second-box')?.visible === false,
+          `${reason}: stale second-box mesh is still visible`);
+      };
+      const prepareSyntheticSecond = () => {
+        installation.setSecondBoxPlacement([0.8, 0, -1], [0, 0, 1]);
+        ensure(state().secondBox.placed && !state().secondBox.visible &&
+          scene.getObjectByName('installation-second-box')?.visible === false,
+          'synthetic second-box placement did not remain prepared and hidden');
+      };
       const expectStopped = (count, reasonPart) => {
         ensure(state().phase === 'stopped', `${reasonPart}: sequence did not stop`);
         ensure(!state().calibrated && !state().placementConfirmed, `${reasonPart}: alignment authority survived`);
         ensure(invalidations.length === count, `${reasonPart}: expected exactly one calibration cancellation`);
         const hud = camera.getObjectByName('experience-stop');
         ensure(hud?.visible, `${reasonPart}: in-headset stop cue is hidden`);
+        expectSecondCleared(reasonPart);
       };
       const recoverAndShowBox = () => {
         viewerMode = 'valid';
@@ -116,6 +129,7 @@ export async function runExperienceScenario(page) {
           'explicit synthetic placement unexpectedly retained a physical-check confirmation');
         ensure(!state().stationaryConfirmed, 'manual box fixture unexpectedly carried support confirmation');
         ensure(installation.showBox(false), 'fresh fit plus explicit placement could not show the box');
+        prepareSyntheticSecond();
         experience.update(0.01, frame);
         ensure(state().phase === 'box' && state().calibrated, 'valid viewer did not retain the manually shown box');
       };
@@ -134,6 +148,7 @@ export async function runExperienceScenario(page) {
         ensure(installation.showBox(true), 'initial desktop box did not appear');
         ensure(state().phase === 'box' && !state().stationaryConfirmed,
           'manual desktop box required a stationary confirmation');
+        prepareSyntheticSecond();
         ensure(installation.rotateHallway(), 'manual desktop rotation did not start');
         experience.update(1);
         ensure(!same(scan.matrix.toArray(), baseline), 'preview did not rotate the visual scan');
@@ -142,6 +157,7 @@ export async function runExperienceScenario(page) {
         ensure(same(scan.matrix.toArray(), baseline), 'session start failed to restore the preview baseline');
         ensure(state().phase === 'idle' && !state().calibrated && !state().preview && state().yaw === 0,
           'session start retained preview or calibration authority');
+        expectSecondCleared('new session');
 
         ensure(experience.calibrationBlockReason(), 'session start allowed capture before a visible viewer pose');
         session.visibilityState = 'hidden';
@@ -212,6 +228,8 @@ export async function runExperienceScenario(page) {
         expectStopped(1, 'missing viewer');
         installation.reset();
         ensure(!state().calibrated && !installation.showBox(false), 'reset revived invalidated alignment authority');
+        expectSecondCleared('reset after tracking loss');
+        ensure(!installation.showSecondBox(), 'reset revived a stale second-box reveal');
 
         recoverAndShowBox();
         viewerMode = 'emulated';
@@ -249,6 +267,7 @@ export async function runExperienceScenario(page) {
         xr.isPresenting = false;
         xr.dispatchEvent({ type: 'sessionend' });
         ensure(state().phase === 'stopped' && !state().calibrated, 'session end retained alignment authority');
+        expectSecondCleared('session end');
         ensure(state().status.includes('Resume VR'), 'ended-session status did not explain how to re-enter VR');
         ensure(!camera.getObjectByName('experience-stop').visible,
           'ended session left a stale headset STOP overlay in desktop inspection');
@@ -262,7 +281,9 @@ export async function runExperienceScenario(page) {
         ensure(stop, 'operator STOP control was not created');
         for (const expected of [6, 7]) {
           installation.reset();
+          expectSecondCleared('desktop reset');
           ensure(installation.showBox(true), 'desktop box did not reappear after session end/reset');
+          prepareSyntheticSecond();
           experience.update(0.01);
           stop.click();
           expectStopped(expected, 'repeated operator STOP after desktop reset');
@@ -277,6 +298,7 @@ export async function runExperienceScenario(page) {
         experience.update(0.01, frame);
         for (const [index, visibilityState] of ['visible-blurred', 'hidden'].entries()) {
           experience.prepareForCalibration();
+          expectSecondCleared('fresh calibration preparation');
           capturing = true;
           experience.update(0.01, frame);
           const expected = 8 + index;
@@ -358,6 +380,7 @@ export async function runExperienceScenario(page) {
             'reference reset invalidates once', 'hidden headset view invalidates once', 'long frame gap freezes turn',
             'reset cannot revive authority', 'session end invalidates', 'ended session explains Resume VR recovery',
             'ended-session HUD stays hidden on desktop', 'repeated operator STOP remains effective',
+            'new sessions, tracking loss, resets, stops and calibration remove prepared second-box authority and hide its mesh',
             'tracked camera and hand parents remain identity'],
           calibrationCancellations: invalidations.length,
           handPoseReads,

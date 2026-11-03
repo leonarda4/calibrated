@@ -12,6 +12,10 @@ The active asset is the original public/splats/hallway3/hallway3_0.ply, loaded w
 4. Check uniform metric scale with corresponding measurements, using approximately 2.10 m local width and approximately 2.40 m floor-to-bars height as independent references. Whole-scene bounds do not provide these distances. Scale and floor orientation still require physical checks.
 5. Enter VR and perform the existing controller fit below, then check floor/box position, reach and independent landmarks before starting the installation. A picked box anchor follows the fit. Check any manually entered world placement again after a new fit.
 
+The second 36 x 36 cm, 43 cm high box is prepared against the wall/floor-line guides in the unrotated scan before the turn. Refine its guide with **Pick second-box floor line** on the desktop before entering VR. Its fixed XR-world pose is revealed after the turn. A new fit or interruption clears its prior placement; reveal must never transform its raw point through an already rotated hallway.
+
+**Narrated test after calibration** is enabled by default: welcome immediately after fit, first box at +10 seconds, turn at +15 seconds and second box at +20 seconds. Disable it before calibrating to retain manual Show box / Rotate / Show second box control and more review time. STOP, reset and tracking/calibration interruptions cancel the test. Neither starting nor completing it grants held-out validation. See [interaction timing](INTERACTION_PLAN.md) and [voice setup](VOICE_SETUP.md).
+
 ## Restored current method (2026-11-03)
 
 At the user's request, calibration returns to the guided title/trigger/seven-second flow from local commit `8754817`. The SteamVR/Steam Link route was user-confirmed on hardware on 2026-11-02; this restored flow with the current installation integration needs a fresh hardware check. The later sequential controller-hold redesign is no longer the active procedure.

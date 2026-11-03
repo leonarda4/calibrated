@@ -12,6 +12,8 @@ declare module '@mkkellogg/gaussian-splats-3d' {
     rotation?: [number, number, number, number];
     scale?: [number, number, number];
     onProgress?: (percent: number, label: string) => void;
+    visible?: boolean;
+    opacity?: number;
   }
 
   export interface ViewerOptions {
@@ -25,6 +27,7 @@ declare module '@mkkellogg/gaussian-splats-3d' {
     optimizeSplatData?: boolean;
     inMemoryCompressionLevel?: 0 | 1 | 2;
     sceneRevealMode?: number;
+    enableOptionalEffects?: boolean;
     renderer?: THREE.WebGLRenderer;
     camera?: THREE.Camera;
     threeScene?: THREE.Scene;
@@ -38,7 +41,13 @@ declare module '@mkkellogg/gaussian-splats-3d' {
     constructor(options?: ViewerOptions);
     viewer: Viewer;
     addSplatScene(path: string, options?: Partial<SplatSceneOptions>): Promise<void>;
-    addSplatScenes(scenes: SplatSceneOptions[]): Promise<void>;
+    addSplatScenes(scenes: SplatSceneOptions[], showLoadingUI?: boolean): Promise<void>;
+    getSplatScene(index: number): THREE.Object3D & {
+      opacity: number;
+      splatBuffer: { getSplatCount(): number };
+      updateTransform(dynamicMode: boolean): void;
+    };
+    getSceneCount(): number;
     removeSplatScene(index: number): void;
     dispose(): Promise<void>;
   }

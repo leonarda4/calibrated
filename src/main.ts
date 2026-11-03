@@ -18,6 +18,8 @@ import { ACTIVE_SCAN } from './viewer/scanAsset';
 import { SCAN_LANDMARKS } from './calibration/landmarks';
 import { setupExperience } from './experience/setupExperience';
 import { setupDesktopBoundary } from './experience/setupDesktopBoundary';
+import { createWallBlocker } from './viewer/wallBlocker';
+import { bindWallControl } from './ui/wallControl';
 
 logger.info('boot', 'app starting');
 
@@ -29,7 +31,22 @@ const operatorPanel = bindOperatorPanel();
 operatorPanel.setStatus(SCAN_LANDMARKS
   ? 'Configured A/B loaded. Match LEFT to physical A and RIGHT to physical B, then calibrate in VR.'
   : 'New scan: use EDIT A/B on the desktop to select both floor landmarks before calibration.');
-const experience = setupExperience(renderer, scene, camera, splats, { isScanReady: () => scanReady });
+const wallBlockReason = (): string | null => {
+  if (!scanReady) return 'Wait for the hallway scan to finish loading.';
+  const state = experience.installation.snapshot();
+  if (state.phase === 'stopped') return 'Reset baseline and recalibrate in VR before showing the wall.';
+  if (state.phase === 'rotating') return 'Wait for the hallway turn to finish.';
+  if (calibration.isCapturing()) return 'Finish calibration before showing the wall.';
+  if (renderer.xr.isPresenting && (!state.calibrated || experience.calibrationBlockReason() !== null)) {
+    return 'Complete a fresh A/B calibration with visible headset tracking before showing the wall in VR.';
+  }
+  return null;
+};
+const wallBlocker = createWallBlocker({ scanRoot: splats, canShow: wallBlockReason });
+const experience = setupExperience(renderer, scene, camera, splats, {
+  isScanReady: () => scanReady,
+  onDisarm: () => wallBlocker.hide(),
+});
 const desktopBoundary = setupDesktopBoundary(renderer, scene, { getBox: () => {
   const state = experience.installation.snapshot();
   return state.placementSource === 'unplaced' ? undefined : state.config;
@@ -48,7 +65,7 @@ controls.target.set(0, 1.2, 0);
 controls.enableDamping = true;
 controls.update();
 
-// Cyan marker at the XR origin = where you will physically stand in VR.
+// Before Show box this is the XR origin; with a box it marks its actual turn pivot.
 const spawnMarker = createSpawnMarker();
 scene.add(spawnMarker);
 
@@ -112,6 +129,7 @@ const calibration = setupCalibrationCapture(
 );
 experience.bindCalibrationInvalidator(reason => calibration.invalidate(reason));
 experience.bindCalibrationCaptureState(() => calibration.isCapturing());
+const wallControl = bindWallControl(wallBlocker, wallBlockReason);
 operatorPanel.onCalibrateClick(() => calibration.startCalibration());
 operatorPanel.onEditClick(() => {
   // toggle via the module (it owns the state and reports it back)
@@ -138,11 +156,21 @@ renderer.setAnimationLoop((_time, frame) => {
   if (!presenting) controls.update();
   spawnMarker.visible = !presenting;
   experience.update(dt, frame);
+  const boxState = experience.installation.snapshot();
+  const marksBoxPivot = ['box', 'rotating', 'reversed'].includes(boxState.phase);
+  spawnMarker.position.set(
+    marksBoxPivot ? boxState.config.centerX : 0,
+    marksBoxPivot ? boxState.config.floorY : 0,
+    marksBoxPivot ? boxState.config.centerZ : 0,
+  );
+  spawnMarker.userData.reference = marksBoxPivot ? 'box-turn-pivot' : 'xr-origin';
+  wallControl.refresh();
   desktopBoundary.update(frame);
   if (presenting) {
     enterVr.noteXrFrame(); // first-frame + watchdog accounting
     calibration.sample(dt, frame); // valid remote poses + post-fit reveal
   }
+  wallBlocker.update();
   splats.viewer.update(renderer, activeCamera);
   renderer.render(scene, camera);
   hud.tickFrame(presenting);
@@ -200,5 +228,5 @@ renderer.xr.addEventListener('sessionend', () => {
 
 // Debug hook for automated visual checks (readPixels etc.)
 Object.assign(window as unknown as Record<string, unknown>, {
-  __debug: { renderer, scene, camera, splats, controls, spawnMarker, experience, calibration, desktopBoundary },
+  __debug: { renderer, scene, camera, splats, controls, spawnMarker, experience, calibration, desktopBoundary, wallBlocker },
 });

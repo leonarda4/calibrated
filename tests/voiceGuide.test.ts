@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createVoiceGuide } from '../src/audio/voiceGuide.ts';
+import { SCENARIO_VOICE_CUES, VOICE_CUES } from '../src/audio/voiceCues.ts';
 
 class FakeNode {
   value = 0;
   gain = { value: 0, setValueAtTime() {} };
   pan = { value: 0 };
+  playbackRate = { value: 1 };
   buffer: unknown = null;
   onended: (() => void) | null = null;
   startedAt: number | null = null;
@@ -17,21 +19,23 @@ class FakeNode {
 }
 class FakeAudio {
   static sources: FakeNode[] = [];
+  static clipDuration = 4;
   state = 'running';
   currentTime = 10;
   destination = new FakeNode();
   createGain() { return new FakeNode(); }
   createStereoPanner() { return new FakeNode(); }
   createBufferSource() { const n = new FakeNode(); FakeAudio.sources.push(n); return n; }
-  async decodeAudioData() { return { duration: 4 }; }
+  async decodeAudioData() { return { duration: FakeAudio.clipDuration }; }
   async resume() {}
   async close() {}
 }
 
-async function fakeAudio<T>(run: () => Promise<T>, fetcher?: typeof fetch): Promise<T> {
+async function fakeAudio<T>(run: () => Promise<T>, fetcher?: typeof fetch, clipDuration = 4): Promise<T> {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'AudioContext');
   const savedFetch = globalThis.fetch;
   FakeAudio.sources = [];
+  FakeAudio.clipDuration = clipDuration;
   Object.defineProperty(globalThis, 'AudioContext', { value: FakeAudio, configurable: true });
   globalThis.fetch = fetcher ?? (async () => new Response(new Uint8Array(100), { headers: { 'content-type': 'audio/mpeg' } })) as typeof fetch;
   try { return await run(); }
@@ -96,4 +100,57 @@ test('mute cancels scheduled audio and subsequent cues retain PC transcripts wit
     assert.equal(FakeAudio.sources.length, 3);
     guide.dispose();
   });
+});
+
+test('scenario preload and narration use only the requested lead clips, and the next cue cancels its predecessor', async () => {
+  const fetched: string[] = [];
+  await fakeAudio(async () => {
+    let caption = '';
+    let status = '';
+    const guide = createVoiceGuide({
+      onCaption: (text) => { caption = text; },
+      onStatus: (text) => { status = text; },
+    });
+    await guide.preload(SCENARIO_VOICE_CUES);
+    assert.equal(fetched.length, 4);
+    assert.ok(fetched.every((path) => /scenario.*-lead\.mp3$/.test(path)));
+    assert.match(status, /All local voice clips ready/);
+    for (const [index, cue] of SCENARIO_VOICE_CUES.entries()) {
+      await guide.play(cue);
+      assert.equal(caption, VOICE_CUES[cue].caption);
+      assert.equal(FakeAudio.sources.length, index + 1);
+      assert.equal(status, 'Narration playing.');
+      assert.equal(FakeAudio.sources[index].stopped, false);
+      assert.equal(FakeAudio.sources[index].playbackRate.value, 1, 'short narration retains its natural playback rate');
+      assert.ok(FakeAudio.sources.slice(0, index).every((source) => source.stopped));
+    }
+    assert.equal(fetched.length, 4, 'preloaded buffers are reused');
+    guide.stop();
+    assert.ok(FakeAudio.sources.every((source) => source.stopped));
+    guide.dispose();
+  }, (async (path: string) => {
+    fetched.push(path);
+    return new Response(new Uint8Array(100), { headers: { 'content-type': 'audio/mpeg' } });
+  }) as typeof fetch);
+});
+
+test('long box narration fits the five-second cue gap without changing other cues or cancellation', async () => {
+  await fakeAudio(async () => {
+    const guide = createVoiceGuide();
+    await guide.play('purpose');
+    assert.deepEqual(FakeAudio.sources.map((source) => source.playbackRate.value), [1, 1, 1]);
+    await guide.play('scenarioWelcome');
+    assert.equal(FakeAudio.sources.at(-1)!.playbackRate.value, 1);
+    await guide.play('scenarioBox');
+    const boxSource = FakeAudio.sources.at(-1)!;
+    assert.equal(boxSource.playbackRate.value, 1.5);
+    assert.equal(FakeAudio.clipDuration / boxSource.playbackRate.value, 4.7);
+    assert.ok(boxSource.startedAt! + 4.7 < 15, 'slot ends before the next cue at +5 seconds');
+    await guide.play('scenarioTurn');
+    assert.equal(boxSource.stopped, true);
+    assert.equal(FakeAudio.sources.at(-1)!.playbackRate.value, 1);
+    guide.stop();
+    assert.ok(FakeAudio.sources.every((source) => source.stopped));
+    guide.dispose();
+  }, undefined, 7.05);
 });

@@ -27,14 +27,15 @@ async function voiceListingError(response) {
   return new Error(`ElevenLabs voice listing returned HTTP ${response.status}. ${guidance} No speech requests were made.`);
 }
 
-export async function selectVoiceIds(settings, fetcher = fetch) {
+export async function selectVoiceIds(settings, fetcher = fetch, roles = Object.keys(VOICE_KEYS)) {
+  if (roles.some((role) => !Object.hasOwn(VOICE_KEYS, role))) throw new Error('Unknown voice role.');
   const selected = {};
   for (const [role, key] of Object.entries(VOICE_KEYS)) {
     if (!settings[key]) continue;
     if (!validId(settings[key])) throw new Error(`Set ${key} to an available ElevenLabs voice ID, or remove it for automatic selection.`);
     selected[role] = settings[key];
   }
-  if (Object.keys(selected).length === 3) return selected;
+  if (roles.every((role) => selected[role])) return selected;
 
   let response;
   let result;
@@ -66,7 +67,7 @@ export async function selectVoiceIds(settings, fetcher = fetch) {
 
   const used = new Set(Object.values(selected));
   let reuse = 0;
-  for (const role of Object.keys(VOICE_KEYS)) {
+  for (const role of roles) {
     if (selected[role]) continue;
     selected[role] = ids.find((id) => !used.has(id)) ?? ids[reuse++ % ids.length];
     used.add(selected[role]);

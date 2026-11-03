@@ -1,6 +1,39 @@
 /** Local appearance-based corridor estimate. This is not surveyed wall geometry. */
 export type HallwayPoint = readonly [number, number, number];
 
+/** A world-space fitted wall; its unit normal points into the corridor. */
+export interface HallwayWallPlane {
+  point: HallwayPoint;
+  normal: HallwayPoint;
+  residual: number;
+}
+
+export interface HallwayWallPlanes {
+  left: HallwayWallPlane;
+  right: HallwayWallPlane;
+}
+
+/** Signed inward point-to-plane distances, independently measured in world metres. */
+export function measureWallDistances(walls: HallwayWallPlanes, worldPoint: HallwayPoint): {
+  left: number; right: number; imbalance: number;
+} {
+  if (!finitePoint(worldPoint)) throw new Error('Wall measurements need a finite world point.');
+  const distance = (wall: HallwayWallPlane): number => {
+    if (!wall?.point || !wall.normal || !finitePoint(wall.point) || !finitePoint(wall.normal)
+      || !Number.isFinite(wall.residual) || wall.residual < 0
+      || Math.abs(Math.hypot(...wall.normal) - 1) > 1e-8) {
+      throw new Error('Wall measurements need finite points and unit inward normals.');
+    }
+    const value = (worldPoint[0] - wall.point[0]) * wall.normal[0]
+      + (worldPoint[1] - wall.point[1]) * wall.normal[1]
+      + (worldPoint[2] - wall.point[2]) * wall.normal[2];
+    if (!Number.isFinite(value)) throw new Error('Wall measurement exceeds finite world coordinates.');
+    return value;
+  };
+  const left = distance(walls.left), right = distance(walls.right);
+  return { left, right, imbalance: Math.abs(left - right) };
+}
+
 export interface HallwayCenterOptions {
   /** Raw scan XYZ values; a fourth padding/component value is ignored with stride 4. */
   centers: ArrayLike<number>;
@@ -35,6 +68,9 @@ export type HallwayCenterResult = {
   centerWorld: [number, number, number];
   centerRaw: [number, number, number];
   directionWorld: [number, number, number];
+  /** Independent local wall fits, before the shared-heading confidence check. */
+  wallPlanes: HallwayWallPlanes;
+  /** Effective width: the sum of measured perpendicular distances at the centre. */
   width: number;
   /** Centre-to-wall distances. Subtract the box half-width for box-edge clearance. */
   clearanceLeft: number;
@@ -264,6 +300,16 @@ export function estimateHallwayCenter(options: HallwayCenterOptions): HallwayCen
     || left.residual > 0.05 || right.residual > 0.05) {
     return fail('Local wall fits are inconsistent; pick both floor edges instead.');
   }
+  const plane = (line: Line, inwardSign: number): HallwayWallPlane => {
+    const length = Math.hypot(1, line.slope);
+    return {
+      point: [seed[0] + line.intercept * ux, options.floorY, seed[2] + line.intercept * uz],
+      normal: [inwardSign * (ux - line.slope * dx) / length, 0,
+        inwardSign * (uz - line.slope * dz) / length],
+      residual: line.residual,
+    };
+  };
+  const wallPlanes: HallwayWallPlanes = { left: plane(left, 1), right: plane(right, -1) };
   // Equal wall weighting keeps one densely sampled side from pulling the common direction.
   const leftFit = regression(left.cells), rightFit = regression(right.cells);
   const slope = (leftFit.slope * leftFit.variance + rightFit.slope * rightFit.variance)
@@ -274,23 +320,35 @@ export function estimateHallwayCenter(options: HallwayCenterOptions): HallwayCen
   const commonResidual = (line: Line, intercept: number) => Math.sqrt(line.cells.reduce(
     (sum, cell) => sum + (cell.lateral - intercept - slope * cell.along) ** 2, 0,
   ) / line.cells.length) / normalLength;
-  left.residual = commonResidual(left, leftIntercept);
-  right.residual = commonResidual(right, rightIntercept);
-  evidence.left = wallEvidence(left); evidence.right = wallEvidence(right);
-  if (Math.max(left.residual, right.residual) > 0.05) {
+  const leftCommonResidual = commonResidual(left, leftIntercept);
+  const rightCommonResidual = commonResidual(right, rightIntercept);
+  if (Math.max(leftCommonResidual, rightCommonResidual) > 0.05) {
     return fail('The shared parallel-wall fit is uncertain; pick both floor edges instead.');
   }
-  const width = (rightIntercept - leftIntercept) / normalLength;
-  if (leftIntercept >= -MIN_WALL_OFFSET || rightIntercept <= MIN_WALL_OFFSET || width < 0.75 || width > 4.2) {
+  const commonWidth = (rightIntercept - leftIntercept) / normalLength;
+  if (leftIntercept >= -MIN_WALL_OFFSET || rightIntercept <= MIN_WALL_OFFSET || commonWidth < 0.75 || commonWidth > 4.2) {
     return fail('The seed is not inside a plausible opposing-wall section; pick both floor edges instead.');
   }
-  const midpoint = (leftIntercept + rightIntercept) / 2;
+  // Solve equal NORMALISED distances to the independent walls at the same
+  // longitudinal station. Averaging intercepts is insufficient for tapered walls.
+  const leftLength = Math.hypot(1, left.slope), rightLength = Math.hypot(1, right.slope);
+  const midpoint = (left.intercept / leftLength + right.intercept / rightLength)
+    / (1 / leftLength + 1 / rightLength);
   const centerWorld: [number, number, number] = [seed[0] + midpoint * ux, options.floorY, seed[2] + midpoint * uz];
   const centerRaw = pointThrough(inverse, centerWorld);
-  const directionWorld: [number, number, number] = [(dx + slope * ux) / normalLength, 0, (dz + slope * uz) / normalLength];
+  const distances = measureWallDistances(wallPlanes, centerWorld);
+  if (Math.min(distances.left, distances.right) <= 0) return fail('The fitted centre lies outside the opposing walls.');
+  const width = distances.left + distances.right;
+  // The wall-normal bisector defines the average corridor heading; retain the
+  // supplied forward sense without forcing the independently fitted walls parallel.
+  const bx = wallPlanes.left.normal[0] - wallPlanes.right.normal[0];
+  const bz = wallPlanes.left.normal[2] - wallPlanes.right.normal[2];
+  const bisectorLength = Math.hypot(bx, bz);
+  const forwardSign = -bz * dx + bx * dz >= 0 ? 1 : -1;
+  const directionWorld: [number, number, number] = [forwardSign * -bz / bisectorLength, 0, forwardSign * bx / bisectorLength];
   return {
-    ok: true, centerRaw, centerWorld, directionWorld, width,
-    clearanceLeft: width / 2, clearanceRight: width / 2,
-    residual: Math.max(left.residual, right.residual), evidence,
+    ok: true, centerRaw, centerWorld, directionWorld, wallPlanes, width,
+    clearanceLeft: distances.left, clearanceRight: distances.right,
+    residual: Math.max(left.residual, right.residual, leftCommonResidual, rightCommonResidual), evidence,
   };
 }

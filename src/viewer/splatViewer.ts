@@ -88,6 +88,7 @@ export function createViewerRig(): ViewerRig {
     gpuAcceleratedSort: false,       // CPU sort — more compatible across browsers
     antialiased: quality.antialiased, // opt-in for compensation-trained exports
     dynamicScene: true,               // re-sort every frame
+    enableOptionalEffects: true,      // independently hide the extracted wall scene
     sphericalHarmonicsDegree: quality.sphericalHarmonicsDegree,
     halfPrecisionCovariancesOnGPU: false,
     integerBasedSort: false,          // avoid large-scene integer overflow
@@ -142,9 +143,13 @@ export async function loadScene(
  * library's material is patched in place; returns false when the shader
  * signature changed and the patch no longer applies.
  */
-function patchSplatOpacity(splats: GaussianSplats3D.DropInViewer, opacity: number): boolean {
+export function patchSplatOpacity(splats: GaussianSplats3D.DropInViewer, opacity: number): boolean {
   const material = splats.viewer.splatMesh.material as unknown as THREE.ShaderMaterial | undefined;
   if (!material || typeof material.fragmentShader !== 'string') return false;
+  if (material.uniforms.uGlobalOpacity) {
+    material.uniforms.uGlobalOpacity.value = opacity;
+    return true;
+  }
   const target = 'gl_FragColor = vec4(color.rgb, opacity);';
   if (!material.fragmentShader.includes(target)) return false;
   material.fragmentShader =
@@ -163,10 +168,30 @@ function patchSplatOpacity(splats: GaussianSplats3D.DropInViewer, opacity: numbe
  * for the scan-picking steps). No-op if the shader patch is not applied.
  */
 export function setScanOpacity(splats: GaussianSplats3D.DropInViewer, opacity: number): void {
+  scanOpacity.set(splats, opacity);
   const material = splats.viewer.splatMesh.material as unknown as THREE.ShaderMaterial | undefined;
   if (material && material.uniforms && material.uniforms.uGlobalOpacity) {
     material.uniforms.uGlobalOpacity.value = opacity;
   }
+}
+
+// Adding a splat object rebuilds the shared material. Keep the latest requested
+// calibration fade independently so a completed async load cannot reveal it.
+const scanOpacity = new WeakMap<object, number>();
+export function restoreScanOpacity(splats: GaussianSplats3D.DropInViewer): void {
+  patchSplatOpacity(splats, scanOpacity.get(splats) ?? SCAN_OPACITY);
+}
+
+/** Original hallway centres only; props never become calibration landmarks. */
+export function getSourceCenters(scanRoot: { viewer: { splatMesh: unknown } }): Float32Array | undefined {
+  const mesh = scanRoot.viewer.splatMesh as {
+    splatDataTextures?: { baseData?: { centers?: Float32Array } };
+    getScene?(index: number): { splatBuffer?: { getSplatCount(): number } } | undefined;
+  };
+  const centers = mesh.splatDataTextures?.baseData?.centers;
+  if (!centers?.length) return undefined;
+  const count = mesh.getScene?.(0)?.splatBuffer?.getSplatCount();
+  return count !== undefined ? centers.subarray(0, count * 3) : centers;
 }
 
 /**
@@ -189,7 +214,7 @@ export function applyStartPoint(
  */
 export function createSpawnMarker(): THREE.Group {
   const group = new THREE.Group();
-  const material = new THREE.LineBasicMaterial({ color: 0x00e5ff });
+  const material = new THREE.LineBasicMaterial({ color: 0x00e5ff, transparent: true, depthWrite: false });
   const vertical = new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(0, 0, 0),
     new THREE.Vector3(0, 2, 0),
@@ -201,5 +226,7 @@ export function createSpawnMarker(): THREE.Group {
     ringPoints.push(new THREE.Vector3(Math.cos(a) * 0.5, 0, Math.sin(a) * 0.5));
   }
   group.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(ringPoints), material));
+  // Draw after splats, while depth testing keeps the axis hidden inside the box.
+  for (const line of group.children) line.renderOrder = 999;
   return group;
 }

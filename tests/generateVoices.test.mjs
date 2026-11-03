@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { generateVoices } from '../scripts/generate-voices.mjs';
 import { selectVoiceIds } from '../scripts/voice-selection.mjs';
+import { SCENARIO_VOICE_CUES, VOICE_CUES } from '../src/audio/voiceCues.ts';
 
 async function withDirectory(run) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'calibrated-voices-test-'));
@@ -48,6 +49,30 @@ test('key-only local config selects available voices and writes local audio; lat
       root, args: ['--cue', 'purpose'], environment: {},
       fetcher: async () => { assert.fail('existing clips must not make a network request'); }, log() {},
     });
+  });
+});
+
+test('repeated cue filters generate only the four single-lead scenario lines once', async () => {
+  await withDirectory(async (root) => {
+    const requests = [];
+    await generateVoices({
+      root,
+      args: [...SCENARIO_VOICE_CUES.flatMap((cue) => ['--cue', cue]), '--cue', 'scenarioWelcome'],
+      environment: {
+        ELEVENLABS_API_KEY: 'fake_test_key',
+        ELEVENLABS_VOICE_LEAD: 'explicit_lead',
+      },
+      fetcher: async (endpoint, options) => {
+        assert.equal(options.method, 'POST');
+        assert.ok(String(endpoint).includes('/explicit_lead?'));
+        requests.push(JSON.parse(options.body).text);
+        return new Response(new Uint8Array(100), { headers: { 'content-type': 'audio/mpeg' } });
+      },
+      log() {},
+    });
+    assert.deepEqual(requests, SCENARIO_VOICE_CUES.map((cue) => VOICE_CUES[cue].caption));
+    assert.deepEqual((await fs.readdir(path.join(root, 'public/audio/generated'))).sort(),
+      SCENARIO_VOICE_CUES.map((cue) => `${cue}-lead.mp3`).sort());
   });
 });
 

@@ -52,9 +52,9 @@ Before entering VR, use the configured raw PLY landmarks A [2.99, 19.14, -1.41] 
 
 ## Start the installation after calibration
 
-Chrome now has **Show box** and **Rotate hallway 180°** controls. Show box estimates the midpoint between both local scan walls near screenshot station [2,21.1,-1.45] and places the 36 x 36 cm, 43 cm high box on existing local-floor Y=0. Rotate is enabled once the box is visible and manually starts the four-second turn about its base. The box stays fixed. Desktop inspection works without VR; in-headset use requires a current A/B fit and valid visible tracking. There is no timer/orb/hand-contact/step-detection or attestation-checkbox trigger. If wall fitting is uncertain, use **Pick two floor edges**. Check the real placement and independent landmarks before the physical trial. See [interaction plan](INTERACTION_PLAN.md).
+**Narrated test after calibration** is enabled by default. A successful A/B fit starts welcome narration, shows the first box at +10 seconds, starts a four-second turn at +15 seconds and reveals the second box at +20 seconds. The boxes stay fixed in their original world poses. Click **Enter VR** normally to unlock local audio; the four ElevenLabs clips must already be generated. STOP, Reset and tracking/focus/session changes cancel the sequence. Disable the test before calibration to use **Show box**, **Rotate hallway 180°** and **Show second box** manually. Show box fits opposing scan walls near raw [2,21.1,-1.45], on local-floor Y=0; weak fitting needs explicit floor-edge picks. Desktop preview grants no headset alignment. See [interaction plan](INTERACTION_PLAN.md).
 
-The app can still render real WebXR hands if Steam Link/Chrome exposes their joints; hands do not trigger this manual sequence. Existing local voice audition remains separate. See [voice setup](VOICE_SETUP.md) and [render quality](RENDER_QUALITY.md).
+The app can still render real WebXR hands if Steam Link/Chrome exposes their joints; hands do not trigger the boxes or turn. Local voice audition remains available separately. See [voice setup](VOICE_SETUP.md) and [render quality](RENDER_QUALITY.md).
 
 ## See movement boundaries on the PC
 

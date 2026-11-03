@@ -14,16 +14,18 @@ export async function generateVoices({
   log = console.log,
 } = {}) {
   const allowed = new Set(['--dry-run', '--force', '--cue', '--help']);
-  let cueFilter = null;
+  const cueFilters = new Set();
   for (let i = 0; i < args.length; i++) {
     if (!allowed.has(args[i])) throw new Error(`Unknown option. Use --help.`);
     if (args[i] === '--cue') {
-      cueFilter = args[++i];
-      if (!Object.hasOwn(VOICE_CUES, cueFilter ?? '')) throw new Error('Unknown cue. Use purpose, badge, congratulations or reversed.');
+      const cue = args[++i];
+      if (!Object.hasOwn(VOICE_CUES, cue ?? '')) throw new Error(`Unknown cue. Use ${Object.keys(VOICE_CUES).join(', ')}.`);
+      cueFilters.add(cue);
     }
   }
   if (args.includes('--help')) {
-    log('Usage: node scripts/generate-voices.mjs [--dry-run] [--cue purpose|badge|congratulations|reversed] [--force]');
+    log('Usage: node scripts/generate-voices.mjs [--dry-run] [--cue NAME ...] [--force]');
+    log(`Available cues: ${Object.keys(VOICE_CUES).join(', ')}. Repeat --cue to select several without generating the others.`);
     log('Put ELEVENLABS_API_KEY in the ignored repository-root .env.local. That is the only required setting.');
     log('Available voices are selected automatically; ELEVENLABS_VOICE_LEAD/LEFT/RIGHT are optional overrides.');
     log('Default model: eleven_v3; override with ELEVENLABS_MODEL_ID. Existing clips are skipped unless --force.');
@@ -50,7 +52,7 @@ export async function generateVoices({
   }
 
   const jobs = Object.entries(VOICE_CUES)
-    .filter(([cue]) => !cueFilter || cue === cueFilter)
+    .filter(([cue]) => !cueFilters.size || cueFilters.has(cue))
     .flatMap(([cue, definition]) => definition.layers.map((layer) => ({
       cue, role: layer.role, text: layer.text,
       target: resolve(root, 'public', voiceClipPath(cue, layer.role).slice(1)),
@@ -73,7 +75,7 @@ export async function generateVoices({
   if (!settings.ELEVENLABS_API_KEY) throw new Error('Set ELEVENLABS_API_KEY in the process environment or ignored .env.local.');
   const model = settings.ELEVENLABS_MODEL_ID || 'eleven_v3';
   if (!/^eleven_[a-zA-Z0-9_]{1,70}$/.test(model)) throw new Error('Invalid ELEVENLABS_MODEL_ID.');
-  const voiceIds = await selectVoiceIds(settings, fetcher);
+  const voiceIds = await selectVoiceIds(settings, fetcher, [...new Set(pending.map((job) => job.role))]);
 
   for (const job of pending) {
     const endpoint = new URL(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceIds[job.role])}`);

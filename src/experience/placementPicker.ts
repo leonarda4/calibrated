@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Installation } from './installation.ts';
 import { raycastSplatCenters } from '../viewer/splatRaycast.ts';
+import { getSourceCenters } from '../viewer/splatViewer.ts';
 
 type ScanRoot = THREE.Object3D & { viewer: { splatMesh: unknown } };
 
@@ -34,15 +35,14 @@ export function setupPlacementPicker(
     const width = Math.hypot(a.x - b.x, a.z - b.z);
     const config = installation.snapshot().config;
     installation.applyScanPlacement({ ...config, centerX: (a.x + b.x) / 2, centerZ: (a.z + b.z) / 2,
-      floorY: options.floorY ?? 0, hallwayWidth: width });
+      floorY: options.floorY ?? 0, hallwayWidth: width }, [b.z - a.z, 0, a.x - b.x]);
     if (newPick) { selectionReady = true; options.onPicked?.(); }
     onStatus(`Centre from picked floor edges; scan width ${width.toFixed(2)} m versus provisional ${config.hallwayWidth.toFixed(2)} m. Check floor and choose the intended lengthwise midpoint. Placement remains unchecked.`);
     return true;
   };
   const onPointer = (event: PointerEvent) => {
     if (!picking || renderer.xr.isPresenting || event.button !== 0) return;
-    const mesh = scanRoot.viewer.splatMesh as { splatDataTextures?: { baseData?: { centers?: Float32Array } } };
-    const centers = mesh.splatDataTextures?.baseData?.centers;
+    const centers = getSourceCenters(scanRoot);
     if (!centers) { onStatus('Wait for the scan to load before picking floor edges.'); return; }
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.set((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1);

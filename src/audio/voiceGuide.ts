@@ -85,9 +85,9 @@ export function createVoiceGuide(options: VoiceGuideOptions = {}) {
         return false;
       }
     },
-    async preload(): Promise<void> {
-      const paths = Object.entries(VOICE_CUES).flatMap(([cue, definition]) =>
-        definition.layers.map((layer) => voiceClipPath(cue as VoiceCue, layer.role)));
+    async preload(cues: readonly VoiceCue[] = Object.keys(VOICE_CUES) as VoiceCue[]): Promise<void> {
+      const paths = cues.flatMap((cue) =>
+        VOICE_CUES[cue].layers.map((layer) => voiceClipPath(cue, layer.role)));
       const loaded = await Promise.all(paths.map(load));
       const count = loaded.filter(Boolean).length;
       status(count === paths.length
@@ -122,6 +122,12 @@ export function createVoiceGuide(options: VoiceGuideOptions = {}) {
         const gain = audio.createGain();
         const pan = audio.createStereoPanner();
         source.buffer = buffer;
+        if (definition.layers.length === 1 && layer.role === 'lead' &&
+            definition.maxDurationSeconds && definition.maxDurationSeconds > 0) {
+          // Leave room for the source scheduling lead-in and the next frame's cue.
+          // Short recordings retain their natural rate; layered cues never change.
+          source.playbackRate.value = Math.max(1, buffer.duration / definition.maxDurationSeconds);
+        }
         gain.gain.value = layer.gain;
         pan.pan.value = layer.pan;
         source.connect(gain).connect(pan).connect(master!);
@@ -133,7 +139,8 @@ export function createVoiceGuide(options: VoiceGuideOptions = {}) {
         };
         source.start(startAt + layer.delay);
       });
-      status(loaded.every(Boolean) ? 'Voices playing: lead + layered whispers.' : 'Lead playing; some whisper clips are missing.');
+      status(definition.layers.length === 1 ? 'Narration playing.'
+        : loaded.every(Boolean) ? 'Voices playing: lead + layered whispers.' : 'Lead playing; some whisper clips are missing.');
     },
     stop,
     setMuted(value: boolean): void {

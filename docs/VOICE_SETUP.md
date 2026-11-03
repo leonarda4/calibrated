@@ -2,7 +2,7 @@
 
 The browser plays local audio. ElevenLabs runs only when the operator explicitly executes the asset-generation script. There is no runtime API key, network synthesis, or speech synthesis fallback that might change the performance during a session.
 
-The current manual Show box / Rotate hallway sequence does not play narrative cues. These utilities remain available for separate audition and future interaction work.
+The narrated test is enabled by default and starts after each successful VR calibration. It welcomes the participant immediately, shows the first box at +10 seconds, starts the turn at +15 seconds and reveals the second box at +20 seconds. Each action has a single centred ElevenLabs lead clip. Disable **Narrated test after calibration** for manual controls; **Preview narrated test on desktop** runs the same timing without granting a headset fit.
 
 ## Generate the voice clips
 
@@ -22,7 +22,15 @@ npm.cmd run voices:generate
 
 Use `npm.cmd` in Windows PowerShell if script execution is disabled; it avoids the blocked `npm.ps1` wrapper without changing the execution policy. On other platforms, use `npm`.
 
-Run this once after adding the key, then reload the browser. A complete generation makes up to 12 sequential speech requests, plus a voice-list lookup when voice IDs are omitted. Existing non-empty clips are skipped. `npm.cmd run voices:generate -- --dry-run` makes no API calls; `--cue badge --force` deliberately regenerates that cue's three layers and consumes API usage again. Requests are bounded and never retried automatically. Audio is MP3 at 44.1 kHz / 128 kbps. The generator logs request counts, input-character counts, output paths and redacted errors; it does not log keys, voice IDs or API response bodies.
+For just the four new test lines, run:
+
+```powershell
+npm.cmd run voices:generate -- --cue scenarioWelcome --cue scenarioBox --cue scenarioTurn --cue scenarioSeat
+```
+
+Run this after adding the key, then reload the browser. These filters make four sequential speech requests; generating every cue makes up to 16. A voice-list lookup is needed when required voice IDs are omitted. Only roles present in the selected clips need voice IDs. Existing non-empty clips are skipped. `npm.cmd run voices:generate -- --dry-run` makes no API calls; `--cue badge --force` deliberately regenerates that cue's three layers and consumes API usage again. Requests are bounded and never retried automatically. Audio is MP3 at 44.1 kHz / 128 kbps. The generator logs request counts, input-character counts, output paths and redacted errors; it does not log keys, voice IDs or API response bodies.
+
+On 2026-11-03 the local generation attempt was rejected: voice discovery reported missing `voices_read`, and a direct speech request also returned HTTP 401. No new scenario MP3s were created. Correct the local key/account access before expecting spoken narration; timing remains available with PC transcripts.
 
 If voice listing reports missing `voices_read` access, open **Developers → API Keys → (…) → Edit** in ElevenLabs and enable **Voices: Read** for that key. Speech generation also needs **Text to Speech** access. Save the key settings and rerun the command; the local key value does not need to change when only its permissions change. See [ElevenLabs API-key setup](https://elevenlabs.io/docs/help-center/technical/how-do-i-authorize-myself-using-an-api-key). An invalid or expired key instead needs replacement in the root `.env.local`. HTTP 401 alone does not distinguish these cases; the generator uses recognized service error details and keeps the response private.
 
@@ -30,9 +38,9 @@ Generated files live under ignored `public/audio/generated/`. Keep those files o
 
 ## Playback
 
-Click **ENABLE VOICES** once to allow Web Audio, then **PREVIEW VOICE**. Narrative captions never appear in the headset, including when audio is muted, missing, blocked or unsupported. Cue transcripts and audio status remain on the PC; calibration and interruption/recovery instructions remain in the headset. Listen with the same headset/output route intended for Steam Link and confirm that the imperative words remain understandable. The readable lead is centred; whisper takes enter 0.85 and 1.8 seconds later with lower gains and left/right panning. Each contains short repetitions. This is a conservative initial mix, pending an actual headphone audition.
+The first page pointer/key gesture, including clicking **Enter VR**, unlocks Web Audio and preloads the four test clips. **ENABLE VOICES** is available if the browser still blocks audio. **PREVIEW VOICE** auditions the older layered cue. Narrative captions never appear in the headset, including when audio is muted, missing, blocked or unsupported. Cue transcripts and audio status remain on the PC; calibration and interruption/recovery instructions remain in the headset. Listen through the intended Steam Link audio route. The four test cues use one centred lead; older audition cues retain whisper takes at 0.85 and 1.8 seconds with lower gains and left/right panning. New cues cancel prior speech, so audition that the box line finishes within its five-second slot.
 
-The cue text, roles, gains, pans, and delays are in [voiceCues.ts](../src/audio/voiceCues.ts). Changes to generation text need regeneration; changes to gain/pan/delay only need a browser reload. Playback uses cached decoded local clips. A new cue cancels the previous cue, including future scheduled layers; STOP, interruption, mute, and disposal cancel audio. If a lead clip is missing, its whisper layers are suppressed so the instruction is never replaced by a whisper-only cue. Its transcript stays on the PC.
+The cue text, roles, gains, pans, delays and optional duration limit are in [voiceCues.ts](../src/audio/voiceCues.ts). The box line speeds up only when needed to fit 4.7 seconds before the next cue; shorter clips stay at natural speed. Audition intelligibility and pitch after generation. Changes to generation text need regeneration; mix/timing changes only need a browser reload. Playback uses cached decoded local clips. A new cue cancels the previous cue, including future scheduled layers; STOP, interruption, mute, and disposal cancel audio. If a lead clip is missing, its whisper layers are suppressed so the instruction is never replaced by a whisper-only cue. Its transcript stays on the PC.
 
 ## Hand capability on the active PC route
 
