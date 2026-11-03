@@ -81,30 +81,10 @@ export function createInstallation(options: InstallationOptions) {
   edges.renderOrder = 41;
   box.add(edges);
 
-  const orb = new THREE.Group();
-  orb.name = 'installation-badge';
-  props.add(orb);
-  const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(1, 24, 16),
-    new THREE.MeshBasicMaterial({ color: 0xffeab3, transparent: true, depthTest: false }),
-  );
-  sphere.renderOrder = 50;
-  orb.add(sphere);
-  const halo = new THREE.Mesh(
-    new THREE.SphereGeometry(1.6, 24, 16),
-    new THREE.MeshBasicMaterial({
-      color: 0xffce66, transparent: true, opacity: 0.16,
-      blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false,
-    }),
-  );
-  halo.renderOrder = 51;
-  orb.add(halo);
-
   let baseline: ContentTransform | null = null;
   let lastPhase = flow.snapshot().phase;
   let previousStatus = '';
   let publishClock = 0;
-  let glowClock = 0;
 
   const readTransform = (): ContentTransform => ({
     position: scanRoot.position.toArray() as [number, number, number],
@@ -120,8 +100,6 @@ export function createInstallation(options: InstallationOptions) {
     const config = flow.snapshot().config;
     box.position.set(config.centerX, config.floorY + config.boxHeight / 2, config.centerZ);
     box.scale.set(config.boxWidth, config.boxHeight, config.boxDepth);
-    orb.position.set(config.centerX, config.floorY + config.orbHeight, config.centerZ);
-    orb.scale.setScalar(config.orbRadius);
   };
   const positionChanged = (a: InstallationConfig, b: InstallationConfig): boolean =>
     (['centerX', 'centerZ', 'floorY'] as const).some(key => Math.abs(a[key] - b[key]) > 1e-9);
@@ -149,8 +127,7 @@ export function createInstallation(options: InstallationOptions) {
   };
   const publish = (): void => {
     const state = snapshot();
-    props.visible = ['badge', 'rotating', 'reversed'].includes(state.phase);
-    orb.visible = state.phase === 'badge';
+    props.visible = ['box', 'rotating', 'reversed'].includes(state.phase);
     if (state.status !== previousStatus) {
       previousStatus = state.status;
       options.onStatus?.(state.status);
@@ -160,6 +137,17 @@ export function createInstallation(options: InstallationOptions) {
     lastPhase = state.phase;
   };
   const haltAudio = (): void => options.onStopAudio?.();
+  const showBox = (preview = false): boolean => {
+    syncDefaultAnchor();
+    if (placementSource === 'unplaced') { publish(); return false; }
+    const alreadyShown = flow.snapshot().phase === 'box';
+    const shown = flow.showBox(preview);
+    // A second Show click must not move the stored baseline or accumulate a
+    // transform. Static placement edits can still choose a new rotation pivot.
+    if (shown && !alreadyShown) baseline = readTransform();
+    publish();
+    return shown;
+  };
   syncDefaultAnchor();
   layout();
 
@@ -225,13 +213,12 @@ export function createInstallation(options: InstallationOptions) {
       if (!confirmed && flow.snapshot().phase === 'stopped') haltAudio();
       publish();
     },
-    start(preview = false): boolean {
-      syncDefaultAnchor();
-      // Preview captures a temporary baseline but never grants XR authority.
-      if (preview && !baseline) baseline = readTransform();
-      const started = flow.start(preview);
+    showBox,
+    start: showBox,
+    rotateHallway(): boolean {
+      const rotated = flow.rotateHallway();
       publish();
-      return started;
+      return rotated;
     },
     previewAdvance() {
       flow.previewAdvance();
@@ -250,8 +237,6 @@ export function createInstallation(options: InstallationOptions) {
         if (baseline) applyTransform(rotateContentAroundPivot(baseline,
           [snapshot.config.centerX, snapshot.config.floorY, snapshot.config.centerZ], snapshot.yaw));
       }
-      glowClock += Math.max(0, deltaSeconds);
-      halo.scale.setScalar(1 + Math.sin(glowClock * 2) * 0.08);
       publishClock += deltaSeconds;
       if (snapshot.phase !== lastPhase || publishClock >= 0.2) {
         publishClock = 0;

@@ -52,9 +52,9 @@ Before entering VR, use the configured raw PLY landmarks A [2.99, 19.14, -1.41] 
 
 ## Start the installation after calibration
 
-The rollback does not change the [installation sequence](INTERACTION_PLAN.md), voice setup, scan rendering or physical placement/start and stationary-support gates. Check the supplied 36 x 36 cm, 43 cm high box, the provisional 2.10 m hallway width, the surveyed centre and independent landmarks. The four-second visual turn and physical step-up/step-down still need supervised physical validation.
+Chrome now has **Show box** and **Rotate hallway 180°** controls. Show box estimates the midpoint between both local scan walls near screenshot station [2,21.1,-1.45] and places the 36 x 36 cm, 43 cm high box on existing local-floor Y=0. Rotate is enabled once the box is visible and manually starts the four-second turn about its base. The box stays fixed. Desktop inspection works without VR; in-headset use requires a current A/B fit and valid visible tracking. There is no timer/orb/hand-contact/step-detection or attestation-checkbox trigger. If wall fitting is uncertain, use **Pick two floor edges**. Check the real placement and independent landmarks before the physical trial. See [interaction plan](INTERACTION_PLAN.md).
 
-The app can render real WebXR hands if Steam Link/Chrome exposes their joints. A hand-like controller profile or pinch-only input cannot authorize fingertip contact. See [voice setup](VOICE_SETUP.md) for local hand models/audio and [render quality](RENDER_QUALITY.md) for scan profiles.
+The app can still render real WebXR hands if Steam Link/Chrome exposes their joints; hands do not trigger this manual sequence. Existing local voice audition remains separate. See [voice setup](VOICE_SETUP.md) and [render quality](RENDER_QUALITY.md).
 
 ## See movement boundaries on the PC
 

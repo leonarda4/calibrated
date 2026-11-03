@@ -11,6 +11,7 @@ export function setupPlacementPicker(
   scanRoot: ScanRoot,
   installation: Installation,
   onStatus: (text: string) => void,
+  options: { floorY?: number; onPicked?(): void } = {},
 ) {
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
@@ -21,18 +22,22 @@ export function setupPlacementPicker(
   const material = new THREE.MeshBasicMaterial({ color: 0xffdf85, depthTest: false });
   const geometry = new THREE.SphereGeometry(0.04, 12, 8);
   let picking = false;
+  let selectionReady = false;
   let disposed = false;
   const clearMarkers = () => markers.clear();
   const applyFromScan = (newPick = false) => {
-    if (picks.length !== 2) return;
-    if (!newPick && installation.snapshot().placementSource !== 'picked-scan') return;
+    if (picks.length !== 2 || (!newPick && !selectionReady)) return false;
+    if (!newPick && installation.snapshot().placementSource !== 'picked-scan') return false;
     scanRoot.updateMatrixWorld(true);
     const a = scanRoot.localToWorld(picks[0].clone());
     const b = scanRoot.localToWorld(picks[1].clone());
     const width = Math.hypot(a.x - b.x, a.z - b.z);
     const config = installation.snapshot().config;
-    installation.applyScanPlacement({ ...config, centerX: (a.x + b.x) / 2, centerZ: (a.z + b.z) / 2, floorY: (a.y + b.y) / 2 });
+    installation.applyScanPlacement({ ...config, centerX: (a.x + b.x) / 2, centerZ: (a.z + b.z) / 2,
+      floorY: options.floorY ?? 0, hallwayWidth: width });
+    if (newPick) { selectionReady = true; options.onPicked?.(); }
     onStatus(`Centre from picked floor edges; scan width ${width.toFixed(2)} m versus provisional ${config.hallwayWidth.toFixed(2)} m. Check floor and choose the intended lengthwise midpoint. Placement remains unchecked.`);
+    return true;
   };
   const onPointer = (event: PointerEvent) => {
     if (!picking || renderer.xr.isPresenting || event.button !== 0) return;
@@ -52,21 +57,29 @@ export function setupPlacementPicker(
     marker.renderOrder = 1002;
     markers.add(marker);
     if (picks.length === 1) { onStatus('Pick the opposite wall/floor edge at the same hallway cross-section.'); return; }
-    picking = false;
-    try { applyFromScan(true); } catch (cause) { onStatus(String(cause)); }
+    try {
+      picking = false;
+      applyFromScan(true);
+    } catch (cause) {
+      picking = true; selectionReady = false; picks.length = 0; clearMarkers();
+      onStatus(`${String(cause)} Pick a new pair of opposite edges.`);
+    }
   };
   renderer.domElement.addEventListener('pointerdown', onPointer);
   return {
     start() {
       if (disposed || renderer.xr.isPresenting) return;
-      if (!['idle', 'ready'].includes(installation.snapshot().phase)) {
+      if (!['idle', 'ready', 'box'].includes(installation.snapshot().phase)) {
         onStatus('Reset the sequence before picking placement.'); return;
       }
-      picking = true; picks.length = 0; clearMarkers(); markers.visible = true;
+      picking = true; selectionReady = false; picks.length = 0; clearMarkers(); markers.visible = true;
       installation.confirmPlacement(false);
       onStatus('At the intended lengthwise midpoint, click one wall/floor edge, then its opposite edge.');
     },
     cancel() { picking = false; markers.visible = false; },
+    isPicking: () => picking,
+    hasSelection: () => selectionReady && picks.length === 2,
+    clearSelection() { picking = false; selectionReady = false; picks.length = 0; clearMarkers(); markers.visible = false; },
     applyFromScan,
     dispose() { disposed = true; renderer.domElement.removeEventListener('pointerdown', onPointer); scanRoot.remove(markers); geometry.dispose(); material.dispose(); },
   };

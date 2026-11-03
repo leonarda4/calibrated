@@ -101,32 +101,40 @@ export async function runExperienceScenario(page) {
         const hud = camera.getObjectByName('experience-stop');
         ensure(hud?.visible, `${reasonPart}: in-headset stop cue is hidden`);
       };
-      const recoverAndStart = () => {
+      const recoverAndShowBox = () => {
         viewerMode = 'valid';
         session.visibilityState = 'visible';
         experience.prepareForCalibration();
         experience.calibrated();
-        // An explicit position in this synthetic floor frame is required even
-        // after a fit. A new scan has no box anchor to inherit or confirm.
+        // Explicit placement in this synthetic floor frame replaces the real
+        // scan-centering operation. There are no narrative/attestation gates.
         installation.configure({
           ...state().config,
           centerX: 0, centerZ: -2, floorY: 0, hallwayWidth: 2.1,
-          explorationSeconds: 0,
         });
         ensure(state().placementSource === 'manual-world' && !state().placementConfirmed,
-          'explicit synthetic box placement did not require a new physical-check confirmation');
-        installation.confirmPlacement(true);
-        ensure(installation.start(false), 'fresh fit plus placement confirmation could not start');
+          'explicit synthetic placement unexpectedly retained a physical-check confirmation');
+        ensure(!state().stationaryConfirmed, 'manual box fixture unexpectedly carried support confirmation');
+        ensure(installation.showBox(false), 'fresh fit plus explicit placement could not show the box');
         experience.update(0.01, frame);
-        ensure(state().phase === 'badge' && state().calibrated, 'valid viewer did not reach the badge stage');
+        ensure(state().phase === 'box' && state().calibrated, 'valid viewer did not retain the manually shown box');
       };
 
       try {
+        ensure(document.querySelector('#experience-show-box') && document.querySelector('#experience-rotate'),
+          'manual Chrome Show box / Rotate hallway controls were not created');
+        for (const obsoleteId of ['experience-start', 'experience-preview', 'experience-reveal',
+          'experience-collect', 'experience-stationary', 'experience-placement-check']) {
+          ensure(!document.getElementById(obsoleteId), `obsolete narrative/attestation control remains: ${obsoleteId}`);
+        }
+        ensure(document.querySelector('#experience-floorY')?.readOnly,
+          'local-floor display can still be edited as an arbitrary box height');
         // A desktop artistic turn must be undone before a fresh XR registration.
-        ensure(installation.start(true), 'initial desktop preview did not start');
-        installation.previewAdvance();
-        installation.confirmStationary(true);
-        ensure(installation.simulateCollection(), 'preview collection did not arm a synthetic turn');
+        installation.configure({ ...state().config, centerX: 0, centerZ: -2, floorY: 0, hallwayWidth: 2.1 });
+        ensure(installation.showBox(true), 'initial desktop box did not appear');
+        ensure(state().phase === 'box' && !state().stationaryConfirmed,
+          'manual desktop box required a stationary confirmation');
+        ensure(installation.rotateHallway(), 'manual desktop rotation did not start');
         experience.update(1);
         ensure(!same(scan.matrix.toArray(), baseline), 'preview did not rotate the visual scan');
         xr.isPresenting = true;
@@ -192,9 +200,9 @@ export async function runExperienceScenario(page) {
         ensure(session.enabledFeatures === originalFeatures && session.enabledFeatures.includes('hand-tracking'),
           'calibration changed the session hand-tracking feature instead of controlling app hands');
 
-        recoverAndStart();
+        recoverAndShowBox();
         experience.update(0.1, frame);
-        ensure(state().phase === 'badge' && state().calibrated && invalidations.length === 0,
+        ensure(state().phase === 'box' && state().calibrated && invalidations.length === 0,
           'missing unused hands invalidated a valid viewer');
         ensure(handPoseReads === 0, 'empty hand input sources caused joint sampling');
 
@@ -203,20 +211,20 @@ export async function runExperienceScenario(page) {
         experience.update(0.01, frame);
         expectStopped(1, 'missing viewer');
         installation.reset();
-        ensure(!state().calibrated && !installation.start(false), 'reset revived invalidated alignment authority');
+        ensure(!state().calibrated && !installation.showBox(false), 'reset revived invalidated alignment authority');
 
-        recoverAndStart();
+        recoverAndShowBox();
         viewerMode = 'emulated';
         experience.update(0.01, frame);
         experience.update(0.01, frame);
         expectStopped(2, 'emulated viewer');
 
-        recoverAndStart();
+        recoverAndShowBox();
         reference.dispatchEvent({ type: 'reset' });
         reference.dispatchEvent({ type: 'reset' });
         expectStopped(3, 'reference-space reset');
 
-        recoverAndStart();
+        recoverAndShowBox();
         session.visibilityState = 'hidden';
         session.dispatchEvent({ type: 'visibilitychange' });
         experience.update(0.01, frame);
@@ -227,16 +235,9 @@ export async function runExperienceScenario(page) {
         ensure(!experience.calibrationBlockReason(), 'visible recovery did not permit manual recalibration');
         expectStopped(4, 'visibility recovery requires manual recalibration');
 
-        recoverAndStart();
-        installation.confirmStationary(true);
-        const config = state().config;
-        const now = performance.now();
-        // Direct synthetic contact authorizes the pure sequence; no fake hand
-        // source/GLB asset is introduced into the runtime adapter under test.
-        installation.update(0.01, [{
-          position: [config.centerX, config.floorY + config.orbHeight, config.centerZ],
-          tracked: true, timestampMs: now,
-        }], now);
+        recoverAndShowBox();
+        ensure(!state().stationaryConfirmed && installation.rotateHallway(),
+          'manual rotation unexpectedly required support confirmation or contact');
         experience.update(0.1, frame);
         ensure(state().phase === 'rotating' && state().yaw > 0, 'frame-gap test did not start a partial turn');
         const frozenAt = scan.matrix.toArray();
@@ -244,7 +245,7 @@ export async function runExperienceScenario(page) {
         expectStopped(5, 'XR callback gap');
         ensure(same(scan.matrix.toArray(), frozenAt), 'callback gap jumped the scan instead of freezing it');
 
-        recoverAndStart();
+        recoverAndShowBox();
         xr.isPresenting = false;
         xr.dispatchEvent({ type: 'sessionend' });
         ensure(state().phase === 'stopped' && !state().calibrated, 'session end retained alignment authority');
@@ -261,7 +262,7 @@ export async function runExperienceScenario(page) {
         ensure(stop, 'operator STOP control was not created');
         for (const expected of [6, 7]) {
           installation.reset();
-          ensure(installation.start(true), 'desktop preview did not restart after session end/reset');
+          ensure(installation.showBox(true), 'desktop box did not reappear after session end/reset');
           experience.update(0.01);
           stop.click();
           expectStopped(expected, 'repeated operator STOP after desktop reset');
@@ -301,7 +302,7 @@ export async function runExperienceScenario(page) {
           ensure(recoveryCopy.includes('VIEW RESTORED') && recoveryCopy.includes('FRONT TRIGGER'),
             'visible HUD recovery action was stale or truncated before the front-trigger instruction');
           if (index === 0) restoredHudCopy = copyHudCanvas();
-          ensure(!state().calibrated && !state().placementConfirmed && !installation.start(false),
+          ensure(!state().calibrated && !state().placementConfirmed && !installation.showBox(false),
             'recovered view silently accepted the interrupted calibration');
         }
 
@@ -342,7 +343,9 @@ export async function runExperienceScenario(page) {
         return {
           passed: true,
           evidence: 'Actual setupExperience with synthetic session/reference/frame and detached scene; no headset result',
-          checks: ['session start restores preview baseline and disarms', 'current fit plus confirmed placement starts',
+          checks: ['session start restores preview baseline and disarms', 'current fit plus explicit placement shows the box',
+            'manual Show box and Rotate hallway need no stationary/support confirmation or orb contact',
+            'manual Chrome controls replace narrative/attestation controls; local-floor is read-only',
             'hidden/blurred startup waits without STOP', 'capture waits for visible non-emulated pose',
             'READY menu opening after a valid pose waits without STOP',
             'waiting messages name visible-blurred/hidden before unavailable pose',

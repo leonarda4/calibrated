@@ -27,11 +27,60 @@ function setup(defaultPlyCenter: Position3 | null = FIXTURE_PLY_CENTER) {
 }
 
 function previewTurn(installation: ReturnType<typeof createInstallation>) {
-  assert.equal(installation.start(true), true);
-  installation.previewAdvance();
-  installation.confirmStationary(true);
-  assert.equal(installation.simulateCollection(), true);
+  assert.equal(installation.showBox(true), true);
+  assert.equal(installation.rotateHallway(), true);
 }
+
+test('manual scene shows only the box and changes heading only after an explicit Rotate click', () => {
+  const scene = new THREE.Scene();
+  const scanRoot = new THREE.Group();
+  scanRoot.position.set(3, 0.2, -5);
+  scene.add(scanRoot);
+  scanRoot.updateMatrixWorld(true);
+  const baseline = scanRoot.matrix.toArray();
+  const cues: string[] = [];
+  const installation = createInstallation({ scene, scanRoot, defaultPlyCenter: null, onCue: cue => cues.push(cue) });
+  try {
+    assert.equal(installation.showBox(true), false, 'stale profile anchors must not supply an unchosen manual placement');
+    installation.applyScanPlacement({ ...installation.snapshot().config, centerX: 0, centerZ: -2.5, floorY: 0 });
+    assert.equal(installation.showBox(false), false, 'a live box still requires the current fit');
+    assert.equal(installation.showBox(true), true);
+    const props = scene.getObjectByName('installation-fixed-props')!;
+    const box = scene.getObjectByName('installation-box')!;
+    assert.equal(props.visible, true);
+    assert.equal(scene.getObjectByName('installation-badge'), undefined);
+    nearPoint(box.position.toArray(), [0, 0.215, -2.5]);
+    nearPoint(box.scale.toArray(), [0.36, 0.43, 0.36]);
+    installation.update(1000, [{ position: [0, 2.1, -2.5], tracked: true, timestampMs: 1000 }], 1000);
+    installation.previewAdvance();
+    assert.equal(installation.simulateCollection(), false);
+    assert.equal(installation.snapshot().phase, 'box');
+    assert.deepEqual(scanRoot.matrix.toArray(), baseline);
+    installation.configure({ ...installation.snapshot().config, centerX: 1, centerZ: -2 });
+    assert.equal(installation.snapshot().phase, 'box');
+    assert.equal(props.visible, true);
+    const fixedBox = box.getWorldPosition(new THREE.Vector3()).toArray();
+    assert.equal(installation.showBox(true), true, 'repeated Show should be idempotent');
+    assert.equal(installation.rotateHallway(), true);
+    assert.equal(installation.rotateHallway(), false);
+    installation.update(2);
+    assert.equal(installation.snapshot().yaw, Math.PI / 2);
+    installation.update(2);
+    nearPoint(scanRoot.position.toArray(), [-1, 0.2, 1]);
+    nearPoint(box.getWorldPosition(new THREE.Vector3()).toArray(), fixedBox);
+    assert.equal(props.visible, true);
+    assert.equal(installation.snapshot().phase, 'reversed');
+    assert.equal(installation.rotateHallway(), false);
+    assert.deepEqual(cues, []);
+    installation.reset();
+    assert.deepEqual(scanRoot.matrix.toArray(), baseline);
+    assert.equal(props.visible, false);
+    assert.equal(installation.showBox(true), true);
+    assert.equal(installation.rotateHallway(), true);
+    installation.update(4);
+    nearPoint(scanRoot.position.toArray(), [-1, 0.2, 1]);
+  } finally { installation.dispose(); }
+});
 
 test('scene turn keeps the physical box fixed; stop freezes, reset restores exact baseline', () => {
   const { scene, scanRoot, installation, baseline } = setup();
@@ -49,7 +98,7 @@ test('scene turn keeps the physical box fixed; stop freezes, reset restores exac
     installation.syncPlacementFromScan();
     assert.deepEqual(box.getWorldPosition(new THREE.Vector3()).toArray(), originalBox);
     installation.update(0.1);
-    assert.equal(scene.getObjectByName('installation-badge')!.visible, false);
+    assert.equal(scene.getObjectByName('installation-badge'), undefined);
     const stoppedAt = scanRoot.matrix.toArray();
     installation.invalidate('Tracking interrupted');
     installation.update(10);
@@ -74,8 +123,7 @@ test('raw PLY centre passes through scan translation and axis rotation while the
     const state = installation.snapshot();
     assert.equal(state.placementSource, 'default-ply');
     assert.ok(Math.abs(state.config.floorY - (expected[1] - 0.43 / 2)) < 1e-9);
-    nearPoint(scene.getObjectByName('installation-badge')!.position.toArray(),
-      [expected[0], state.config.floorY + state.config.orbHeight, expected[2]]);
+    assert.equal(scene.getObjectByName('installation-badge'), undefined);
   } finally { installation.dispose(); }
 });
 
@@ -168,28 +216,26 @@ test('explicit null anchor stays unplaced even when the active scan defines a bo
   } finally { installation.dispose(); }
 });
 
-test('applying unchanged draft fields explicitly places the box but still requires a fresh physical check', () => {
+test('applying draft fields explicitly places the manual box and a current fit permits live Show', () => {
   const { installation } = setup(null);
   try {
     installation.setCalibrated();
     installation.configure({ ...installation.snapshot().config });
     assert.equal(installation.snapshot().placementSource, 'manual-world');
     assert.equal(installation.snapshot().placementConfirmed, false);
-    assert.equal(installation.start(false), false);
-    installation.confirmPlacement(true);
-    assert.equal(installation.start(false), true);
+    assert.equal(installation.showBox(false), true);
+    assert.equal(installation.snapshot().phase, 'box');
   } finally { installation.dispose(); }
 });
 
-test('unplaced desktop preview stays draft and cannot grant a placement or calibration', () => {
+test('unplaced desktop and live controls wait for an explicit placement', () => {
   const { installation } = setup(null);
   try {
-    assert.equal(installation.start(true), true);
+    assert.equal(installation.showBox(true), false);
     assert.equal(installation.snapshot().placementSource, 'unplaced');
     assert.equal(installation.snapshot().placementConfirmed, false);
     assert.equal(installation.snapshot().calibrated, false);
-    assert.match(installation.snapshot().status, /draft coordinates/i);
-    installation.previewAdvance();
+    assert.equal(installation.rotateHallway(), false);
     assert.match(installation.snapshot().status, /unset/i);
     installation.stop('STOP: remain still.');
     assert.match(installation.snapshot().status, /STOP: remain still/);
@@ -222,14 +268,13 @@ test('user PLY bottom centre preserves the floor and extends the metric box upwa
   const installation = createInstallation({ scene, scanRoot });
   try {
     const box = scene.getObjectByName('installation-box')!;
-    const orb = scene.getObjectByName('installation-badge')!;
+    assert.equal(scene.getObjectByName('installation-badge'), undefined);
     assert.deepEqual(installation.snapshot().defaultPlyBase, [3, -2.1, 2]);
     assert.equal(installation.snapshot().defaultPlyCenter, null);
     assert.equal(installation.snapshot().placementSource, 'default-ply');
     assert.equal(installation.snapshot().config.floorY, 0);
     nearPoint(box.position.toArray(), [0, 0.215, -2.5]);
     nearPoint(box.scale.toArray(), [0.36, 0.43, 0.36]);
-    nearPoint(orb.position.toArray(), [0, 2.1, -2.5]);
     assert.equal(installation.snapshot().placementConfirmed, false);
     assert.equal(installation.start(false), false, 'authored placement alone is not a checked physical fit');
 
@@ -237,7 +282,6 @@ test('user PLY bottom centre preserves the floor and extends the metric box upwa
     assert.equal(installation.snapshot().placementSource, 'default-ply');
     assert.equal(installation.snapshot().config.floorY, 0);
     nearPoint(box.position.toArray(), [0, 0.3, -2.5]);
-    nearPoint(orb.position.toArray(), [0, 2.1, -2.5]);
 
     installation.setCalibrated();
     installation.prepareForCalibration();
@@ -252,7 +296,6 @@ test('user PLY bottom centre preserves the floor and extends the metric box upwa
     assert.equal(installation.snapshot().placementConfirmed, false);
 
     const fixedBox = box.getWorldPosition(new THREE.Vector3()).toArray();
-    const fixedOrb = orb.getWorldPosition(new THREE.Vector3()).toArray();
     previewTurn(installation);
     installation.update(2);
     installation.syncPlacementFromScan();
@@ -260,7 +303,6 @@ test('user PLY bottom centre preserves the floor and extends the metric box upwa
     assert.equal(installation.snapshot().yaw, Math.PI);
     assert.equal(scanRoot.position.y, 2.6);
     nearPoint(box.getWorldPosition(new THREE.Vector3()).toArray(), fixedBox);
-    nearPoint(orb.getWorldPosition(new THREE.Vector3()).toArray(), fixedOrb);
     installation.reset();
     assert.deepEqual(scanRoot.matrix.toArray(), fittedRoot);
   } finally { installation.dispose(); }

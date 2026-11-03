@@ -7,8 +7,14 @@ import { bindVoicePanel } from '../ui/voicePanel.ts';
 import { createVoiceGuide } from '../audio/voiceGuide.ts';
 import { setupTrackedHands } from '../xr/hands.ts';
 import { logger } from '../debug/logger.ts';
+import { estimateHallwayCenter } from './hallwayCenter.ts';
 
 type ScanRoot = THREE.Object3D & { viewer: { splatMesh: unknown } };
+
+// Approximate raw floor station visible in the supplied desktop screenshot.
+const BOX_STATION_RAW = [2, 21.1, -1.45] as const;
+// Same local-floor plane as the calibration grid and cyan origin marker.
+const FLOOR_Y = 0;
 
 /** Keep device/lifecycle orchestration out of both sequence math and main.ts. */
 export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, scanRoot: ScanRoot, options: { isScanReady?(): boolean } = {}) {
@@ -24,22 +30,77 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
     onStatus(text) { reportAudio(text); },
   });
   const installation = createInstallation({
-    scene, camera, scanRoot,
+    scene, camera, scanRoot, defaultPlyCenter: null,
     onCue(cue) { void voices.play(cue); },
     onStopAudio() { voices.stop(); },
   });
+  let placementMode: 'walls' | 'edges' = 'walls';
+  let centeringResult: ReturnType<typeof estimateHallwayCenter> | null = null;
+  let reportPlacement = (_text: string) => {};
   const placementPicker = setupPlacementPicker(renderer, camera, scanRoot, installation, text => {
+    reportPlacement(text);
     const output = document.getElementById('experience-error');
     if (output) output.textContent = text;
-  });
+  }, { floorY: FLOOR_Y, onPicked: () => { placementMode = 'edges'; centeringResult = null; } });
+  const centerPlacement = (): boolean => {
+    if (placementPicker.isPicking()) { reportPlacement('Finish both new floor-edge picks, or Reset baseline to cancel.'); return false; }
+    const state = installation.snapshot();
+    if (placementMode === 'edges' && state.placementSource === 'picked-scan') {
+      return placementPicker.applyFromScan();
+    }
+    placementMode = 'walls';
+    placementPicker.clearSelection();
+    const mesh = scanRoot.viewer.splatMesh as { splatDataTextures?: { baseData?: { centers?: Float32Array } } };
+    const centers = mesh.splatDataTextures?.baseData?.centers;
+    if (!centers) { reportPlacement('Wait for the scan before showing the box.'); return false; }
+    scanRoot.updateWorldMatrix(true, false);
+    const seed = state.placementSource === 'manual-world'
+      ? scanRoot.worldToLocal(new THREE.Vector3(state.config.centerX, FLOOR_Y, state.config.centerZ)).toArray() as [number, number, number]
+      : BOX_STATION_RAW;
+    centeringResult = estimateHallwayCenter({ centers, modelMatrix: scanRoot.matrixWorld.elements, seedRaw: seed,
+      floorY: FLOOR_Y, corridorDirectionRaw: [0, 1, 0] });
+    if (!centeringResult.ok) {
+      reportPlacement(`${centeringResult.reason} Use Pick two floor edges to choose opposite walls at this station.`);
+      return false;
+    }
+    const point = centeringResult.centerWorld;
+    installation.applyScanPlacement({ ...state.config, centerX: point[0], centerZ: point[2], floorY: FLOOR_Y,
+      hallwayWidth: centeringResult.width });
+    reportPlacement(`Centred between fitted scan walls: width ${centeringResult.width.toFixed(2)} m; ` +
+      `centre-to-wall ${centeringResult.clearanceLeft.toFixed(2)} / ${centeringResult.clearanceRight.toFixed(2)} m. ` +
+      'Floor uses local-floor Y=0. Check against the real hallway.');
+    return true;
+  };
   const unlockAudio = () => { void voices.unlock().then(ready => { if (ready) void voices.preload(); }); };
   const panel = bindExperiencePanel(installation, {
     isPresenting: () => renderer.xr.isPresenting,
     isScanReady: options.isScanReady,
-    onStartGesture: unlockAudio,
+    isPlacementPending: () => placementPicker.isPicking(),
+    onShowBox: () => {
+      if (options.isScanReady?.() === false) return;
+      if (renderer.xr.isPresenting && (!installation.snapshot().calibrated || calibrationActive || interrupted || !viewerReady)) {
+        reportPlacement('Complete a fresh A/B calibration with visible headset tracking before showing the box in VR.');
+        return;
+      }
+      if (centerPlacement()) installation.showBox(!renderer.xr.isPresenting);
+    },
+    onRotate: () => {
+      if (placementPicker.isPicking()) { reportPlacement('Finish both floor-edge picks before rotating.'); return; }
+      if (renderer.xr.isPresenting && (!installation.snapshot().calibrated || calibrationActive || interrupted || !viewerReady)) {
+        reportPlacement('Restore tracking and recalibrate before rotating the hallway in VR.'); return;
+      }
+      installation.rotateHallway();
+    },
+    onReset: () => {
+      placementPicker.cancel();
+      if (!placementPicker.hasSelection()) { placementPicker.clearSelection(); placementMode = 'walls'; }
+      installation.reset();
+    },
     onPickCenter: () => placementPicker.start(),
     onStop: () => interrupt('STOPPED. Stay still; press CALIBRATE when ready to realign.'),
   });
+  reportPlacement = text => panel.setPlacementStatus(text);
+  reportPlacement('Show box fits both scan walls near raw [2, 21.1, -1.45] and uses the existing floor Y=0.');
   const voicePanel = bindVoicePanel({
     onUnlock: unlockAudio,
     onMute: value => voices.setMuted(value),
@@ -73,6 +134,7 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
     interrupted = true;
     viewerReady = false;
     logger.warn('experience', reason);
+    placementPicker.cancel();
     installation.invalidate(reason);
     hands.clear();
     invalidateCalibration(reason);
@@ -127,6 +189,7 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
 
   return {
     installation,
+    placementSnapshot: () => centeringResult,
     hands,
     voices,
     bindCalibrationInvalidator(callback: (reason: string) => void) { invalidateCalibration = callback; },
@@ -148,13 +211,14 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
       interrupted = false;
     },
     scanTransformChanged() {
-      installation.syncPlacementFromScan();
-      placementPicker.applyFromScan();
+      if (placementMode === 'edges') placementPicker.applyFromScan();
+      else if (installation.snapshot().placementSource === 'picked-scan') centerPlacement();
     },
     calibrated() {
       calibrationActive = false;
       installation.setCalibrated();
-      placementPicker.applyFromScan();
+      if (placementMode === 'edges') placementPicker.applyFromScan();
+      else if (installation.snapshot().placementSource === 'picked-scan') centerPlacement();
       interrupted = false;
     },
     update(deltaSeconds: number, frame?: XRFrame) {

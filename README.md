@@ -10,11 +10,14 @@ A PC-rendered WebXR project for Meta Quest 3: view a Gaussian splat of a hallway
 
 ## First experience
 
-1. Load hallway3, then use **EDIT A/B** on the desktop to select its paired physical floor landmarks. The new export has no preconfigured A/B.
+1. Load hallway3. Its raw calibration landmarks are A [2.99, 19.14, -1.41] and B [2.90, 18.16, -1.26]; match LEFT to physical A and RIGHT to physical B. **EDIT A/B** is available for an explicit replacement.
 2. Wear the headset with Steam Link connected, wake both controllers and click **Enter VR** on the PC page or through SteamVR Desktop. Keep hand tracking enabled.
 3. From the HALLWAY PROJECT title, pull a controller's front/index trigger once, or click **CALIBRATE**, to start seven seconds for placing LEFT on marked floor point A and RIGHT on B. Both belong to the same placement attempt; real controller positions are buffered for hand takeover.
 4. The yaw+translation fit changes only the scan root. After success the scan fades in over one second; if controller measurements are missing, the CONFIRM prompt explains how to wake, place and confirm them. Hands can confirm available measurements but never supply controller landmarks. See [headset setup](docs/HEADSET_SETUP.md).
-5. Independently check alignment before the supervised hallway trial. After a tracking/boundary interruption, repeat CALIBRATE from the browser page; after a real session end, click **Enter VR** first. SteamVR Desktop provides access while wearing the headset.
+5. Click **Show box** in Chrome to estimate the hallway centre near the raw seed [2, 21.1, -1.45] and show the 36 x 36 x 43 cm box on **local-floor Y = 0**, matching the cyan origin/grid reference. Review the wall-fit result; if it is weak, use **Pick two floor edges**. The estimate is not certified physical geometry.
+6. Click **Rotate hallway 180°** separately to turn the visual hallway over four seconds around the fixed box. **STOP** freezes the turn and invalidates alignment; **Reset baseline** restores the saved visual pose. After a tracking/boundary interruption, recalibrate; after a session end, click **Enter VR** first. Independently check alignment before a supervised physical run.
+
+The two Chrome controls also work on the desktop without a headset. Live XR requires a current calibration fit. The manual sequence has no exploration timer, orb/contact trigger, narrative voice cue, or support/placement checkbox. SteamVR Desktop provides access to the PC controls while wearing the headset.
 
 At the user's request on 2026-11-03, calibration returns to local commit `8754817`'s guided title/trigger/seven-second placement flow. The sequential hold/queued-start redesign is removed; hand tracking remains enabled. The SteamVR route was accepted on hardware on 2026-11-02, but this rollback with the current installation integration still needs a fresh headset check. SteamVR has no passthrough; physical walking/box/turn validation remains supervised. The stricter probe/held-out-validation protocol in `docs/CALIBRATION.md` remains the target for validation-grade results.
 
@@ -22,14 +25,14 @@ At the user's request on 2026-11-03, calibration returns to local commit `875481
 
 The desktop **Movement boundaries** panel can show a cyan headset-reported play-area polygon and an amber manual movement rectangle. Runtime data appears only when the active VR session exposes it; the manual draft is enabled through **Show manual area** after setting its measured dimensions. The panel includes a live top view during VR and labelled last-session snapshots. These are desktop references and do not change headset boundary settings. See [headset setup](docs/HEADSET_SETUP.md).
 
-Hallway3 uses the manually adjusted placement in [scanAsset.ts](src/viewer/scanAsset.ts). Do not modify that file without explicit user permission. User-supplied raw PLY landmarks are configured separately in [landmarks.ts](src/calibration/landmarks.ts): A [2.99, 19.14, -1.41], B [2.90, 18.16, -1.26]. Match LEFT to physical A and RIGHT to physical B. These defaults survive reload; EDIT A/B replacements last for the current page session. The 36 x 36 x 43 cm box follows the configured raw anchor and calibration, remains upright and stays fixed during the artistic turn. Physical start still requires a fresh fit and placement check.
+Hallway3 uses the manually adjusted placement in [scanAsset.ts](src/viewer/scanAsset.ts). Do not modify that file without explicit user permission. User-supplied raw PLY landmarks are configured separately in [landmarks.ts](src/calibration/landmarks.ts); their committed defaults survive reload, while EDIT A/B replacements last for the current page session. The box is placed from the local wall-centre estimate or explicit floor-edge picks, remains upright on local-floor Y = 0, and stays fixed during the artistic turn. The raw seed identifies the cross-section to inspect; it does not establish the whole hallway's measured midpoint.
 
 | File | Purpose |
 | --- | --- |
 | [Project plan](docs/PROJECT_PLAN.md) | Scope, architecture, milestones, and open inputs |
-| [Interaction plan](docs/INTERACTION_PLAN.md) | Purpose/badge/box sequence, four-second visual turn, placement and physical gates |
+| [Interaction plan](docs/INTERACTION_PLAN.md) | Manual Chrome Show box / Rotate controls, hallway-centre estimate, four-second turn and recovery |
 | [Voices and hands](docs/VOICE_SETUP.md) | Offline ElevenLabs setup, local whisper mix, WebXR hand capability |
-| [Render quality](docs/RENDER_QUALITY.md) | Source-detail audit, quality profiles, private compressed scan preparation |
+| [Render quality](docs/RENDER_QUALITY.md) | Source-detail audit and current rendering quality controls |
 | [Calibration design](docs/CALIBRATION.md) | Metric scale, landmark capture, transforms, and recovery |
 | [Validation protocol](docs/VALIDATION.md) | PC/Quest checks and physical acceptance criteria |
 | [GitHub backlog](docs/BACKLOG.md) | Ordered issues with completion criteria |
@@ -48,4 +51,4 @@ Run: `npm install`, then `npm run dev` (HTTPS, port 5173; open on PC Chrome for 
 
 Desktop browser checks launch with `--force-webxr-runtime=no-xr-runtime` and synthetic XR fixtures to avoid replacing the live Chrome application's SteamVR registration. This isolation and the compact session-error display with expandable technical details are retained independently of the calibration rollback.
 
-The installation operator panel supports a desktop preview, measured placement, scan-picked centreline, STOP and manual reset. Approximately 2.10 m hallway width and the supplied 36 x 36 cm, 43 cm high box are prefilled; placement and reach height remain drafts. After a fit, check physical placement and independent alignment before **Start in headset**. **Desktop preview** grants no calibration authority. For detailed rendering use `https://localhost:5173/?quality=detail`; this still loads the original PLY. Generate local voice clips using the ignored credential setup in [VOICE_SETUP.md](docs/VOICE_SETUP.md); credentials never enter browser code. The 180-degree turn intentionally changes wall alignment and requires physical review before further wall touch.
+The operator panel provides **Show box**, **Rotate hallway 180°**, STOP, baseline reset and collapsed placement details. The approximately 2.10 m hallway width is a comparison input; it does not stretch the scan. Check the real box and independent alignment before a physical run. For detailed rendering use `https://localhost:5173/?quality=detail`; this still loads the original PLY. Existing voice-generation tools remain documented in [VOICE_SETUP.md](docs/VOICE_SETUP.md), with credentials kept outside browser code. The 180-degree turn intentionally changes wall alignment and requires independent physical checks before further wall touch.

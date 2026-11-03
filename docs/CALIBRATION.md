@@ -8,7 +8,7 @@ The active asset is the original public/splats/hallway3/hallway3_0.ply, loaded w
 
 1. Inspect the scan in desktop Chrome using its manually adjusted placement. Start floor point fields display the raw start from scanAsset.ts. The tracked rig stays unchanged. Placement changes disarm the experience and require a new fit; do not change the protected source profile without permission.
 2. Use the configured A/B above and identify their corresponding physical marks: LEFT on A, RIGHT on B. Use **EDIT A/B** only when intentionally selecting a replacement pair; beginning an edit clears both active points, and a partial selection blocks capture. Reload restores the configured pair.
-3. Check the box base against the current configured raw anchor after calibration. Its 0.36 x 0.36 m footprint and 0.43 m height remain metric and upright; height edits preserve the base. Floor-edge picking or explicitly applied world placement can override the preview, but neither grants physical acceptance. Do not infer a new physical box location or change the protected asset profile.
+3. The manual box route ignores the stale asset box anchor. **Show box** fits opposing scan walls near raw [2,21.1,-1.45], centres the box at that longitudinal station and uses the existing local-floor Y=0. Its 0.36 x 0.36 m footprint and 0.43 m height remain metric and upright. Weak wall estimates ask for two opposite floor-edge picks; those also use floor Y=0. Neither inferred geometry nor manual placement establishes physical acceptance. The protected scan profile is unchanged.
 4. Check uniform metric scale with corresponding measurements, using approximately 2.10 m local width and approximately 2.40 m floor-to-bars height as independent references. Whole-scene bounds do not provide these distances. Scale and floor orientation still require physical checks.
 5. Enter VR and perform the existing controller fit below, then check floor/box position, reach and independent landmarks before starting the installation. A picked box anchor follows the fit. Check any manually entered world placement again after a new fit.
 
@@ -29,7 +29,7 @@ At the user's request, calibration returns to the guided title/trigger/seven-sec
 
 The two-landmark MVP does not implement the held-out validation protocol below and cannot establish section 5's physical accuracy targets. A successful fit is not independent acceptance.
 
-The [installation sequence](INTERACTION_PLAN.md) retains its physical placement/start and stationary-support gates. Manual recalibration restores the content baseline before solving; the four-second 180-degree artistic turn rotates only the visual scan. The fixed box and tracked hands stay in XR space, and reversed walls require independent checks before touch exploration. A scan-picked box centre remains scan-local until the fit reprojects it into XR space.
+The [installation sequence](INTERACTION_PLAN.md) is now manually operated with Chrome **Show box** and **Rotate hallway 180°** buttons. Desktop inspection needs no headset; live XR requires a current explicit A/B fit and visible tracking. There is no automatic exploration timer, orb, hand-contact or step/support-checkbox trigger. Manual recalibration restores the content baseline before solving; the four-second turn rotates only the visual scan around the centred box base. The fixed box and tracked hands stay in XR space, and reversed walls require independent checks before touch exploration.
 
 ## Coordinate contract
 

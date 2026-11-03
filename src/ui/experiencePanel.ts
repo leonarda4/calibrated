@@ -1,16 +1,19 @@
-import type { Installation, InstallationConfig } from '../experience/installation.ts';
+﻿import type { Installation, InstallationConfig } from '../experience/installation.ts';
 
 export interface ExperiencePanelOptions {
   isPresenting(): boolean;
   isScanReady?(): boolean;
-  onStartGesture?(): void;
+  isPlacementPending?(): boolean;
+  onReset?(): void;
+  onShowBox(): void;
+  onRotate(): void;
   /** Choose opposite floor edges at the hallway's longitudinal midpoint. */
   onPickCenter?(): void;
   /** Coordinator also cancels any calibration timer/capture in progress. */
   onStop?(): void;
 }
 
-/** PC-only operator surface. Preview never supplies contact authority to XR. */
+/** Manual PC controls. The coordinator owns XR-fit and centering guards. */
 export function bindExperiencePanel(installation: Installation, options: ExperiencePanelOptions) {
   const events = new AbortController();
   const style = document.createElement('style');
@@ -21,10 +24,11 @@ export function bindExperiencePanel(installation: Installation, options: Experie
       font:12px/1.45 system-ui,sans-serif; color:#e5edf2; }
     #experience-panel h2 { font-size:14px; margin:0 0 6px; }
     #experience-panel p { color:#bac7d2; margin:6px 0; }
-    #experience-panel .experience-row { display:flex; flex-wrap:wrap; gap:6px; margin:7px 0; }
+    #experience-panel .experience-row { display:flex; flex-wrap:wrap; gap:6px; margin:9px 0; }
     #experience-panel button { cursor:pointer; border:1px solid #61717e; border-radius:4px;
-      background:#293a47; color:#f1f6fa; padding:6px 8px; font:inherit; }
+      background:#293a47; color:#f1f6fa; padding:7px 9px; font:inherit; }
     #experience-panel button:disabled { opacity:.4; cursor:default; }
+    #experience-panel #experience-show-box, #experience-panel #experience-rotate { flex:1; font-weight:600; }
     #experience-panel #experience-stop { background:#9a3037; border-color:#db6370; font-weight:bold; }
     #experience-panel input[type=number] { width:65px; background:#13232d; color:#f0f5f9;
       padding:3px; border:1px solid #506574; border-radius:3px; }
@@ -33,42 +37,37 @@ export function bindExperiencePanel(installation: Installation, options: Experie
     #experience-panel summary { cursor:pointer; color:#e6cb86; margin:8px 0; }
     #experience-panel #experience-phase { color:#f5d58c; font-weight:600; }
     #experience-panel #experience-error { color:#ffaab2; }
-    #experience-panel .experience-caption { border-left:2px solid #8cabbc; padding-left:8px; }
+    #experience-panel .experience-status { border-left:2px solid #8cabbc; padding-left:8px; }
   `;
   document.head.appendChild(style);
   const panel = document.createElement('section');
   panel.id = 'experience-panel';
-  panel.setAttribute('aria-label', 'Installation operator controls');
+  panel.setAttribute('aria-label', 'Hallway operator controls');
   panel.innerHTML = `
-    <h2>Purpose / education</h2>
-    <div id="experience-phase">Awaiting calibration</div>
-    <p id="experience-status" class="experience-caption" aria-live="polite"></p>
-    <p id="experience-hand-status">Hands: capability not checked yet</p>
-    <p id="experience-audio-status">Voices: local clips pending</p>
+    <h2>Hallway controls</h2>
+    <div id="experience-phase">Ready</div>
+    <p id="experience-status" class="experience-status" aria-live="polite"></p>
+    <div class="experience-row">
+      <button id="experience-show-box" type="button">Show box</button>
+      <button id="experience-rotate" type="button">Rotate hallway 180°</button>
+    </div>
+    <p id="experience-centering-status">Show the box first, then rotate the hallway when ready.</p>
+    <div class="experience-row">
+      <button id="experience-stop" type="button">STOP</button>
+      <button id="experience-reset" type="button">Reset baseline</button>
+    </div>
     <details id="experience-placement">
-      <summary id="experience-placement-label">Draft placement · metres</summary>
-      <p>Hallway width starts at a provisional 2.10 m. Pick opposite floor edges at the hallway's longitudinal midpoint, then check the real box. Approximate values do not establish alignment.</p>
+      <summary id="experience-placement-label">Box placement · metres</summary>
+      <p>Review the box position and dimensions below. You can also pick opposite floor edges at the hallway's longitudinal midpoint.</p>
       <p id="experience-placement-source"></p>
-      <p>Fields below use the current XR world coordinates in metres.</p>
+      <p>Fields use current XR world coordinates in metres.</p>
       <button id="experience-pick-center" type="button">Pick two floor edges</button>
       <p id="experience-clearance"></p>
       <div class="experience-fields"></div>
       <button id="experience-apply" type="button">Apply placement</button>
+      <p id="experience-hand-status"></p>
+      <p id="experience-audio-status"></p>
     </details>
-    <label><input id="experience-placement-check" type="checkbox"> Physical box, floor and midpoint checked</label>
-    <div class="experience-row">
-      <button id="experience-start" type="button">Start in headset</button>
-      <button id="experience-preview" type="button">Desktop preview</button>
-    </div>
-    <label><input id="experience-stationary" type="checkbox"> Wearer supported and stationary on box</label>
-    <div class="experience-row">
-      <button id="experience-reveal" type="button">Reveal badge · preview</button>
-      <button id="experience-collect" type="button">Touch orb · preview</button>
-    </div>
-    <div class="experience-row">
-      <button id="experience-stop" type="button">STOP</button>
-      <button id="experience-reset" type="button">Reset baseline · wearer still</button>
-    </div>
     <p id="experience-error" role="alert"></p>
   `;
   document.body.appendChild(panel);
@@ -77,22 +76,18 @@ export function bindExperiencePanel(installation: Installation, options: Experie
   const status = find('experience-status');
   const phase = find('experience-phase');
   const error = find('experience-error');
-  const start = find<HTMLButtonElement>('experience-start');
-  const preview = find<HTMLButtonElement>('experience-preview');
-  const reveal = find<HTMLButtonElement>('experience-reveal');
-  const collect = find<HTMLButtonElement>('experience-collect');
-  const stationary = find<HTMLInputElement>('experience-stationary');
-  const checked = find<HTMLInputElement>('experience-placement-check');
+  const showBox = find<HTMLButtonElement>('experience-show-box');
+  const rotate = find<HTMLButtonElement>('experience-rotate');
   const apply = find<HTMLButtonElement>('experience-apply');
   const pickCenter = find<HTMLButtonElement>('experience-pick-center');
   let configDirty = false;
+  let refresh = (): void => {};
   const fields = new Map<keyof InstallationConfig, HTMLInputElement>();
   const labels: [keyof InstallationConfig, string, string][] = [
-    ['centerX', 'Centreline X', '0.05'], ['centerZ', 'Centreline Z', '0.05'], ['floorY', 'Floor Y', '0.01'],
+    ['centerX', 'Box centre X', '0.05'], ['centerZ', 'Box centre Z', '0.05'], ['floorY', 'Floor Y (local-floor)', '0.01'],
     ['hallwayWidth', 'Hallway width', '0.01'],
     ['boxWidth', 'Box width', '0.01'], ['boxDepth', 'Box depth', '0.01'], ['boxHeight', 'Box height', '0.01'],
-    ['orbHeight', 'Orb height above floor', '0.05'], ['orbRadius', 'Orb radius', '0.01'],
-    ['explorationSeconds', 'Explore seconds', '1'], ['rotationSeconds', 'Turn seconds', '0.5'],
+    ['rotationSeconds', 'Turn seconds', '0.5'],
   ];
   const initial = installation.snapshot().config;
   for (const [key, labelText, step] of labels) {
@@ -103,9 +98,13 @@ export function bindExperiencePanel(installation: Installation, options: Experie
     input.type = 'number';
     input.step = step;
     input.value = String(initial[key]);
+    if (key === 'floorY') {
+      input.readOnly = true;
+      input.title = 'The calibrated local-floor plane is y=0. Showing the box uses that floor.';
+    }
     input.addEventListener('input', () => {
       configDirty = true;
-      installation.confirmPlacement(false);
+      refresh();
     }, { signal: events.signal });
     fields.set(key, input);
     label.append(input);
@@ -126,66 +125,51 @@ export function bindExperiencePanel(installation: Installation, options: Experie
     try { installation.configure(config); } catch (cause) { configDirty = true; throw cause; }
   });
   click('experience-pick-center', () => { if (!options.isPresenting()) options.onPickCenter?.(); });
-  checked.addEventListener('change', () => installation.confirmPlacement(checked.checked), { signal: events.signal });
-  stationary.addEventListener('change', () => installation.confirmStationary(stationary.checked), { signal: events.signal });
-  click('experience-start', () => {
-    if (!options.isPresenting()) return;
+  click('experience-show-box', () => {
     if (options.isScanReady?.() === false) { error.textContent = 'Wait for the hallway scan to finish loading.'; return; }
-    options.onStartGesture?.();
-    installation.start(false);
+    options.onShowBox();
   });
-  click('experience-preview', () => {
-    if (options.isPresenting()) return;
-    if (options.isScanReady?.() === false) { error.textContent = 'Wait for the hallway scan to finish loading.'; return; }
-    options.onStartGesture?.();
-    installation.start(true);
-  });
-  click('experience-reveal', () => { if (!options.isPresenting()) installation.previewAdvance(); });
-  click('experience-collect', () => { if (!options.isPresenting()) installation.simulateCollection(); });
+  click('experience-rotate', () => options.onRotate());
   click('experience-stop', () => {
     if (options.onStop) options.onStop();
     else installation.invalidate('Operator stop. Stay still; recalibrate before continuing.');
   });
-  click('experience-reset', () => installation.reset());
+  click('experience-reset', () => options.onReset ? options.onReset() : installation.reset());
 
-  const unsubscribe = installation.subscribe(snapshot => {
+  const renderPanel = (snapshot: ReturnType<Installation['snapshot']>): void => {
     const presenting = options.isPresenting();
     const scanReady = options.isScanReady?.() !== false;
-    const active = ['exploring', 'badge', 'rotating'].includes(snapshot.phase);
-    const mayStart = ['idle', 'ready'].includes(snapshot.phase);
-    const unplaced = snapshot.placementSource === 'unplaced';
-    phase.textContent = `${snapshot.preview ? 'DESKTOP PREVIEW · ' : ''}${snapshot.phase.toUpperCase()}` +
-      (snapshot.phase === 'rotating' ? ` · ${(snapshot.yaw * 180 / Math.PI).toFixed(0)}°` : '') +
-      (unplaced ? ' · BOX UNPLACED' : '');
+    const placementPending = options.isPlacementPending?.() === true;
+    const phaseName: string = snapshot.phase;
+    const turning = phaseName === 'rotating';
+    const mayShow = ['idle', 'ready', 'box'].includes(phaseName) && snapshot.yaw === 0;
+    const editable = !turning && !['exploring', 'badge', 'reversed'].includes(phaseName) && snapshot.yaw === 0;
+    phase.textContent = phaseName === 'box' ? 'BOX VISIBLE' : phaseName.toUpperCase();
+    if (turning) phase.textContent += ` · ${(snapshot.yaw * 180 / Math.PI).toFixed(0)}°`;
     status.textContent = snapshot.status;
-    checked.checked = snapshot.placementConfirmed;
-    checked.disabled = unplaced || configDirty || active || snapshot.phase === 'reversed';
-    checked.title = unplaced ? 'Place the box for this scan before checking its physical position.' : '';
-    stationary.checked = snapshot.stationaryConfirmed;
-    stationary.disabled = snapshot.phase !== 'badge' && snapshot.phase !== 'rotating';
-    find('experience-placement-label').textContent = configDirty ? 'Unsaved placement · apply changes' : unplaced ? 'Unplaced box · choose position' :
-      snapshot.placementConfirmed ? 'Placement checked · metres' : 'Draft placement · metres';
-    find('experience-clearance').textContent = `Side clearance if centred: ${((snapshot.config.hallwayWidth - snapshot.config.boxWidth) / 2).toFixed(2)} m each. Check against the real walls.`;
-    start.disabled = unplaced || !scanReady || configDirty || !presenting || !mayStart || !snapshot.calibrated || !snapshot.placementConfirmed;
-    preview.disabled = !scanReady || configDirty || presenting || !mayStart;
-    preview.title = scanReady ? (unplaced ? 'Preview draft box coordinates only; this scan has no placed box yet.' : 'Preview the loaded installation on the desktop') : 'Wait for the hallway scan to finish loading';
-    find('experience-placement-source').textContent = unplaced
-      ? 'New scan: no box location is set. Apply the fields below or pick two floor edges. Preview uses draft coordinates.'
+    showBox.disabled = !scanReady || configDirty || !mayShow || placementPending;
+    showBox.title = scanReady ? 'Show the box using the current hallway placement' : 'Wait for the hallway scan to finish loading';
+    rotate.disabled = !scanReady || configDirty || phaseName !== 'box' || placementPending;
+    rotate.title = phaseName === 'box' ? 'Turn only the visual hallway; keep the real box fixed' : 'Show the box before rotating the hallway';
+    find('experience-placement-label').textContent = configDirty ? 'Unsaved placement · apply changes' : 'Box placement · metres';
+    find('experience-clearance').textContent = `Side clearance if centred: ${((snapshot.config.hallwayWidth - snapshot.config.boxWidth) / 2).toFixed(2)} m each.`;
+    find('experience-placement-source').textContent = snapshot.placementSource === 'unplaced'
+      ? 'No box location is set. Show box to centre it, apply the fields below, or pick two floor edges.'
       : snapshot.placementSource === 'default-ply'
-      ? snapshot.defaultPlyBase
-        ? `Box bottom centre from PLY: [${snapshot.defaultPlyBase.join(', ')}]. Floor follows this point; box height extends upward. Follows scan placement and calibration.`
-        : `Box mesh centre from this scan's PLY anchor: [${snapshot.defaultPlyCenter?.join(', ')}]. Follows scan placement and calibration.`
-      : snapshot.placementSource === 'picked-scan' ? 'Box base from picked scan floor edges.' : 'Manual XR-world placement.';
-    reveal.disabled = presenting || !snapshot.preview || snapshot.phase !== 'exploring';
-    collect.disabled = presenting || !snapshot.preview || snapshot.phase !== 'badge' || !snapshot.stationaryConfirmed;
-    const editable = !active && snapshot.phase !== 'reversed' && snapshot.yaw === 0;
+        ? snapshot.defaultPlyBase
+          ? `Box bottom centre from PLY: [${snapshot.defaultPlyBase.join(', ')}]. Height extends upward from this floor point.`
+          : `Box mesh centre from PLY: [${snapshot.defaultPlyCenter?.join(', ')}].`
+        : snapshot.placementSource === 'picked-scan' ? 'Box base from picked scan floor edges.' : 'Manual XR-world placement.';
     apply.disabled = !editable;
     pickCenter.disabled = !options.onPickCenter || presenting || !editable || configDirty;
     for (const input of fields.values()) input.disabled = !editable;
     if (!configDirty) for (const [key, input] of fields) input.value = String(snapshot.config[key]);
-  });
+  };
+  refresh = () => renderPanel(installation.snapshot());
+  const unsubscribe = installation.subscribe(renderPanel);
 
   return {
+    setPlacementStatus(text: string) { find('experience-centering-status').textContent = text; },
     setHandStatus(text: string) { find('experience-hand-status').textContent = text; },
     setAudioStatus(text: string) { find('experience-audio-status').textContent = text; },
     dispose() { unsubscribe(); events.abort(); panel.remove(); style.remove(); },

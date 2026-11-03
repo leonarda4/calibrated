@@ -2,6 +2,8 @@
 
 The browser plays local audio. ElevenLabs runs only when the operator explicitly executes the asset-generation script. There is no runtime API key, network synthesis, or speech synthesis fallback that might change the performance during a session.
 
+The current manual Show box / Rotate hallway sequence does not play narrative cues. These utilities remain available for separate audition and future interaction work.
+
 ## Generate the voice clips
 
 Use Node 22.18 or newer. Open the ignored `.env.local` in the repository root (beside `package.json`, not inside `docs/`) and paste your key after `=`:
@@ -36,7 +38,7 @@ The cue text, roles, gains, pans, and delays are in [voiceCues.ts](../src/audio/
 
 The app requests optional WebXR `hand-tracking`. Steam Link, SteamVR/OpenXR, and Chrome must expose hand sources **and actual joint poses** for the feature to work. A controller profile containing the word `hand`, a pinch button, or a tracked controller ray is not proof of joint availability. Native Meta system hands belong to the headset compositor and cannot be enabled or imported by this PC WebXR page.
 
-The app bundles the standard generic WebXR skinned hand models used by Three.js, served locally from `public/hands/`. They have no runtime CDN dependency. Native Meta compositor hands cannot be enabled by this page; these local white skinned hands are the web-compatible representation. Only valid current-frame `index-finger-tip` poses can collect the orb. Missing or emulated poses immediately remove contact authority. Losing a hand does not itself invalidate hallway registration.
+The app bundles the standard generic WebXR skinned hand models used by Three.js, served locally from `public/hands/`. They have no runtime CDN dependency. Native Meta compositor hands cannot be enabled by this page; these local white skinned hands are the web-compatible representation. Hands remain visual tracking inputs; the current manual Show box / Rotate hallway sequence has no orb or contact trigger. Missing or emulated poses remove hand contact data. Losing a hand does not itself invalidate hallway registration.
 
 `meshPath: '/hands/'` selects the bundled `left.glb` and `right.glb`, with the 25 WebXR joint names and skeleton convention used by the installed Three.js r180 `XRHandMeshModel`. Keep the assets and their licences together. An unavailable or incompatible mesh retains the local joint/bone fallback. Mesh materials are unlit so they remain visible in the splat scene without lights. Rendering and contact must still be verified on actual Steam Link hardware.
 

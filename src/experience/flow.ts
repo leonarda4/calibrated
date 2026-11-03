@@ -1,7 +1,7 @@
 // Pure installation sequence. No renderer, XR objects, or persisted authority.
 export type Position3 = readonly [number, number, number];
 export type VoiceCue = 'purpose' | 'badge' | 'congratulations' | 'reversed';
-export type ExperiencePhase = 'idle' | 'ready' | 'exploring' | 'badge' | 'rotating' | 'reversed' | 'stopped';
+export type ExperiencePhase = 'idle' | 'ready' | 'box' | 'rotating' | 'reversed' | 'stopped';
 
 export interface InstallationConfig {
   centerX: number;
@@ -12,7 +12,7 @@ export interface InstallationConfig {
   boxWidth: number;
   boxDepth: number;
   boxHeight: number;
-  /** Orb centre above the measured floor, rather than above the box. */
+  /** Retained config compatibility only; the manual flow creates no orb. */
   orbHeight: number;
   orbRadius: number;
   explorationSeconds: number;
@@ -60,28 +60,13 @@ export function validateInstallationConfig(config: InstallationConfig): void {
   for (const key of ['boxWidth', 'boxDepth', 'boxHeight', 'orbRadius'] as const) {
     if (config[key] <= 0 || config[key] > 5) throw new Error(`${key} must be greater than 0 and at most 5 metres`);
   }
-  if (config.orbHeight <= config.boxHeight + config.orbRadius || config.orbHeight > 5) {
-    throw new Error('The orb must be above the box and no more than 5 metres above the floor');
-  }
+  if (config.orbHeight <= 0 || config.orbHeight > 5) throw new Error('Legacy orb height must be positive and at most 5 metres');
   if (config.explorationSeconds < 0 || config.explorationSeconds > 600) {
     throw new Error('Exploration must last between 0 and 600 seconds');
   }
   if (config.rotationSeconds < 1 || config.rotationSeconds > 30) {
     throw new Error('Rotation must last between 1 and 30 seconds');
   }
-}
-
-export function orbPosition(config: InstallationConfig): Position3 {
-  return [config.centerX, config.floorY + config.orbHeight, config.centerZ];
-}
-
-export function validOrbContact(contact: FingertipContact, config: InstallationConfig, nowMs: number): boolean {
-  if (!contact.tracked || contact.emulatedPosition || !Number.isFinite(nowMs) ||
-      !Number.isFinite(contact.timestampMs) || nowMs < contact.timestampMs ||
-      nowMs - contact.timestampMs > 100 || !Array.isArray(contact.position) ||
-      contact.position.length !== 3 || !contact.position.every(Number.isFinite)) return false;
-  const target = orbPosition(config);
-  return Math.hypot(...contact.position.map((value, i) => value - target[i])) <= config.orbRadius;
 }
 
 /** Monotonic ease-in/out with exact endpoints, avoiding transform accumulation. */
@@ -92,7 +77,6 @@ export function rotationYaw(elapsedSeconds: number, durationSeconds: number): nu
 
 export class InstallationFlow {
   private state: ExperienceSnapshot;
-  private cues: VoiceCue[] = [];
 
   constructor(config: InstallationConfig = { ...DEFAULT_INSTALLATION_CONFIG }) {
     validateInstallationConfig(config);
@@ -100,7 +84,7 @@ export class InstallationFlow {
       phase: 'idle', config: { ...config }, calibrated: false,
       placementConfirmed: false, stationaryConfirmed: false,
       preview: false, yaw: 0, elapsedSeconds: 0,
-      status: 'Draft placement. Calibrate, then check the real box and hallway midpoint.',
+      status: 'Set the box placement, then press Show box. Calibrate first for a live headset view.',
     };
   }
 
@@ -109,73 +93,73 @@ export class InstallationFlow {
   }
 
   drainCues(): VoiceCue[] {
-    return this.cues.splice(0);
+    return []; // Narrative cues are operator-controlled separately.
   }
 
   setCalibrated(): void {
-    this.clear('ready', 'Fit applied. Check independent landmarks and the physical box before starting.');
+    this.clear('ready', 'Fit applied. Show the box when ready.');
     this.state.calibrated = true;
     this.state.placementConfirmed = false;
   }
 
   configure(config: InstallationConfig): void {
     validateInstallationConfig(config);
-    if (this.isActive() || this.state.phase === 'reversed' || this.state.yaw !== 0) {
+    if (this.state.phase === 'rotating' || this.state.phase === 'reversed' || this.state.yaw !== 0) {
       throw new Error('Stop and reset the sequence before changing placement.');
     }
-    this.clear(this.state.calibrated ? 'ready' : 'idle', 'Placement changed. Confirm its position and dimensions again.');
+    const shown = this.state.phase === 'box';
+    const preview = this.state.preview;
+    this.clear(shown ? 'box' : this.state.calibrated ? 'ready' : 'idle',
+      shown ? 'Box placement updated. Press Rotate hallway when ready.' : 'Placement updated. Press Show box when ready.');
+    this.state.preview = shown && preview;
     this.state.config = { ...config };
     this.state.placementConfirmed = false;
   }
 
   confirmPlacement(confirmed: boolean): void {
     this.state.placementConfirmed = confirmed;
-    if (!confirmed && this.isActive()) this.stop('Placement check withdrawn. Sequence stopped.');
   }
 
-  confirmStationary(confirmed: boolean): void {
-    this.state.stationaryConfirmed = confirmed;
-    if (!confirmed && this.state.phase === 'rotating') this.stop('Support confirmation withdrawn. Turn stopped.');
+  /** Compatibility only: manual rotation has no step/support detection gate. */
+  confirmStationary(_confirmed: boolean): void {
+    this.state.stationaryConfirmed = false;
   }
 
-  start(preview = false): boolean {
-    if (this.isActive() || this.state.phase === 'stopped' || this.state.phase === 'reversed') return false;
-    if (!preview && (!this.state.calibrated || !this.state.placementConfirmed)) {
-      this.state.status = 'Start requires a current fit and a checked real box / hallway placement.';
+  showBox(preview = false): boolean {
+    if (this.state.phase === 'rotating' || this.state.phase === 'stopped' || this.state.phase === 'reversed') return false;
+    if (!preview && !this.state.calibrated) {
+      this.state.status = 'Calibrate the current headset session before showing the box in VR.';
       return false;
     }
-    this.clear('exploring', preview ? 'DESKTOP PREVIEW: find your purpose and bring it back here.' : 'Find your purpose and bring it back here.');
+    if (this.state.phase === 'box') return true;
+    this.clear('box', preview ? 'DESKTOP PREVIEW: box shown. Press Rotate hallway to preview the turn.' : 'Box shown. Press Rotate hallway when ready.');
     this.state.preview = preview;
-    this.cues.push('purpose');
     return true;
   }
 
-  previewAdvance(): void {
-    if (this.state.preview && this.state.phase === 'exploring') this.showBadge();
-  }
-
-  simulateCollection(): boolean {
-    if (!this.state.preview || this.state.phase !== 'badge' || !this.state.stationaryConfirmed) return false;
-    this.collect();
+  rotateHallway(): boolean {
+    if (this.state.phase !== 'box' || (!this.state.preview && !this.state.calibrated)) return false;
+    this.state.phase = 'rotating';
+    this.state.elapsedSeconds = 0;
+    this.state.status = 'Rotating hallway 180 degrees. The box stays fixed.';
     return true;
   }
 
-  update(deltaSeconds: number, contacts: readonly FingertipContact[], nowMs: number): void {
+  /** Legacy entry points cannot reintroduce time/contact-driven progression. */
+  start(preview = false): boolean { return this.showBox(preview); }
+  previewAdvance(): void {}
+  simulateCollection(): boolean { return false; }
+
+  update(deltaSeconds: number, _contacts: readonly FingertipContact[] = [], _nowMs = 0): void {
     if (!Number.isFinite(deltaSeconds) || deltaSeconds <= 0) return;
-    if (this.state.phase === 'exploring') {
-      this.state.elapsedSeconds += deltaSeconds;
-      if (this.state.elapsedSeconds >= this.state.config.explorationSeconds) this.showBadge();
-    } else if (this.state.phase === 'badge' && !this.state.preview && this.state.stationaryConfirmed) {
-      if (contacts.some(contact => validOrbContact(contact, this.state.config, nowMs))) this.collect();
-    } else if (this.state.phase === 'rotating') {
+    if (this.state.phase === 'rotating') {
       this.state.elapsedSeconds += deltaSeconds;
       this.state.yaw = rotationYaw(this.state.elapsedSeconds, this.state.config.rotationSeconds);
       if (this.state.elapsedSeconds >= this.state.config.rotationSeconds) {
         this.state.phase = 'reversed';
-        this.state.status = '180° complete. Step down with the operator. Reversed walls need new alignment checks.';
+        this.state.status = '180 degrees complete. Reset restores the fitted hallway heading.';
         this.state.yaw = Math.PI;
         this.state.stationaryConfirmed = false;
-        this.cues.push('reversed');
       }
     }
   }
@@ -184,7 +168,6 @@ export class InstallationFlow {
     this.state.phase = 'stopped';
     this.state.status = reason;
     this.state.stationaryConfirmed = false;
-    this.cues = [];
   }
 
   invalidate(reason: string): void {
@@ -194,30 +177,11 @@ export class InstallationFlow {
   }
 
   reset(): void {
-    this.clear(this.state.calibrated ? 'ready' : 'idle', 'Baseline restored. Recheck placement before starting.');
+    this.clear(this.state.calibrated ? 'ready' : 'idle', 'Baseline restored. Press Show box when ready.');
     this.state.placementConfirmed = false;
-  }
-
-  private isActive(): boolean {
-    return ['exploring', 'badge', 'rotating'].includes(this.state.phase);
   }
 
   private clear(phase: ExperiencePhase, status: string): void {
     Object.assign(this.state, { phase, status, stationaryConfirmed: false, preview: false, yaw: 0, elapsedSeconds: 0 });
-    this.cues = [];
-  }
-
-  private showBadge(): void {
-    this.state.phase = 'badge';
-    this.state.elapsedSeconds = 0;
-    this.state.status = 'Get your badge. Claim your education. The orb waits above the box.';
-    this.cues.push('badge');
-  }
-
-  private collect(): void {
-    this.state.phase = 'rotating';
-    this.state.elapsedSeconds = 0;
-    this.state.status = 'Congratulations. Stay still on the box while the hallway turns.';
-    this.cues.push('congratulations');
   }
 }

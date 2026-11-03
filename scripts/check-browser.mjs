@@ -23,6 +23,24 @@ const check = async (name, action) => {
   console.log(`PASS ${name}`);
 };
 
+async function readBoxVisibility(targetPage) {
+  const colors = await targetPage.evaluate(async () => {
+    const THREE = await import('/node_modules/.vite/deps/three.js');
+    const { renderer, scene, camera } = window.__debug;
+    renderer.render(scene, camera);
+    const point = scene.getObjectByName('installation-box').getWorldPosition(new THREE.Vector3()).project(camera);
+    const gl = renderer.getContext();
+    const x = Math.floor((point.x + 1) * gl.drawingBufferWidth / 2);
+    const y = Math.floor((point.y + 1) * gl.drawingBufferHeight / 2);
+    const bytes = new Uint8Array(3 * 3 * 4);
+    gl.readPixels(x - 1, y - 1, 3, 3, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+    return Array.from({ length: 9 }, (_, i) => Array.from(bytes.slice(i * 4, i * 4 + 3)));
+  });
+  assert.ok(colors.some(rgb => rgb.every((value, i) => Math.abs(value - [120, 140, 162][i]) <= 4)),
+    `Projected box is occluded by the scan: ${JSON.stringify(colors)}`);
+  return colors[4];
+}
+
 function corridorPly() {
   const points = [];
   // Raw coordinates follow the inverse inspection transform. This fixture
@@ -109,8 +127,8 @@ try {
     controls.update();
   });
   await check('installation preview waits for initial scan placement to finish', async () => {
-    assert.equal(await page.locator('#experience-preview').isDisabled(), true);
-    assert.equal(await page.locator('#experience-start').isDisabled(), true);
+    assert.equal(await page.locator('#experience-show-box').isDisabled(), true);
+    assert.equal(await page.locator('#experience-rotate').isDisabled(), true);
     assert.equal(await page.evaluate(() => window.__debug.experience.installation.snapshot().phase), 'idle');
   });
   releaseModel();
@@ -125,7 +143,7 @@ try {
       const { splats, scene, experience, calibration } = window.__debug;
       const state = experience.installation.snapshot();
       const box = scene.getObjectByName('installation-box');
-      if (state.placementSource !== 'default-ply' || state.placementConfirmed) throw new Error('New scan lost the authored unchecked box anchor.');
+      if (state.placementSource !== 'unplaced' || state.placementConfirmed) throw new Error('Manual box reused the stale asset anchor before operator action.');
       const landmarks = calibration.snapshot();
       if (!landmarks.landmarksReady || JSON.stringify(landmarks.scanPointA) !== JSON.stringify([2.99, 19.14, -1.41]) ||
         JSON.stringify(landmarks.scanPointB) !== JSON.stringify([2.90, 18.16, -1.26])) throw new Error('User-supplied A/B were not loaded.');
@@ -135,18 +153,17 @@ try {
       if (splats.localToWorld(new THREE.Vector3(...startPoint)).length() > 1e-8) throw new Error('Raw start floor point did not map to the XR origin.');
       const configuredRotation = new THREE.Quaternion(...ACTIVE_SCAN.rotation).normalize();
       if (1 - Math.abs(splats.quaternion.dot(configuredRotation)) > 1e-8) throw new Error('Scan did not retain the manually configured orientation.');
-      const expectedBase = new THREE.Vector3(...ACTIVE_SCAN.boxPlyBase).sub(new THREE.Vector3(...startPoint)).applyQuaternion(configuredRotation);
-      if (box.position.distanceTo(expectedBase.clone().add(new THREE.Vector3(0, .215, 0))) > 1e-8 ||
-        Math.abs(state.config.floorY - expectedBase.y) > 1e-8) throw new Error('Box base or height does not follow the configured raw anchor.');
+      if (state.config.floorY !== 0 || scene.getObjectByName('installation-fixed-props').visible) throw new Error('Box appeared automatically or changed the local-floor plane.');
       if (parseRenderQuality('?scan=max&quality=detail&format=ksplat').modelUrl !== '/splats/hallway3/hallway3_0.ply') throw new Error('Legacy bookmark loaded an old or compressed export.');
       if (state.config.boxWidth !== .36 || state.config.boxDepth !== .36 || state.config.boxHeight !== .43) throw new Error('Real box dimensions changed.');
       if (box.parent === splats) throw new Error('Physical box inherits the artistic scan turn.');
       return { placementSource: state.placementSource, landmarksReady: true, scanPointA: landmarks.scanPointA, scanPointB: landmarks.scanPointB,
-        startPoint, boxBasePly: state.defaultPlyBase, boxWorldCentre: box.position.toArray(), boxDimensions: [.36, .36, .43] };
+        startPoint, manualBoxPending: true, floorY: state.config.floorY, boxDimensions: [.36, .36, .43] };
     });
   });
   await check('scan loads with a nonblank canvas and gated physical start', async () => {
-    assert.equal(await page.locator('#experience-start').isDisabled(), true);
+    assert.equal(await page.locator('#experience-show-box').isDisabled(), false);
+    assert.equal(await page.locator('#experience-rotate').isDisabled(), true);
     return await page.evaluate(() => {
       const { renderer, scene, camera, splats } = window.__debug;
       renderer.render(scene, camera);
@@ -174,44 +191,53 @@ try {
     await page.screenshot({ path: path.join(output, 'calibration-ready.png'), fullPage: true });
     return { noQueuedStartup: true, calibrationAccepted: false, enterVrFirst: true };
   });
-  await check('desktop preview has no narrative HUD; badge props and box stay visible', async () => {
-    await page.locator('#experience-preview').click();
-    await page.locator('#experience-reveal').click();
-    await page.waitForFunction(() => window.__debug.experience.installation.snapshot().phase === 'badge');
+  await check('Show box fits equal wall distances on the existing floor without automatic progression', async () => {
+    await page.locator('#experience-show-box').click();
+    await page.waitForFunction(() => window.__debug.experience.installation.snapshot().phase === 'box');
     const state = await page.evaluate(() => {
       const { scene, camera, experience } = window.__debug;
+      experience.installation.update(45);
       const snapshot = experience.installation.snapshot();
-      return { snapshot, box: scene.getObjectByName('installation-box').position.toArray(), orbVisible: scene.getObjectByName('installation-badge').visible,
+      return { snapshot, placement: experience.placementSnapshot(), propsVisible: scene.getObjectByName('installation-fixed-props').visible,
+        box: scene.getObjectByName('installation-box').position.toArray(), orbExists: !!scene.getObjectByName('installation-badge'),
         narrativeHudExists: !!camera.getObjectByName('experience-captions'), stopVisible: camera.getObjectByName('experience-stop').visible };
     });
     assert.equal(state.snapshot.calibrated, false);
-    assert.equal(state.snapshot.config.hallwayWidth, 2.1);
-    assert.equal(state.orbVisible, true);
+    assert.equal(state.snapshot.phase, 'box');
+    assert.equal(state.snapshot.yaw, 0);
+    assert.ok(Math.abs(state.snapshot.config.hallwayWidth - 2.1) < .02);
+    assert.equal(state.snapshot.config.floorY, 0);
+    assert.equal(state.propsVisible, true);
+    assert.equal(state.box[1], .215);
+    assert.equal(state.orbExists, false);
+    assert.equal(state.placement.ok, true);
+    assert.ok(Math.abs(state.placement.clearanceLeft - state.placement.clearanceRight) < 1e-8);
+    assert.ok(Math.abs(state.box[0]) < .02);
     assert.equal(state.narrativeHudExists, false);
     assert.equal(state.stopVisible, false);
-    assert.equal(await page.locator('#experience-collect').isDisabled(), true);
+    assert.equal(await page.locator('#experience-rotate').isDisabled(), false);
+    const boxPixel = await readBoxVisibility(page);
     await page.screenshot({ path: path.join(output, 'screenshot.png'), fullPage: true });
-    return { phase: state.snapshot.phase, hallwayWidth: state.snapshot.config.hallwayWidth, box: state.box };
+    return { phase: state.snapshot.phase, hallwayWidth: state.snapshot.config.hallwayWidth, box: state.box, centering: state.placement, boxPixel };
   });
-  await check('one-shot preview collection turns exactly 180 degrees with fixed floor and box', async () => {
+  await check('manual Rotate button turns exactly 180 degrees with fixed floor and box', async () => {
     const before = await page.evaluate(() => ({ position: window.__debug.splats.position.toArray(), box: window.__debug.scene.getObjectByName('installation-box').position.toArray() }));
-    await page.locator('#experience-stationary').check();
-    await page.locator('#experience-collect').click();
+    await page.locator('#experience-rotate').click();
     await page.waitForFunction(() => window.__debug.experience.installation.snapshot().phase === 'reversed', undefined, { timeout: 8000 });
-    const after = await page.evaluate(() => ({ snapshot: window.__debug.experience.installation.snapshot(), position: window.__debug.splats.position.toArray(), box: window.__debug.scene.getObjectByName('installation-box').position.toArray(), orbVisible: window.__debug.scene.getObjectByName('installation-badge').visible }));
+    const after = await page.evaluate(() => ({ snapshot: window.__debug.experience.installation.snapshot(), position: window.__debug.splats.position.toArray(), box: window.__debug.scene.getObjectByName('installation-box').position.toArray(), propsVisible: window.__debug.scene.getObjectByName('installation-fixed-props').visible }));
     assert.equal(after.snapshot.yaw, Math.PI);
     assert.equal(after.position[1], before.position[1]);
     assert.deepEqual(after.box, before.box);
-    assert.equal(after.orbVisible, false);
+    assert.equal(after.propsVisible, true);
+    assert.equal(await page.locator('#experience-rotate').isDisabled(), true);
+    const boxPixel = await readBoxVisibility(page);
     await page.screenshot({ path: path.join(output, 'reversed.png'), fullPage: true });
-    return { yaw: after.snapshot.yaw, floorRootY: after.position[1], boxUnchanged: true };
+    return { yaw: after.snapshot.yaw, floorRootY: after.position[1], boxUnchanged: true, boxPixel };
   });
   await check('stop freezes a partial turn and reset cannot grant calibration', async () => {
     await page.locator('#experience-reset').click();
-    await page.locator('#experience-preview').click();
-    await page.locator('#experience-reveal').click();
-    await page.locator('#experience-stationary').check();
-    await page.locator('#experience-collect').click();
+    await page.locator('#experience-show-box').click();
+    await page.locator('#experience-rotate').click();
     await page.waitForTimeout(500);
     await page.locator('#experience-stop').click();
     const before = await page.evaluate(() => window.__debug.splats.matrix.toArray());
@@ -226,14 +252,13 @@ try {
     await page.locator('#experience-placement').evaluate(element => { element.open = true; });
     const boxWidth = Number(await page.locator('#experience-boxWidth').inputValue());
     await page.locator('#experience-hallwayWidth').fill(String(boxWidth / 2));
-    assert.equal(await page.locator('#experience-placement-check').isDisabled(), true);
-    assert.equal(await page.locator('#experience-preview').isDisabled(), true);
+    assert.equal(await page.locator('#experience-show-box').isDisabled(), true);
+    assert.equal(await page.locator('#experience-rotate').isDisabled(), true);
     await page.locator('#experience-apply').click();
     assert.match(await page.locator('#experience-error').textContent(), /width|clearance/i);
     await page.locator('#experience-hallwayWidth').fill('2.1');
     await page.locator('#experience-apply').click();
-    assert.equal(await page.locator('#experience-preview').isDisabled(), false);
-    assert.equal(await page.locator('#experience-start').isDisabled(), true);
+    assert.equal(await page.locator('#experience-show-box').isDisabled(), false);
   });
   await check('Enter VR preserves the browser gesture and retains bounded error recovery', async () => {
     const { runSessionStartScenario } = await import('../tests/browser/sessionStartScenario.mjs');
@@ -271,6 +296,14 @@ try {
       });
     });
     for (const position of positions) await page.mouse.click(position.x, position.y);
+    await page.locator('#experience-show-box').click();
+    await page.locator('#experience-pick-center').click();
+    await page.mouse.click(positions[0].x, positions[0].y);
+    assert.equal(await page.locator('#experience-show-box').isDisabled(), true);
+    assert.equal(await page.locator('#experience-rotate').isDisabled(), true);
+    await page.mouse.click(positions[1].x, positions[1].y);
+    assert.equal(await page.locator('#experience-show-box').isDisabled(), false);
+    assert.equal(await page.locator('#experience-rotate').isDisabled(), false);
     const before = await page.evaluate(() => window.__debug.experience.installation.snapshot());
     assert.equal(before.placementConfirmed, false);
     assert.ok(Math.abs(before.config.centerX) < 0.15, 'picked midpoint must lie near the corridor centreline');
@@ -300,7 +333,8 @@ try {
     assert.equal(overridden.config.centerX, 7);
     assert.equal(overridden.config.centerZ, 9);
     assert.equal(overridden.config.floorY, 0.35);
-    return { selectedWidth: before.config.hallwayWidth, calibrationTranslationFollowed: true, manualOverrideSurvivesCachedPicks: true };
+    return { selectedWidth: before.config.hallwayWidth, calibrationTranslationFollowed: true, manualOverrideSurvivesCachedPicks: true,
+      partialReplacementBlocksShowAndTurn: true };
   });
   await check('no desktop JavaScript errors', () => { assert.deepEqual(report.consoleErrors, []); });
 
@@ -312,12 +346,26 @@ try {
     realPage.on('pageerror', error => errors.push(error.message));
     await realPage.goto('http://127.0.0.1:5175/?quality=detail', { waitUntil: 'domcontentloaded' });
     await realPage.waitForFunction(() => document.getElementById('status')?.textContent?.includes('loaded'), undefined, { timeout: 180000 });
+    await realPage.locator('#experience-show-box').click({ timeout: 60000 });
+    await realPage.waitForFunction(() => window.__debug.experience.installation.snapshot().phase === 'box', undefined, { timeout: 60000 });
     // Software WebGL can queue expensive frames for a multi-million-splat scan.
     // Pause this desktop-only smoke before capture, leaving the last frame visible.
-    await realPage.evaluate(() => window.__debug.renderer.setAnimationLoop(null));
+    const privateCenter = await realPage.evaluate(() => {
+      const { renderer, scene, camera, controls, splats, experience } = window.__debug;
+      renderer.setAnimationLoop(null);
+      const box = scene.getObjectByName('installation-box');
+      // Desktop inspection view only, to show both the real scan and new box.
+      camera.position.set(box.position.x + 1.2, box.position.y + 1.8, box.position.z + 4);
+      controls.target.copy(box.position); controls.update();
+      splats.viewer.update(renderer, camera); renderer.render(scene, camera);
+      return { centering: experience.placementSnapshot(), config: experience.installation.snapshot().config };
+    });
     await realPage.screenshot({ path: path.join(output, 'private-scan.png'), fullPage: true, timeout: 60000 });
     assert.deepEqual(errors, []);
-    report.checks.push({ name: 'private original hallway3 PLY loads on desktop', passed: true, details: await realPage.locator('#status').textContent() });
+    assert.equal(privateCenter.centering.ok, true);
+    assert.equal(privateCenter.config.floorY, 0);
+    assert.ok(Math.abs(privateCenter.centering.clearanceLeft - privateCenter.centering.clearanceRight) < 1e-8);
+    report.checks.push({ name: 'private original hallway3 PLY centres and shows the manual box', passed: true, details: privateCenter });
     await realPage.close();
   }
   report.passed = true;
