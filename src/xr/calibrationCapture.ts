@@ -59,7 +59,8 @@ interface ControllerEntry {
 /** Input source classification: hands (tracked via hand tracking) vs remotes. */
 function isHandInput(source: XRInputSource): boolean {
   const s = source as unknown as { hand?: unknown; profiles?: readonly string[] };
-  return s.hand != null || (s.profiles ?? []).some((p) => String(p).includes('hand'));
+  return s.hand != null || (s.profiles ?? []).some((p) =>
+    p === 'generic-hand' || p.startsWith('generic-hand-') || p === 'hand-interaction');
 }
 
 export type LandmarkPickCallback = (which: 'A' | 'B', point: Vec3) => void;
@@ -73,7 +74,10 @@ export function setupCalibrationCapture(
   onLandmarkPicked?: LandmarkPickCallback,
   onStatus?: (text: string) => void,
   onLandmarkEdit?: (active: boolean) => void,
-): { startCalibration(): void; setLandmarkEdit(on: boolean): void; sample(deltaSeconds?: number): void; dispose(): void } {
+  onBeforeCalibration?: () => void,
+  canCalibrate: () => boolean = () => true,
+  calibrationBlockReason: () => string | null = () => null,
+) {
   // ---- input sources: up to 4 slots (2 remotes + 2 hands) ------------------
   // Steam Link passes Quest hand tracking through as input sources; hands
   // are classified and IGNORED â€” only physical remotes drive the calibration.
@@ -121,11 +125,6 @@ export function setupCalibrationCapture(
   /** Physical remotes only (hands excluded). */
   const remotes = (): ControllerEntry[] =>
     controllers.filter((c) => c.source && !c.isHand && c.source.gamepad);
-  const byHand = (hand: string): ControllerEntry | undefined => {
-    const pool = remotes();
-    return pool.find((c) => c.source?.handedness === hand)
-      ?? pool[hand === 'left' ? 0 : pool.length - 1];
-  };
 
   // ---- hand-takeover guard (Steam Link) -----------------------------------
   // SteamVR switches inputs to the user's HANDS as soon as the remotes are
@@ -136,18 +135,31 @@ export function setupCalibrationCapture(
   const lastRemotePos: Record<'left' | 'right', THREE.Vector3 | null> = {
     left: null, right: null,
   };
-  const sampleRemotePositions = (): void => {
+  const sampleRemotePositions = (frame?: XRFrame): void => {
+    const reference = renderer.xr.getReferenceSpace();
     for (const entry of remotes()) {
       const hand = entry.source?.handedness;
       if (hand !== 'left' && hand !== 'right') continue;
-      lastRemotePos[hand] = remotePoint(entry);
+      // A disconnected remote retains its last placement for hand takeover.
+      // A connected remote must have a real pose in this active XRFrame.
+      lastRemotePos[hand] = null;
+      if (!frame || !reference || !entry.source?.gripSpace) continue;
+      const sources = renderer.xr.getSession()?.inputSources;
+      if (sources && !Array.from(sources).includes(entry.source)) continue;
+      try {
+        const pose = frame.getPose(entry.source.gripSpace, reference);
+        if (!pose || pose.emulatedPosition) continue;
+        const p = pose.transform.position; const q = pose.transform.orientation;
+        if (![p.x, p.y, p.z, q.x, q.y, q.z, q.w].every(Number.isFinite)) continue;
+        lastRemotePos[hand] = new THREE.Vector3(...PROBE_TIP_OFFSET)
+          .applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w)).add(new THREE.Vector3(p.x, p.y, p.z));
+      } catch { /* no active current-frame pose, so no capture authority */ }
     }
   };
-  const left0 = (): ControllerEntry | undefined => byHand('left');
-  const right0 = (): ControllerEntry | undefined => byHand('right');
 
   // ---- HUD: parented to the camera â†’ sticks rigidly to the view ----------
   const { sprite: panel, setText } = makeTextPanel();
+  panel.name = 'calibration-instructions';
   panel.visible = false;
   panel.renderOrder = 1000;
   panel.position.set(0, 0.22, -HUD_DISTANCE);
@@ -177,7 +189,7 @@ export function setupCalibrationCapture(
   splats.add(markerA, markerB);
   scene.add(physA, physB);
 
-  let step: 'READY' | 'COUNTDOWN' | 'CONFIRM' | 'DONE' = 'READY';
+  let step: 'READY' | 'COUNTDOWN' | 'CONFIRM' | 'DONE' | 'INTERRUPTED' = 'READY';
   let pickToggle: 'A' | 'B' = 'A';
   let landmarkEdit = false; // gate: idle state must NOT modify landmarks
   let countdownTimer: ReturnType<typeof setInterval> | null = null;
@@ -225,7 +237,8 @@ export function setupCalibrationCapture(
   };
 
   /** Title screen: no PLY, only the GUI and the floor grid. */
-  const enterReady = (): void => {
+  const enterReady = (hint?: string): void => {
+    onBeforeCalibration?.();
     step = 'READY';
     physA.visible = physB.visible = false;
     markerA.visible = markerB.visible = false;
@@ -233,11 +246,25 @@ export function setupCalibrationCapture(
     resetGui();
     setScanOpacity(splats, calibrationOpacity());
     clearTimers();
-    showPanel(readyText());
+    showPanel(hint ?? readyText());
   };
 
   /** Remote trigger starts the placement countdown. */
   const startCountdown = (): void => {
+    if (!canCalibrate()) {
+      const hint = 'Scan is still loading.\nWait for loading, then press CALIBRATE.';
+      if (step === 'INTERRUPTED') onStatus?.(hint); else showPanel(hint);
+      return;
+    }
+    const blocked = calibrationBlockReason();
+    if (blocked) {
+      if (step === 'INTERRUPTED') onStatus?.(blocked);
+      else showPanel(blocked);
+      return;
+    }
+    onBeforeCalibration?.();
+    resetGui();
+    lastRemotePos.left = lastRemotePos.right = null;
     logger.info('calib', `countdown started â€” ${PLACE_SECONDS}s to place the remotes`);
     step = 'COUNTDOWN';
     setScanOpacity(splats, calibrationOpacity());
@@ -258,31 +285,34 @@ export function setupCalibrationCapture(
   };
 
   const countdownText = (): string =>
-    `PLACE REMOTES\nPut the remotes on the FLOOR:\nLEFT = spot A, RIGHT = spot B\n(any spots 1 m or more apart â€”\nthe hallway aligns TO them)\n${secondsLeft}s left`;
+    `PLACE REMOTES\nPut the remotes on marked FLOOR spots:\nLEFT = A, RIGHT = B\nKeep them in view of the headset.\n${secondsLeft}s left`;
 
-  renderer.xr.addEventListener('sessionstart', enterReady);
-  renderer.xr.addEventListener('sessionend', () => {
+  const onSessionStart = () => enterReady();
+  const onSessionEnd = () => {
     clearTimers();
+    step = 'INTERRUPTED';
+    lastRemotePos.left = lastRemotePos.right = null;
+    fadeClock = null;
     panel.visible = false;
     grid.visible = false;
-  });
+    setScanOpacity(splats, EXPERIENCE_OPACITY);
+    onStatus?.('VR session ended. Enter VR again, then press CALIBRATE.');
+  };
+  renderer.xr.addEventListener('sessionstart', onSessionStart);
+  renderer.xr.addEventListener('sessionend', onSessionEnd);
 
   // ---- solve from the remotes' current positions --------------------------
-  const remotePoint = (entry: ControllerEntry): THREE.Vector3 => {
-    const gripPos = entry.grip.getWorldPosition(new THREE.Vector3());
-    const offset = new THREE.Vector3(...PROBE_TIP_OFFSET)
-      .applyQuaternion(entry.grip.getWorldQuaternion(new THREE.Quaternion()));
-    return gripPos.add(offset);
-  };
-
   const tryCalibrate = (): void => {
+    if (step === 'INTERRUPTED' || !renderer.xr.isPresenting) return;
+    const blocked = calibrationBlockReason();
+    if (blocked) { enterReady(blocked); return; }
     // Prefer the BUFFERED remote positions: they were streamed while the
     // remotes were live. If hands took over after the remotes were placed
     // down, the buffer still holds their true floor spots. Fall back to a
     // live read only when there is no buffer (remotes never streamed).
-    sampleRemotePositions(); // last frame sample before deciding
-    const leftPos = lastRemotePos.left ?? (left0() ? remotePoint(left0()!) : null);
-    const rightPos = lastRemotePos.right ?? (right0() ? remotePoint(right0()!) : null);
+    // Timers/select events never read an XRFrame or a stale scene-node pose.
+    const leftPos = lastRemotePos.left;
+    const rightPos = lastRemotePos.right;
     if (!leftPos || !rightPos) {
       // SteamVR hands take over the inputs the moment the remotes are put
       // down â€” the buffer may be empty if no remote streamed during the
@@ -296,18 +326,11 @@ export function setupCalibrationCapture(
       `LEFT(buffered=${!!lastRemotePos.left})=[${leftPos.toArray().map(n => n.toFixed(2)).join(', ')}] ` +
       `RIGHT(buffered=${!!lastRemotePos.right})=[${rightPos.toArray().map(n => n.toFixed(2)).join(', ')}] ` +
       `distance=${leftPos.distanceTo(rightPos).toFixed(2)} m`);
-    if (leftPos.length() < 0.05 || rightPos.length() < 0.05) {
-      logger.error('calib', 'fit aborted: remote positions untracked (near origin)');
-      showPanel('Remotes not tracked yet\nMove them a little, then use\nthe button to restart');
-      enterReady();
-      return;
-    }
     if (leftPos.distanceTo(rightPos) < MIN_REMOTE_SEPARATION) {
       logger.error('calib', `fit aborted: remotes only ` +
         `${leftPos.distanceTo(rightPos).toFixed(2)} m apart (min ${MIN_REMOTE_SEPARATION} m). ` +
         `Place the remotes â‰¥1 m apart on the floor.`);
-      showPanel(`Remotes only ${leftPos.distanceTo(rightPos).toFixed(2)} m apart.\nPlace them at least 1 m apart\non the floor â€” widely separated\nspots give a precise fit`);
-      enterReady();
+      enterReady(`Controllers only ${leftPos.distanceTo(rightPos).toFixed(2)} m apart.\nPlace LEFT on marked A and RIGHT on B.\nPress a trigger or CALIBRATE to retry.`);
       return;
     }
     const solution = solveYawTranslation([
@@ -320,11 +343,10 @@ export function setupCalibrationCapture(
       `scanB=[${splats.localToWorld(activeB.clone()).toArray().map(n => n.toFixed(2))}] ` +
       `right=[${rightPos.toArray().map(n => n.toFixed(2))}] ` +
       `rms=${solution.rmsResidual.toFixed(3)}m`);
-    if (solution.rmsResidual > MAX_FIT_RMS) {
+    if (!Number.isFinite(solution.rmsResidual) || solution.rmsResidual > MAX_FIT_RMS) {
       logger.error('calib', `fit REJECTED â€” rms=${solution.rmsResidual.toFixed(3)} m ` +
         `(limit ${MAX_FIT_RMS}); remotes do not match the two-point geometry`);
-      showPanel('Fit rejected â€” remotes inconsistent\nCheck that LEFT is on A and\nRIGHT is on B, then restart');
-      enterReady();
+      enterReady('Fit rejected: controller points are inconsistent.\nCheck LEFT is on A and RIGHT on B.\nPress a trigger or CALIBRATE to retry.');
       return;
     }
     const composed = composeCalibration(
@@ -357,12 +379,12 @@ export function setupCalibrationCapture(
 
   const onSelect = (entry: ControllerEntry) => {
     if (!renderer.xr.isPresenting) return;
+    if (step === 'INTERRUPTED') return;
     // Hands may CONFIRM the reading (SteamVR hands take over when the
     // remotes are placed down) but never drive the wizard or measure.
     if (entry.isHand && step !== 'CONFIRM') return;
     if (step === 'COUNTDOWN') return; // nothing during the countdown
     if (step === 'CONFIRM') {
-      sampleRemotePositions(); // freshest buffered positions
       if (lastRemotePos.left && lastRemotePos.right) {
         logger.info('calib', 'confirm trigger â€” reading buffered remote positions');
         tryCalibrate();
@@ -386,6 +408,8 @@ export function setupCalibrationCapture(
   // ---- desktop picker: ONLY active in landmark-edit mode (EDIT A/B button).
   // Idle clicks never modify the calibration points.
   const setLandmarkEdit = (on: boolean): void => {
+    if (on && renderer.xr.isPresenting) return;
+    if (on) onBeforeCalibration?.();
     landmarkEdit = on;
     onLandmarkEdit?.(on);
     logger.info('calib', `landmark edit ${on ? 'ON' : 'OFF'}`);
@@ -432,13 +456,23 @@ export function setupCalibrationCapture(
   renderer.domElement.addEventListener('pointerdown', onPointerDown);
 
   return {
+    snapshot: () => ({ step, secondsLeft, hasLeft: !!lastRemotePos.left, hasRight: !!lastRemotePos.right }),
+    invalidate(reason: string) {
+      clearTimers();
+      step = 'INTERRUPTED';
+      lastRemotePos.left = lastRemotePos.right = null;
+      fadeClock = null;
+      panel.visible = false;
+      physA.visible = physB.visible = markerA.visible = markerB.visible = false;
+      onStatus?.(`${reason}\nOnce tracking returns, press CALIBRATE on the PC or SteamVR Desktop.`);
+    },
     /** PC operator entry point (Link route): start the placement countdown. */
     startCalibration() {
       if (renderer.xr.isPresenting) {
         startCountdown();
       } else {
         showPanel('No VR session running\nStart the session first (Enter VR),\nthen press CALIBRATE');
-        onStatus?.('no VR session running');
+        panel.visible = false;
       }
     },
     /** The ONLY way to enable landmark re-picking (idle clicks are ignored). */
@@ -450,9 +484,10 @@ export function setupCalibrationCapture(
      * the remotes' streamed grip positions (hand-takeover guard) and runs
      * the post-fit reveal: PLY fades in while GUI + grid fade out.
      */
-    sample(deltaSeconds = 1 / 60) {
+    sample(deltaSeconds = 1 / 60, frame?: XRFrame) {
       if (!renderer.xr.isPresenting) return;
-      sampleRemotePositions();
+      if (step === 'INTERRUPTED') return;
+      sampleRemotePositions(frame);
       if (fadeClock !== null) {
         fadeClock += deltaSeconds;
         const k = Math.min(1, fadeClock / FADE_SECONDS);
@@ -469,6 +504,8 @@ export function setupCalibrationCapture(
     },
     dispose() {
       clearTimers();
+      renderer.xr.removeEventListener('sessionstart', onSessionStart);
+      renderer.xr.removeEventListener('sessionend', onSessionEnd);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       camera.remove(panel);
       scene.remove(grid);

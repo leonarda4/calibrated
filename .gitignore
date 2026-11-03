@@ -17,6 +17,8 @@ public/splats/*
 private/
 captures/
 calibration-local/
+public/audio/generated/
+public/models/*.meta.json
 *.ply
 *.spz
 *.splat

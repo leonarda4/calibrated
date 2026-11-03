@@ -1,18 +1,23 @@
 # Calibration design
 
-This is a proposed method to validate experimentally. It is not a claim of achieved Quest or scan accuracy.
+The validation-grade protocol below remains a method to test experimentally, not a claim of achieved Quest or scan accuracy.
 
-## Current implemented method (MVP, 2026-11-02)
+## Restored current method (2026-11-03)
 
-What the app actually does today — deliberately simplified at the user's request, hardware-confirmed on the active route (SteamVR / Steam Link; earlier iterations were developed and hardware-tested on the Quest Browser route, which is now development history):
+At the user's request, calibration returns to the guided title/trigger/seven-second flow from local commit `8754817`. The SteamVR/Steam Link route was user-confirmed on hardware on 2026-11-02; this restored flow with the current installation integration needs a fresh hardware check. The later sequential controller-hold redesign is no longer the active procedure.
 
-- **Predefined landmarks:** points A and B live in `src/calibration/landmarks.ts` (scan-local coordinates), editable at runtime from the flat page via the **EDIT A/B** button (idle clicks never modify them).
-- **Remotes ARE the landmarks:** LEFT remote goes on real spot A, RIGHT on spot B. No probe tip, no docking fixture; `PROBE_TIP_OFFSET` describes grip-origin → placed-point on the remote and is currently 0.
-- **Flow:** CALIBRATE screen (50 % scan opacity — on the active SteamVR route this is a visibility aid over the black background, not passthrough) → 10-second countdown → remotes read at 0 s → closed-form **yaw+translation** fit (`src/calibration/yawTranslationSolver.ts`, 2D Procrustes on the x/z plane; floor level is the runtime's job via `local-floor`) → applied to the **scan root only**. Guards: both remotes tracked, ≥ 0.3 m apart, RMS ≤ 1 m — otherwise a hint and nothing is applied.
-- **No automatic anything:** watchdog, reference-space reset re-solve, smoothed glide, and localStorage restore were implemented and then removed at the user's request. Every session starts from the default transform; a boundary/tracking event that shifts the world requires re-placing the remotes and re-running CALIBRATE.
-- **Operator-driven on the active route:** the flat page's operator panel (CALIBRATE button + live countdown/status) drives the same state machine, because the SteamVR route has no passthrough. On Steam Link each remote's streamed grip position is buffered every frame (the hand-takeover fix) so the countdown reads floor spots, not hands.
+- **Enter VR while wearing the headset:** start SteamVR/Steam Link, wake both controllers, then click **Enter VR** in PC Chrome or through SteamVR Desktop. There is no queued pre-headset solo-start mode.
+- **Title and countdown:** the scan is hidden behind the HALLWAY PROJECT title and floor grid. Pull a physical controller's front/index trigger once, or click **CALIBRATE** on the PC page, to start seven seconds for placing LEFT on A and RIGHT on B. Both placements are acquired in the same attempt; there is no sequential save or trigger-hold capture requirement.
+- **Landmark contract:** the labelled physical marks correspond to the scan-local points in `src/calibration/landmarks.ts`, editable before VR using **EDIT A/B**. Controllers supply the measured reference; `PROBE_TIP_OFFSET` remains zero and does not establish a surveyed physical tip. Arbitrary floor locations are not substitutes for the paired marks.
+- **Buffered physical controller positions:** samples come from active XR frames. If hand tracking takes over after placement and controller sources disconnect, their last real buffered measurements remain available for the current attempt. Hands are excluded from measurement; invalid/emulated poses from a still-connected controller block that active measurement. The buffer cannot prove the later placement of an untracked controller.
+- **CONFIRM fallback:** if the countdown ends without both measurements, wake both controllers where the headset can see them, place LEFT on A and RIGHT on B, then pinch or pull a trigger to confirm available buffered measurements. A pinch may confirm; it does not measure a hand as a landmark.
+- **Fit and reveal:** the existing closed-form yaw plus XYZ translation solver changes only the scan root. The scan fades to full opacity over one second after a successful fit while the title/grid fade out. Fit residuals remain distinct from independent validation errors.
+- **Hand tracking stays enabled:** optional hand tracking and real-joint fingertip interaction remain available to the experience. The rollback adds no headset hand-tracking setting change.
+- **Explicit recovery:** viewer/reference-space/visibility interruption cancels capture, discards the attempt and disarms the installation. Use **CALIBRATE** on the PC page, including through SteamVR Desktop if alone, once tracking is restored. Repeat the complete seven-second placement. Actual session end requires **Enter VR** first, then a fresh fit and placement check. There is no automatic re-anchoring, queued capture acceptance or two-second redo gesture.
 
-The sections below are the **validation-grade protocol** this MVP simplifies. The two-landmark, no-held-out-check flow above cannot support the accuracy claims of section 5; the full protocol is the target once the hallway measurements exist (M2/M3).
+The two-landmark MVP does not implement the held-out validation protocol below and cannot establish section 5's physical accuracy targets. A successful fit is not independent acceptance.
+
+The [installation sequence](INTERACTION_PLAN.md) retains its physical placement/start and stationary-support gates. Manual recalibration restores the content baseline before solving; the four-second 180-degree artistic turn rotates only the visual scan. The fixed box and tracked hands stay in XR space, and reversed walls require independent checks before touch exploration. A scan-picked box centre remains scan-local until the fit reprojects it into XR space.
 
 ## Coordinate contract
 
@@ -69,7 +74,7 @@ Verify offset repeatability at one fixed contact point using at least three subs
 
 ## 3. Capture matching points
 
-The baseline PC VR session may be opaque. The wearer remains stationary while an assistant places the tracked probe on labelled real landmarks. A desktop operator selects the matching landmark, checks live pose quality, and captures it. This may require another operator or a capture control within reach. Test this arrangement in M0; keep the controller in a region the headset can track. Never instruct the wearer to locate a real wall by reaching toward an unverified virtual one.
+The baseline PC VR session is opaque. The current guided sequence acquires the labelled floor/controller landmarks using the seven-second placement described above. For a validation-grade contact probe or fixture, use an assistant where the measurement cannot be reached reliably while the wearer stays stationary; desktop capture controls remain available for that supervised measurement. Keep the active controller in a region the headset can track. Never instruct the wearer to locate a real wall by reaching toward an unverified virtual one.
 
 Capture an initial 0.5–1 second stationary window per point. Convert each valid frame to a tip position before averaging; retain raw sample count, time range, and spread. Reject missing/emulated poses and moving samples. Proposed repeatability target: 95th-percentile distance from the sample mean ≤10 mm, with orientation-change checks for the probe mount. Tune thresholds using observed fixture data and log changes.
 
@@ -110,7 +115,7 @@ On failure, recapture and solve again. `NEEDS_REVALIDATION` returns to `VERIFIED
 
 Invalidate verification on session end/restart, reference-space reset, missing/emulated viewer tracking, headset removal or focus/visibility interruption when observable, Link disconnect, and operator stop. A missing/emulated controller pose rejects or pauses active landmark capture; loss of an unused controller alone does not invalidate hallway alignment. On reset during capture, discard that capture batch. After viewer/reference-space interruption, require stable poses and fresh checkpoints. Revalidate periodically during longer trials; ordinary drift may occur without an event. [WebXR reset events](https://www.w3.org/TR/webxr/#event-types)
 
-When invalidated, show a prominent stop cue and remove the implication that the hallway is aligned. The operator tells the wearer to remain still and exit to the system view when appropriate. A dark or transparent canvas does not provide passthrough in opaque VR. Preserve runtime boundary behavior. The app cannot detect every tracking failure or physically stop a person at a wall; the first trials use a clear route and an assistant.
+When invalidated, show a prominent stop cue with the specific cause and remove the implication that the hallway is aligned. Once visible tracking returns, the wearer or operator restarts the complete calibration from the browser page; an ended session requires Enter VR first. During supervised physical trials, an assistant can guide the wearer to remain still or exit to the system view. A dark or transparent canvas does not provide passthrough in opaque VR. Preserve runtime boundary behavior. The app cannot detect every tracking failure or physically stop a person at a wall; the first walking/box trials use a clear route and an assistant.
 
 ## Data to persist locally
 

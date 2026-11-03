@@ -1,253 +1,76 @@
-# Headset setup (Quest / Horizon OS)
+# Headset setup (Quest 3 / Steam Link)
 
-Environment record for the calibrated hallway experience. Last verified 2026-11-02.
+Current calibration baseline: restored from local commit `8754817` on 2026-11-03 at the user's request. The SteamVR rendering route was user-confirmed on hardware on 2026-11-02; this rollback with the current installation integration still needs a fresh headset check. Desktop results do not establish physical alignment.
 
-## The active route — SteamVR / Steam Link (PC renders, streams to the headset)
+## Start the restored calibration flow
 
-This is the **only route under active development** (user decision 2026-11-03).
-The PC renders; Steam Link streams the picture to Quest 3 over Wi-Fi.
+The active route remains **PC Chrome -> SteamVR/OpenXR -> Steam Link -> Quest 3**. Keep hand tracking enabled: physical controllers supply calibration landmarks, and real hand joints can supply the later fingertip interaction. The sequential trigger-hold setup has been removed.
 
-1. PC: Steam + SteamVR installed; **SteamVR set as the active OpenXR runtime**.
-2. Headset: "Steam Link" app, connected to the PC (5 GHz Wi-Fi recommended).
-3. PC: `npm run dev` → serves `https://localhost:5173` (self-signed cert).
-4. PC: Chrome → `https://localhost:5173` (accept the cert warning once).
-   Optional URL params: `?scan=ultra` / `?scan=max` for the heavy splat
-   variants, `?xrDebug=1` for the diagnostics overlay.
-5. Click **Enter VR** — the session renders on the PC and streams to the
-   headset. **No passthrough exists on this route**: calibration runs against
-   a black background, driven by the operator from the flat page
-   (CALIBRATE button + live countdown/status, bottom-left).
+1. On the PC, open Steam and SteamVR. Set SteamVR as the active OpenXR runtime.
+2. Run `npm.cmd run dev` from the repository's PowerShell terminal and leave it running. In PC Chrome, open `https://localhost:5173/?quality=balanced&format=ksplat&xrDebug=1` and accept the local certificate warning once. Prepared private KSPLAT files must exist; see [render quality](RENDER_QUALITY.md).
+3. Put on the headset in the marked setup area and connect Steam Link to the PC. Pick up both controllers and press a button on each to wake them. Keep them in view of the headset. The headset should already be worn and Steam Link connected before requesting VR.
+4. Click **Enter VR** on the PC page, or use **Desktop** in SteamVR to click that browser button yourself while wearing the headset. There is no queued setup request or PC-before-wearing start mode.
+5. Wait for the scan to finish loading and the headset view to be visible/tracked. The scan is hidden; the **HALLWAY PROJECT** title and floor grid are the calibration view. Confirm the app recognizes both physical controllers.
+6. Pull a controller's front/index **trigger once**, or click **CALIBRATE** on the PC page, to start the **seven-second countdown**. During that countdown, place LEFT on the labelled physical mark A and RIGHT on B. Both placements belong to the same capture attempt.
+7. At zero, the app fits the scan from the buffered physical controller positions. After a successful fit, the scan fades in over one second while the instructions/grid fade out. Review fit errors and independent physical landmarks before proceeding.
 
-Technical details, root-cause notes and troubleshooting are in the
-"SteamVR / Steam Link details" section below.
+The front curved button beneath the index finger is the trigger. The side button beneath the middle finger is the grip. There is no half-second capture hold, sequential A/B save procedure or two-second redo gesture in this restored flow.
 
-## Development-history route — Quest Browser (not active work)
+Restarting the dev server or refreshing the page ends the current session. Finish those actions before entering VR again. Chrome needs a user gesture to start an immersive session; the app does not silently reopen a session that the runtime ended. [WebXR session permission requirements](https://www.w3.org/TR/webxr/#immersive-session-allowed)
 
-Previously used to develop and hardware-test the calibration UX; kept working
-as of 2026-11-02 but **no longer part of the active path**:
+## Controllers, hand takeover and confirmation
 
-1. Headset browser: open `https://<PC-IP>:5173`, accept the certificate warning
-   (Advanced → proceed). Wait for `loaded ✓`.
-2. The page prefers an **immersive-ar** session (passthrough) and falls back
-   to immersive-vr. The status line names the mode that was granted.
-3. `Enter VR` starts the session. The green **CALIBRATE** screen appears
-   (aim + trigger); it does not start by itself.
+The scan points A/B are predefined in `src/calibration/landmarks.ts`. They must correspond to the labelled physical marks. To edit their scan coordinates before VR, use **EDIT A/B** on the flat page; the first click sets A and the second B. Ordinary clicks do not edit landmarks.
 
-## Boundary (guardian) configuration
+Start while holding both controllers, then place them during the countdown while they remain visible to the headset. The app samples physical controller grips during active XR frames and buffers their positions for that attempt. If hands take over after placement and the controller sources disconnect, their last valid buffered measurements remain available. Hands never become controller landmarks. A missing/emulated pose from a still-connected controller blocks its active capture measurement.
 
-Recent Horizon OS versions have **no user-facing "off" switch** — leaving the
-boundary area pauses the app and switches to system passthrough by design.
-The reliable way to disable it is a developer account (procedure adopted
-2026-10-29; the existing headset Meta account is sufficient — no new
-account):
+If the countdown ends without both controller measurements, the **WAITING FOR REMOTES / CONFIRM** fallback keeps the fit pending. Wake and hold both controllers where the headset can see them, place LEFT on A and RIGHT on B, then pinch or pull a trigger to confirm. A hand pinch confirms available controller measurements; it cannot supply missing positions. If measurements are still absent, retry the placement instead of treating the hands as controllers. Hand tracking can stay enabled throughout.
 
-1. Register as a developer at `developers.meta.com/horizon/sign-up` with the
-   SAME Meta account the headset uses.
-2. **Verify the account** — the step where most attempts fail. Requires
-   either a mobile phone number (SMS 2FA) **or** a credit/debit card
-   (PayPal is not accepted). Status: `developers.meta.com/manage/verify`.
-3. Create a **developer team** in the Developer Dashboard (Org Manager →
-   Select Team → Create). The team name is permanent. Requirements: 18+,
-   no device-level restrictions.
-4. Enable **Developer Mode**: Meta Horizon phone app → headset → Headset
-   Settings → Developer Mode → ON (headset reboots).
-5. Disable the boundary — either on-headset (Settings → System → Developer →
-   boundary/physical-space features off; availability varies by firmware) or
-   via **Meta Quest Developer Hub (MQDH)** on the PC:
-   - Install MQDH from `developers.meta.com/downloads/package/meta-quest-developer-hub`
-   - Sign in with the developer account
-   - Connect the headset with a **USB-C DATA cable** — the cable included in
-     the Quest box is charge-only and will NOT work
-   - Allow USB debugging in the headset ("Always allow from this computer")
-   - Device Manager → Device Actions → **Boundary: OFF** (`Ctrl+Shift+G`)
+The buffer records the last tracked controller positions; it cannot prove that an untracked controller was placed correctly afterward. Fit residuals are a consistency check, not independent physical acceptance. Check the actual placements and held-out landmarks. An invalid fit requires another attempt.
 
-Safety: with the boundary disabled, nothing prevents walking into real walls
-while immersed. Only run boundary-off sessions in a controlled, supervised
-environment (per the plan's supervised-trial requirement).
+## Interruption and recovery
 
-Fallbacks if boundary-off is unavailable at any point:
+The SteamVR route has no passthrough. A hidden scan during calibration is expected and a dark canvas does not reveal the physical hallway. Keep the system boundary enabled.
 
-1. **Use AR passthrough** — in an `immersive-ar` session the "left the
-   boundary → app paused" takeover is far less disruptive; the in-headset
-   panel prints `environmentBlendMode` to verify
-   (`alpha-blend (passthrough ✓)` vs `opaque (VR — no passthrough!)`).
-2. **Draw the roomscale boundary beyond the hallway walls** — the walls stop
-   you anyway; mind doorways and stairs.
-3. **Enlarge the stationary boundary** around the standing position.
+A reference-space reset, viewer-tracking loss or interrupted established headset view cancels capture and invalidates the installation. Once tracking and visibility are restored, use **CALIBRATE** on the PC page, including through SteamVR Desktop if working alone, and repeat the complete seven-second LEFT/A plus RIGHT/B placement. The app never accepts old alignment automatically.
 
-The app-level safety net is **manual**: there is no automatic re-anchoring —
-the auto-recalibration machinery was removed at the user's request. If the
-world shifts after a boundary event, re-place the remotes on spots A/B and
-re-run **CALIBRATE**. The old "Settings → Device → Tracking off" trick is NOT
-an option — it disables 6DoF tracking entirely.
+If the VR session actually ends, reconnect Steam Link as needed and click **Enter VR** again on the browser page while wearing the headset. Session end restores desktop scan visibility and keeps recovery instructions on the PC. A fresh session needs fresh calibration and placement checks; there is no queued solo preparation.
 
-## Delivery route 2 (PARKED) — PC renders, streams via Meta Link
+If Steam Link says **Online** but Chrome repeatedly refuses VR, the stream connection alone does not establish a working browser session. Fully exit Chrome using its menu's **Exit** command, leave SteamVR ready and Steam Link connected, reopen the viewer and click **Enter VR**. A page refresh can retain Chrome's existing XR service. One compact error reports the failed stage; the exact browser error is under **Technical details**, and repeated attempts replace that message.
 
-**Status: parked since 2026-11-02 — upstream presentation bug** (details and
-the full measured trace at the end of this section). The accepted PCVR route
-is **SteamVR / Steam Link** (next section). The setup below is kept for the
-retry after the next Horizon Link / Chrome update.
+Desktop browser checks use `--force-webxr-runtime=no-xr-runtime` plus synthetic XR fixtures, so they cannot replace the live browser's SteamVR registration. This isolation is retained independently of the calibration rollback. See [validation](VALIDATION.md) for what these checks do and do not prove.
 
-The headset renders nothing itself; the PC GPU does and Link (Air Link / USB)
-streams the picture. Setup:
+To recalibrate after a completed fit, pull a controller trigger to return to the title screen, then pull it again to start the countdown. The PC **CALIBRATE** button starts a new countdown directly. No automatic re-anchoring or saved acceptance returns.
 
-1. Install the **Meta Quest Link** app on the PC; under Settings → General
-   enable **"Set Meta Quest Link as active OpenXR runtime"** (Chrome's WebXR
-   goes through OpenXR — without this, "Enter VR" won't appear).
-2. Connect the headset: Quick Settings → **Air Link** (or USB cable → Quest
-   Link).
-3. On the PC open Chrome → `https://localhost:5173` (accept the self-signed
-   cert warning once). Add `?scan=ultra` or `?scan=max` — the PC GPU can
-   handle the heavy variants.
-4. Click **Enter VR** — the session renders on the PC and streams to the
-   headset.
+## Start the installation after calibration
 
-Differences vs. the Quest Browser route: no passthrough (desktop Chrome has
-no AR over Link — calibration runs against a black background instead of the
-camera image), and splat resolution can go up to the 4.25M variant.
+The rollback does not change the [installation sequence](INTERACTION_PLAN.md), voice setup, scan rendering or physical placement/start and stationary-support gates. Check the supplied 36 x 36 cm, 43 cm high box, the provisional 2.10 m hallway width, the surveyed centre and independent landmarks. The four-second visual turn and physical step-up/step-down still need supervised physical validation.
 
-## SteamVR / Steam Link details (classic XRWebGLLayer path)
+The app can render real WebXR hands if Steam Link/Chrome exposes their joints. A hand-like controller profile or pinch-only input cannot authorize fingertip contact. See [voice setup](VOICE_SETUP.md) for local hand models/audio and [render quality](RENDER_QUALITY.md) for scan profiles.
 
-**User-confirmed working 2026-11-02; the single active route since 2026-11-03.**
-Root cause and fix details:
+## See movement boundaries on the PC
 
-Root cause found by the user: three.js (r180 AND current r187) always takes
-the WebXR **projection-layer** path when the browser exposes
-`XRWebGLBinding` — checked at renderer construction, regardless of requested
-features. On desktop Chrome over PCVR this path delivers **no frames**; the
-classic `XRWebGLLayer` path works. Fix implemented in `src/xr/enterVR.ts`:
+Open **Movement boundaries** in the desktop page. Cyan shows the play-area polygon reported by the active runtime, when WebXR exposes it. The app requests a separate bounded-floor reference and keeps the working local-floor calibration space unchanged. Before a VR session there is no live runtime boundary to read; unsupported or empty data is reported explicitly.
 
-- In classic mode, `XRWebGLBinding` is hidden from the global scope **only
-  while the renderer is constructed** (restored immediately, try/finally) —
-  three.js then wires the classic path for that renderer.
-- Additionally `renderState.layers` is hidden on the session instance
-  (own-property proxy, never prototype patching) for three.js versions that
-  check it.
-- Path selection: classic on desktop by default, projection layers on the
-  standalone Quest browser (OculusBrowser UA) where they work and are
-  faster. Overrides: `?xrLayers=1` forces layers, `?xrLayers=0` forces
-  classic. Diagnostics: `?xrDebug=1` shows GPU, layer path, frame count and
-  a 5-second "no XR frames delivered" watchdog on the flat page.
-- The WebGL2 context is created by the app (`xrCompatible`,
-  `powerPreference: high-performance`, antialias off); the renderer is never
-  resized while presenting.
+Amber is an optional manual installation outline. Open **Manual dimensions · metres**, enter its centre/width/depth/floor/rotation, click **Apply manual area**, and tick **Show manual area**. Its initial 2.10 x 2.10 m values are a draft square; the depth has not been measured. The checkbox and fields change only the desktop outline, not SteamVR/Quest settings or physical movement.
 
-Acceptance test (SteamVR route): install Steam + SteamVR on the PC, "Steam
-Link" app on the headset, set SteamVR as active OpenXR runtime, then
-`https://localhost:5173/?xrDebug=1` in Chrome → Enter VR → the overlay must
-show the `XRWebGLLayer` base layer, frames counting, and the first-frame
-time in the console. Quest Browser regression checks are optional — that
-route is development history now.
+The top view updates on the PC during VR with a white live head marker and a grey installation-box marker. Desktop 3D floor outlines are hidden from immersive rendering. A retained cyan outline after session end is labelled a last-session snapshot, with no live head marker; a new session clears it. These diagnostics do not replace the headset's own boundary display or establish a collision-free area. [WebXR boundary geometry](https://www.w3.org/TR/webxr/#xrboundedreferencespace)
 
-**Hand-tracking takeover on Steam Link (user-verified behaviour):** SteamVR
-registers the remotes, but as soon as they are put down on the floor, the
-freed hands become tracked and SteamVR switches the inputs to them — the
-calibration then reads hand positions instead of the remotes. Two fixes:
+## SteamVR classic-layer implementation
 
-1. **System level (recommended):** turn hand tracking OFF in the headset
-   settings (Settings → Movement Tracking → Hand Tracking) while using the
-   Steam Link route — then SteamVR never sees hands at all.
-2. **In-app (built in):** the app buffers each remote's streamed grip
-   position every frame; at countdown end the buffered floor spots are used
-   (with the hands excluded from the inputs where the runtime allows it).
-   Recommended flow regardless: **HOLD both remotes when triggering the
-   CALIBRATE button**, place them during the countdown, and keep your hands
-   away from where the remotes lie.
+The established PC route uses the classic `XRWebGLLayer` path in `src/xr/enterVR.ts`. The user identified that Three.js r180 and r187 otherwise choose projection layers when `XRWebGLBinding` is exposed; those sessions did not deliver frames on the tested PCVR setup.
 
-**Status 2026-11-02: Link route currently BLOCKED by an upstream bug.**
-Measured evidence: `requestSession` resolves after ~66 s, session starts
-(blend=opaque), controllers connect — but **three.js content never presents
-in the headset** ("Diese Seite reagiert nicht"). Confirmed identical with
-the official `threejs.org/examples/webxr_vr_sandbox` sample, with and
-without the `--disable-features=XRSandbox` flag. A second Enter VR click
-fails with "There is already an active, immersive XRSession" (the session
-exists but is not presenting). Community reports (Oct 2026) match: raw-WebGL
-WebXR presents over Link, three.js sessions do not; unresolved on Meta's
-side in Horizon Link 208. Note: an `OVRServer_x64.exe` crash (0xc0000409)
-was also observed in the Windows event log the same day.
+- In classic mode, `XRWebGLBinding` is hidden only while constructing the renderer and restored immediately with `try/finally`.
+- `renderState.layers` is hidden on that session instance where necessary; no global prototype patch is used.
+- Desktop defaults to classic. `?xrLayers=0` explicitly selects classic; `?xrLayers=1` forces projection layers for diagnosis. The historical standalone Quest Browser path defaults to layers.
+- `?xrDebug=1` shows GPU, layer path, presentation status, frames and the no-frames watchdog on the PC page. The renderer is not resized while presenting.
 
-Retry the Link route after the next Horizon Link / Chrome update — remove
-the XRSandbox flag from the Chrome shortcut first if it was added.
-Alternative PCVR runtime if needed earlier: **SteamVR** (install Steam +
-SteamVR on the PC, "Steam Link" app on the headset, set SteamVR as active
-OpenXR runtime) — historically the more stable Chrome WebXR combination.
+For runtime acceptance, record stereo, positional tracking, three enter/exit cycles and stream timing separately from desktop evidence. See [validation](VALIDATION.md).
 
-**Known behaviour over Link (measured 2026-11-02, Horizon Link 208):**
-- `requestSession` takes **~66 seconds** to resolve (Chrome's XR sandbox;
-  known Meta/Chromium issue). Click Enter VR **once**, keep the headset ON,
-  and wait.
-- Do **not** take the headset off during the wait — the proximity sensor
-  ends the session.
-- After a session ends, the next `requestSession` in the same Chrome run
-  often fails ("Something went wrong initializing the session in the
-  runtime"). **Restart Chrome** before each new attempt.
-- Optional testing flag: launch Chrome with `--disable-features=XRSandbox`
-  to cut the wait to ~1 s (disables a Chrome security layer — do not use
-  for daily browsing).
-- If it fails instantly instead of slowly: check whether `OVRServer_x64.exe`
-  crashed (Windows Event Viewer → Application). Restart the Link app and
-  reconnect.
+## Historical routes
 
-**Calibration runs entirely from the PC in this route**: the flat page has a
-CALIBRATE button (bottom-left) plus a live status line. The person in the
-headset only places the remotes on the markers — the operator clicks
-CALIBRATE on the PC, watches the 10-second countdown on screen, and reads
-the fit result there. The in-headset HUD mirrors the same instructions.
+**Quest Browser:** used to develop and hardware-test earlier calibration iterations before the PCVR route worked. It rendered on the headset from a PC-served HTTPS URL. Its earlier AR/passthrough behavior is development history; use the current Steam Link instructions above.
 
-Networking: prefer Ethernet from the PC to the router, 5 GHz WiFi with clear
-line of sight to the headset; if Air Link stutters, test with USB first to
-separate network from GPU problems.
+**Meta Link / Air Link / USB Link:** parked since 2026-11-02 after Horizon Link 208 sessions connected controllers but failed to present Three.js content. The measured attempt took about 66 seconds to resolve `requestSession`; the official Three.js sample showed the same failure. An `OVRServer_x64.exe` crash was also observed. These observations do not describe the current Steam Link route and do not justify switching away from SteamVR during calibration.
 
-## Session start behaviour
-
-Every VR session starts **from the beginning**: the scan sits at its default
-transform and the green **CALIBRATE** screen appears (aim + trigger to start;
-on the PCVR route the operator clicks the flat-page CALIBRATE button instead).
-A page reload always returns the app to this default state. The last
-calibration is stored locally as a debugging record only — it is never
-applied automatically, and no automatic re-anchoring exists.
-
-## Why the world "shifts" after a boundary event
-
-Crossing the boundary / passthrough takeovers can **redefine the tracking
-origin** (`local-floor` origin and yaw are re-derived). This cannot be
-prevented from a web app, and the app deliberately has **no automatic
-recovery** (the watchdog/auto-recalibration machinery was removed at the
-user's request after it produced random recalibrations on hardware).
-
-Procedure after a boundary interruption: return to roughly the same physical
-spot and facing as during calibration, re-place the LEFT remote on real spot
-A and the RIGHT remote on spot B, and re-run **CALIBRATE**. Fit errors are
-shown in-headset and on the flat page, so a bad re-fit is visible.
-
-## Calibration quick reference
-
-The landmark points A and B are **predefined** in
-`src/calibration/landmarks.ts` (scan coordinates). To change them at
-runtime, press the **EDIT A/B** button on the flat page first — idle clicks
-on the scan are ignored and never modify the calibration points. In edit
-mode, the 1st scan click sets A, the 2nd sets B (both take effect
-immediately for the session and are printed for copying into the
-constants); the mode switches itself off after B.
-
-Then in VR the flow is:
-
-| Screen | What happens |
-| --- | --- |
-| **CALIBRATE** (scan at 50%, camera visible) | aim at the green button, pull the trigger |
-| **10-second countdown** | place the **LEFT** remote on real spot A (cyan marker) and the **RIGHT** remote on spot B (orange marker) — on the floor |
-| **Result** | remotes are read at 0 s, yaw+translation solved and applied, fit errors shown (~4 s) |
-
-Afterwards only the green **⟲ CALIBRATE** button remains — aim + trigger to
-recalibrate (e.g. after the world shifted from leaving the boundary box).
-There is no automatic re-arrangement and no squeeze shortcut (the grip
-button restart was removed because handling the remotes accidentally
-restarted the flow): if the scan shifts after a boundary event, re-place
-the remotes and run CALIBRATE again. Fit errors are shown in-headset and
-printed on the flat page.
-
-Tips: pick scan points that are easy to reach with a physical remote
-(floor/waist-height corners beat ceiling points), keep A and B well
-separated, and on the Steam Link route **hold both remotes when triggering
-CALIBRATE** and place them during the countdown (hand-takeover buffering,
-see above).
+Earlier boundary-off experiments, automatic recalibration and watchdog recovery were removed from the active procedure. Current calibration keeps the runtime boundary behavior and requires explicit fresh capture after an interruption.

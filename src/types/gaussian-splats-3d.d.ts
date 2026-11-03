@@ -2,6 +2,8 @@
 declare module '@mkkellogg/gaussian-splats-3d' {
   import * as THREE from 'three';
 
+  export const SceneRevealMode: { Default: number; Gradual: number; Instant: number };
+
   export interface SplatSceneOptions {
     path: string;
     splatAlphaRemovalThreshold?: number;
@@ -18,6 +20,11 @@ declare module '@mkkellogg/gaussian-splats-3d' {
     dynamicScene?: boolean;
     sphericalHarmonicsDegree?: number;
     sharedMemoryForWorkers?: boolean;
+    halfPrecisionCovariancesOnGPU?: boolean;
+    integerBasedSort?: boolean;
+    optimizeSplatData?: boolean;
+    inMemoryCompressionLevel?: 0 | 1 | 2;
+    sceneRevealMode?: number;
     renderer?: THREE.WebGLRenderer;
     camera?: THREE.Camera;
     threeScene?: THREE.Scene;

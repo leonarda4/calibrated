@@ -4,7 +4,7 @@
 
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
-  createViewerRig, loadScene, applyStartPoint, createSpawnMarker, getScanUrl,
+  createViewerRig, loadScene, applyStartPoint, createSpawnMarker, getScanUrl, setScanOpacity,
 } from './viewer/splatViewer';
 import { setupEnterVr } from './xr/enterVR';
 import { setupCalibrationCapture } from './xr/calibrationCapture';
@@ -14,13 +14,18 @@ import { bindOperatorPanel } from './ui/operatorPanel';
 import { createXrDebugOverlay, gpuRendererString } from './ui/xrDebugOverlay';
 import { logger } from './debug/logger';
 import { START_POINT } from './viewer/splatViewer';
+import { setupExperience } from './experience/setupExperience';
+import { setupDesktopBoundary } from './experience/setupDesktopBoundary';
 
 logger.info('boot', 'app starting');
 
 const hud = makeHud();
 
 const { renderer, scene, camera, splats } = createViewerRig();
-const enterVr = setupEnterVr(renderer);
+const operatorPanel = bindOperatorPanel();
+const experience = setupExperience(renderer, scene, camera, splats);
+const desktopBoundary = setupDesktopBoundary(renderer, scene, { getBox: () => experience.installation.snapshot().config });
+const enterVr = setupEnterVr(renderer, text => operatorPanel.setStatus(text));
 const xrDebug = createXrDebugOverlay();
 const gpuInfo = xrDebug
   ? gpuRendererString(renderer.getContext() as WebGL2RenderingContext)
@@ -40,6 +45,7 @@ scene.add(spawnMarker);
 
 hud.setStatus('loading hallway scan …');
 let lastLoggedPercent = 0;
+let scanReady = false;
 loadScene(splats, (percent) => {
   // ultra/max parse for minutes — a live percentage prevents "stuck" looks
   hud.setStatus(`loading ${getScanUrl().split('/').pop()} … ${Math.round(percent)}%`);
@@ -48,23 +54,32 @@ loadScene(splats, (percent) => {
     logger.info('load', `scan ${Math.round(percent)}%`);
   }
 })
-  .then((url) => { logger.info('load', `scan loaded: ${url}`); hud.setStatus(`loaded ✓ (${url.split('/').pop()})`); })
+  .then((url) => {
+    scanReady = true;
+    // Entering XR before an asset finishes loading must keep the unregistered
+    // hallway hidden; the calibration reveal will make it visible after a fit.
+    if (renderer.xr.isPresenting) setScanOpacity(splats, 0);
+    logger.info('load', `scan loaded: ${url}`);
+    hud.setStatus(`loaded ✓ (${url.split('/').pop()})`);
+  })
   .catch((err: unknown) => { logger.error('load', 'scan load FAILED:', err); hud.setStatus(`load error: ${String(err)}`); });
 
 // Operator panel: shift the map around the player, live, before entering VR.
 // Prefilled with the committed START_POINT so the UI mirrors the constant.
-bindSpawnPanel((point) => applyStartPoint(splats, point), START_POINT);
+bindSpawnPanel((point) => {
+  experience.prepareForCalibration();
+  applyStartPoint(splats, point);
+}, START_POINT);
 
-// PC operator panel: drives the calibration from the flat page while the
-// person in the headset (Link route) only places the remotes.
-const operatorPanel = bindOperatorPanel();
-
-// Placement-only calibration: predefined landmarks, remotes as probes.
+// Restored November 2 flow: enter VR first, then trigger/CALIBRATE starts
+// the seven-second placement countdown for both controller landmarks.
 // Desktop clicks on the scan pick landmark coordinates (copy into
 // src/calibration/landmarks.ts).
 const calibration = setupCalibrationCapture(
   renderer, scene, camera, splats,
   (solution) => {
+    experience.setCalibrationActive(false);
+    experience.calibrated();
     const cm = solution.residuals.map((r) => `${(r * 100).toFixed(1)} cm`).join(', ');
     const t = solution.translation.map((v) => v.toFixed(3)).join(', ');
     hud.appendStatus(
@@ -82,7 +97,11 @@ const calibration = setupCalibrationCapture(
   },
   (text) => { operatorPanel.setStatus(text); },
   (editActive) => { operatorPanel.setEditActive(editActive); },
+  () => { experience.prepareForCalibration(); experience.setCalibrationActive(true); },
+  () => scanReady,
+  () => experience.calibrationBlockReason(),
 );
+experience.bindCalibrationInvalidator(reason => calibration.invalidate(reason));
 operatorPanel.onCalibrateClick(() => calibration.startCalibration());
 operatorPanel.onEditClick(() => {
   // toggle via the module (it owns the state and reports it back)
@@ -99,22 +118,24 @@ let headLogAt = 0;
 let lastTime = performance.now();
 let fpsWindowStart = lastTime;
 let fpsFrames = 0;
-renderer.setAnimationLoop(() => {
+renderer.setAnimationLoop((_time, frame) => {
   const now = performance.now();
-  const dt = Math.min((now - lastTime) / 1000, 0.05); // clamp gaps (tab throttling)
+  const dt = Math.max(0, (now - lastTime) / 1000);
   lastTime = now;
   const presenting = renderer.xr.isPresenting;
   const activeCamera = presenting ? renderer.xr.getCamera() : camera;
   controls.enabled = !presenting;
-  splats.viewer.update(renderer, activeCamera);
-  controls.update();
-  renderer.render(scene, camera);
-  hud.tickFrame(presenting);
+  if (!presenting) controls.update();
   spawnMarker.visible = !presenting;
+  experience.update(dt, frame);
+  desktopBoundary.update(frame);
   if (presenting) {
     enterVr.noteXrFrame(); // first-frame + watchdog accounting
-    calibration.sample(dt); // buffer remote positions + post-fit reveal
+    calibration.sample(dt, frame); // valid remote poses + post-fit reveal
   }
+  splats.viewer.update(renderer, activeCamera);
+  renderer.render(scene, camera);
+  hud.tickFrame(presenting);
   // periodic fps sample in the console (every 5 s)
   fpsFrames++;
   if (now - fpsWindowStart >= 5000) {
@@ -135,7 +156,7 @@ renderer.setAnimationLoop(() => {
         `presenting: ${s.presenting ? 'yes' : 'no'}\n` +
         `frames: ${s.frames}\n` +
         `first frame: ${s.firstFrameSeconds !== null ? s.firstFrameSeconds.toFixed(2) + 's' : '—'}\n` +
-        `watchdog: ${s.watchdogFired ? 'NO XR FRAMES!' : 'ok'}\n` +
+        `headset frames: ${s.watchdogFired ? 'waiting for headset / runtime' : 'ok'}\n` +
         `head y: ${headY !== null ? headY.toFixed(2) + ' m' : '—'}`);
     }
   }
@@ -157,6 +178,7 @@ renderer.setAnimationLoop(() => {
 // After leaving VR: print the last head position so it can be copied into
 // START_POINT in src/viewer/splatViewer.ts (persist across sessions).
 renderer.xr.addEventListener('sessionend', () => {
+  hud.appendStatus('VR connection ended. Enter VR again while wearing the headset, then press CALIBRATE.');
   if (lastHead) {
     hud.appendStatus(
       `last head position in VR: [${lastHead.map((n) => n.toFixed(2)).join(', ')}]` +
@@ -169,5 +191,5 @@ renderer.xr.addEventListener('sessionend', () => {
 
 // Debug hook for automated visual checks (readPixels etc.)
 Object.assign(window as unknown as Record<string, unknown>, {
-  __debug: { renderer, scene, camera, splats, controls, spawnMarker },
+  __debug: { renderer, scene, camera, splats, controls, spawnMarker, experience, calibration, desktopBoundary },
 });

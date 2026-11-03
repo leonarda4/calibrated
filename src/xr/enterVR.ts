@@ -110,9 +110,12 @@ export interface EnterVrStats {
   frames: number;
   firstFrameSeconds: number | null;
   watchdogFired: boolean;
+  pending: boolean;
 }
 
 export interface EnterVr {
+  /** Call directly from a PC/SteamVR Desktop click; retains user activation. */
+  start(): Promise<boolean>;
   /** Call every animation-loop iteration while presenting (frame counting). */
   noteXrFrame(): void;
   stats(): EnterVrStats;
@@ -121,19 +124,51 @@ export interface EnterVr {
 const NO_XR_FRAME_WARNING_SECONDS = 5;
 const tmpVec = new THREE.Vector3();
 
-export function setupEnterVr(renderer: THREE.WebGLRenderer): EnterVr {
-  const statusEl = document.getElementById('status');
+export function setupEnterVr(renderer: THREE.WebGLRenderer, onStatus: (text: string) => void = () => {}): EnterVr {
   const appEl = document.getElementById('app');
   const path = resolveLayerPath();
+
+  // Scan loading owns #status. XR retries replace this separate, bounded
+  // message instead of appending another error to that scan-loading line.
+  const xrStatus = document.createElement('div');
+  xrStatus.id = 'xr-session-status';
+  xrStatus.setAttribute('role', 'status');
+  xrStatus.setAttribute('aria-live', 'polite');
+  Object.assign(xrStatus.style, {
+    maxWidth: 'min(620px, calc(100vw - 24px))', maxHeight: '170px', overflow: 'auto',
+    boxSizing: 'border-box', padding: '8px 12px', background: 'rgba(45,18,23,.94)',
+    color: '#ffd1d5', borderRadius: '6px', whiteSpace: 'normal', overflowWrap: 'anywhere',
+    fontSize: '13px', lineHeight: '1.4', textAlign: 'left', pointerEvents: 'auto',
+  });
+  const xrMessage = document.createElement('p');
+  Object.assign(xrMessage.style, { margin: '0', color: 'inherit' });
+  const xrDetails = document.createElement('details');
+  const xrDetailsTitle = document.createElement('summary');
+  xrDetailsTitle.textContent = 'Technical details';
+  xrDetailsTitle.style.cursor = 'pointer';
+  const xrDetailText = document.createElement('pre');
+  Object.assign(xrDetailText.style, { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', margin: '6px 0 0' });
+  xrDetails.append(xrDetailsTitle, xrDetailText);
+  xrStatus.append(xrMessage, xrDetails);
+  (appEl ?? document.body).append(xrStatus);
+  const showXrStatus = (message = '', details = '') => {
+    xrMessage.textContent = message;
+    xrDetailText.textContent = details;
+    xrDetails.hidden = !details;
+    xrDetails.open = false;
+    xrStatus.hidden = !message;
+  };
+  showXrStatus();
 
   let frames = 0;
   let firstFrameSeconds: number | null = null;
   let watchdogFired = false;
   let sessionStartAt = 0;
   let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+  let pending = false;
 
   const stats = (): EnterVrStats => ({
-    path, presenting: renderer.xr.isPresenting, frames, firstFrameSeconds, watchdogFired,
+    path, presenting: renderer.xr.isPresenting, frames, firstFrameSeconds, watchdogFired, pending,
   });
 
   // ---- button -------------------------------------------------------------
@@ -151,6 +186,7 @@ export function setupEnterVr(renderer: THREE.WebGLRenderer): EnterVr {
 
   // ---- session lifecycle --------------------------------------------------
   renderer.xr.addEventListener('sessionstart', () => {
+    showXrStatus();
     const session = renderer.xr.getSession();
     const baseLayer = renderer.xr.getBaseLayer();
     logger.info(TAG, `SESSION STARTED — path=${path}, ` +
@@ -172,8 +208,8 @@ export function setupEnterVr(renderer: THREE.WebGLRenderer): EnterVr {
     watchdogTimer = setTimeout(() => {
       if (firstFrameSeconds === null) {
         watchdogFired = true;
-        logger.error(TAG, `no XR frames delivered within ` +
-          `${NO_XR_FRAME_WARNING_SECONDS}s — runtime is not presenting`);
+        logger.warn(TAG, `waiting for headset: no XR frame yet after ` +
+          `${NO_XR_FRAME_WARNING_SECONDS}s — put it on and check Steam Link is connected`);
       }
     }, NO_XR_FRAME_WARNING_SECONDS * 1000);
   });
@@ -182,29 +218,37 @@ export function setupEnterVr(renderer: THREE.WebGLRenderer): EnterVr {
     logger.info(TAG, 'SESSION ENDED');
     if (watchdogTimer) clearTimeout(watchdogTimer);
     watchdogTimer = null;
-    btn.textContent = 'Enter VR (WebXR)';
+    btn.textContent = 'Resume VR';
     if (appEl) appEl.style.display = '';
   });
 
   // ---- click handler ------------------------------------------------------
-  btn.addEventListener('click', async () => {
-    const activeSession = renderer.xr.getSession();
-    if (activeSession) {
-      logger.info(TAG, 'Exit VR clicked — ending session');
-      activeSession.end();
-      return;
-    }
+  const start = async (): Promise<boolean> => {
+    if (renderer.xr.getSession()) return true;
+    if (pending) return false;
+    pending = true;
+    showXrStatus();
+    btn.style.display = 'block';
+    btn.textContent = 'Opening VR…';
+    btn.disabled = true;
+    const setupButton = document.getElementById('calib-start') as HTMLButtonElement | null;
+    if (setupButton) setupButton.disabled = true;
+    onStatus('OPENING VR — keep the headset on and wake both controllers. Once VR opens, press CALIBRATE or a controller trigger.');
     const t0 = performance.now();
+    let requestedSession: XRSession | null = null;
+    let failureStage = 'requestSession';
     try {
       const xr = (navigator as Navigator & { xr?: XRSystem }).xr;
       if (!xr) throw new Error('WebXR not available on this device');
       // classic path: NO 'layers' in optionalFeatures (spec).
       const optionalFeatures = path === 'layers'
-        ? ['local-floor', 'bounded-floor', 'layers']
-        : ['local-floor', 'bounded-floor'];
+        ? ['local-floor', 'bounded-floor', 'hand-tracking', 'layers']
+        : ['local-floor', 'bounded-floor', 'hand-tracking'];
       logger.info(TAG, `requestSession path=${path} ` +
         `optionalFeatures=${optionalFeatures.join(',')}`);
       const session: XRSession = await xr.requestSession('immersive-vr', { optionalFeatures });
+      requestedSession = session;
+      failureStage = 'renderer attachment';
       logger.info(TAG, `requestSession RESOLVED in ` +
         `${((performance.now() - t0) / 1000).toFixed(2)}s ` +
         `(blend=${session.environmentBlendMode}, ` +
@@ -213,11 +257,34 @@ export function setupEnterVr(renderer: THREE.WebGLRenderer): EnterVr {
       renderer.xr.setFramebufferScaleFactor(XR_FRAMEBUFFER_SCALE); // BEFORE setSession
       await renderer.xr.setSession(session);
       logger.info(TAG, 'three.js attached the session — presenting now');
+      showXrStatus();
+      return true;
     } catch (e) {
-      logger.error(TAG, `SESSION FAILED after ` +
+      logger.error(TAG, `SESSION FAILED during ${failureStage} after ` +
         `${((performance.now() - t0) / 1000).toFixed(2)}s:`, e);
-      if (statusEl) statusEl.innerHTML += `<br/>XR session error: ${String(e)}`;
+      const errorName = e instanceof Error ? e.name : 'Error';
+      const instruction = failureStage === 'renderer attachment'
+        ? 'VR opened, but the page could not attach its renderer. Keep SteamVR ready; restart Chrome, reopen this page and click Resume VR.'
+        : errorName === 'NotSupportedError'
+          ? 'Chrome could not open VR. Steam Link may still be connected. Once SteamVR is ready, restart Chrome and click Resume VR.'
+          : errorName === 'SecurityError'
+            ? 'Chrome needs a fresh click to open VR. In SteamVR Desktop, open Chrome and click Resume VR while wearing the headset.'
+            : 'Chrome could not open VR. Check SteamVR is ready; restart Chrome, reopen this page and click Resume VR.';
+      const details = `${failureStage}: ${String(e)}`;
+      if (requestedSession) await requestedSession.end().catch(() => {});
+      showXrStatus(instruction, details);
+      onStatus(`${instruction}\n${details}`);
+      return false;
+    } finally {
+      pending = false; btn.disabled = false;
+      if (!renderer.xr.isPresenting) btn.textContent = 'Resume VR';
+      if (setupButton) setupButton.disabled = false;
     }
+  };
+  btn.addEventListener('click', () => {
+    const activeSession = renderer.xr.getSession();
+    if (activeSession) { void activeSession.end(); return; }
+    void start();
   });
 
   // ---- availability -------------------------------------------------------
@@ -226,8 +293,8 @@ export function setupEnterVr(renderer: THREE.WebGLRenderer): EnterVr {
   };
   if (!xrNav.xr) {
     logger.warn(TAG, 'navigator.xr missing — WebXR not available in this browser');
-    if (statusEl) statusEl.innerHTML += '<br/>WebXR: not available';
-    return { noteXrFrame: () => undefined, stats };
+    showXrStatus('This browser window does not expose WebXR. Open this page in desktop Chrome to start VR.');
+    return { start, noteXrFrame: () => undefined, stats };
   }
   xrNav.xr.isSessionSupported('immersive-vr').then((supported) => {
     logger.info(TAG, `isSessionSupported immersive-vr=${supported} ` +
@@ -236,10 +303,12 @@ export function setupEnterVr(renderer: THREE.WebGLRenderer): EnterVr {
   }).catch((e) => logger.warn(TAG, 'isSessionSupported rejected:', e));
 
   return {
+    start,
     noteXrFrame() {
       if (!renderer.xr.isPresenting) return;
       if (firstFrameSeconds === null) {
         firstFrameSeconds = (performance.now() - sessionStartAt) / 1000;
+        watchdogFired = false;
         logger.info(TAG, `first XR frame rendered after ` +
           `${firstFrameSeconds.toFixed(2)}s ✓`);
         if (watchdogTimer) clearTimeout(watchdogTimer);

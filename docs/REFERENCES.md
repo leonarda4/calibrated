@@ -27,3 +27,7 @@ The kit's skeleton/code is MIT licensed, copyright 2026 Max Rheiner; its notice 
 | [Umeyama: Least-Squares Estimation of Transformation Parameters Between Two Point Patterns](https://web.stanford.edu/class/cs273/refs/umeyama.pdf) | General rigid/similarity-fit reference for diagnostics; MVP constrains rotation to yaw |
 
 Calibration workflow, milestones, and numerical acceptance targets are project proposals. They are not guarantees made by the hardware vendor or these sources.
+
+## Bundled hand assets
+
+The local generic WebXR hand GLBs come from `@webxr-input-profiles/assets@1.0`, the source used by Three.js r180's hand mesh loader. MIT License, Copyright (c) 2019 Amazon. The licence is retained in [licenses/webxr-input-profiles-MIT.txt](../licenses/webxr-input-profiles-MIT.txt) and with the public assets for build redistribution. See [asset provenance and hashes](../public/hands/README.md).

@@ -11,18 +11,23 @@ A PC-rendered WebXR project for Meta Quest 3: view a Gaussian splat of a hallway
 ## First experience
 
 1. Load the hallway scan with its predefined landmarks (A/B in `src/calibration/landmarks.ts`).
-2. Start the CALIBRATE screen — from the headset or from the PC operator panel (the SteamVR route has no passthrough, so the operator drives).
-3. During the 10-second countdown, place the LEFT remote on real spot A and the RIGHT remote on spot B.
-4. The yaw+translation fit is solved from the remotes' tracked positions and applied to the scan root.
-5. Walk a short, measured hallway segment with real head movement; re-run CALIBRATE after any boundary/tracking event shifts the world.
+2. Wear the headset with Steam Link connected, wake both controllers and click **Enter VR** on the PC page or through SteamVR Desktop. Keep hand tracking enabled.
+3. From the HALLWAY PROJECT title, pull a controller's front/index trigger once, or click **CALIBRATE**, to start seven seconds for placing LEFT on marked floor point A and RIGHT on B. Both belong to the same placement attempt; real controller positions are buffered for hand takeover.
+4. The yaw+translation fit changes only the scan root. After success the scan fades in over one second; if controller measurements are missing, the CONFIRM prompt explains how to wake, place and confirm them. Hands can confirm available measurements but never supply controller landmarks. See [headset setup](docs/HEADSET_SETUP.md).
+5. Independently check alignment before the supervised hallway trial. After a tracking/boundary interruption, repeat CALIBRATE from the browser page; after a real session end, click **Enter VR** first. SteamVR Desktop provides access while wearing the headset.
 
-The current version uses simplified manual landmark placement (remotes ARE the landmarks). It does not depend on passthrough or automatic room matching — on the SteamVR route calibration runs against a black background with the operator driving from the PC. The stricter probe/held-out-validation protocol in `docs/CALIBRATION.md` remains the target for validation-grade results.
+At the user's request on 2026-11-03, calibration returns to local commit `8754817`'s guided title/trigger/seven-second placement flow. The sequential hold/queued-start redesign is removed; hand tracking remains enabled. The SteamVR route was accepted on hardware on 2026-11-02, but this rollback with the current installation integration still needs a fresh headset check. SteamVR has no passthrough; physical walking/box/turn validation remains supervised. The stricter probe/held-out-validation protocol in `docs/CALIBRATION.md` remains the target for validation-grade results.
 
 ## Read the plan
+
+The desktop **Movement boundaries** panel can show a cyan headset-reported play-area polygon and an amber manual movement rectangle. Runtime data appears only when the active VR session exposes it; the manual draft is enabled through **Show manual area** after setting its measured dimensions. The panel includes a live top view during VR and labelled last-session snapshots. These are desktop references and do not change headset boundary settings. See [headset setup](docs/HEADSET_SETUP.md).
 
 | File | Purpose |
 | --- | --- |
 | [Project plan](docs/PROJECT_PLAN.md) | Scope, architecture, milestones, and open inputs |
+| [Interaction plan](docs/INTERACTION_PLAN.md) | Purpose/badge/box sequence, four-second visual turn, placement and physical gates |
+| [Voices and hands](docs/VOICE_SETUP.md) | Offline ElevenLabs setup, local whisper mix, WebXR hand capability |
+| [Render quality](docs/RENDER_QUALITY.md) | Source-detail audit, quality profiles, private compressed scan preparation |
 | [Calibration design](docs/CALIBRATION.md) | Metric scale, landmark capture, transforms, and recovery |
 | [Validation protocol](docs/VALIDATION.md) | PC/Quest checks and physical acceptance criteria |
 | [GitHub backlog](docs/BACKLOG.md) | Ordered issues with completion criteria |
@@ -37,4 +42,8 @@ The agent workflow is adapted from [Photolipsia](https://github.com/leonarda4/ph
 
 The project repository is [leonarda4/calibrated](https://github.com/leonarda4/calibrated). This initial planning pack includes the agent instructions and dotfiles. Private hallway scans and calibration captures are excluded by `.gitignore`; synthetic test assets will be added during implementation.
 
-Run: `npm install`, then `npm run dev` (HTTPS on LAN, port 5173 — the headset route), `npm run dev:http` (plain HTTP on 5174, for bounded browser checks), `npm run check` (type-check), `npm test` (solver tests), `npm run build`. The private scan binary is not in Git — place `hallway.ply` at `public/models/` locally.
+Run: `npm install`, then `npm run dev` (HTTPS, port 5173; open on PC Chrome for Steam Link). Use `npm run typecheck`, `npm test`, `npm run check` (bounded Chrome checks and report/screenshots), and `npm run build`. On Windows PowerShell with script execution disabled, use `npm.cmd`. The browser checks use installed Chrome and start/stop their own local server on 5175. Private scan binaries are not in Git; the default uses `public/models/hallway_high.ply` (`?scan=std` selects `hallway.ply`).
+
+Desktop browser checks launch with `--force-webxr-runtime=no-xr-runtime` and synthetic XR fixtures to avoid replacing the live Chrome application's SteamVR registration. This isolation and the compact session-error display with expandable technical details are retained independently of the calibration rollback.
+
+The installation operator panel supports a desktop preview, measured placement, scan-picked centreline, STOP and manual reset. Approximately 2.10 m hallway width and the supplied 36 x 36 cm, 43 cm high box are prefilled; placement and reach height remain drafts. After a fit, check physical placement and independent alignment before **Start in headset**. **Desktop preview** grants no calibration authority. For the prepared detailed scan use `https://localhost:5173/?quality=detail&format=ksplat`. Generate local voice clips using the ignored credential setup in [VOICE_SETUP.md](docs/VOICE_SETUP.md); credentials never enter browser code. The 180-degree turn intentionally changes wall alignment and requires physical review before further wall touch.

@@ -1,5 +1,4 @@
-// src/ui: PC operator panel for the Link route — the calibration is driven
-// from the flat page while the person in the headset only places the remotes.
+// PC calibration/status for the active VR session; Enter VR is a separate action.
 // The EDIT A/B button is the ONLY way to enable landmark re-picking; the
 // idle state ignores scan clicks entirely.
 
@@ -17,7 +16,7 @@ export function bindOperatorPanel(): OperatorPanel {
   const editBtn = document.getElementById('calib-edit') as HTMLButtonElement | null;
   return {
     setStatus(text: string) {
-      if (statusEl) statusEl.innerHTML = text.replace(/\n/g, '<br/>');
+      if (statusEl) { statusEl.textContent = text; statusEl.style.whiteSpace = 'pre-line'; }
     },
     onCalibrateClick(handler: () => void) {
       startBtn?.addEventListener('click', handler);

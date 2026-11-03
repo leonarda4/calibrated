@@ -16,6 +16,10 @@ Create these as issues after publishing the planning repository. They are drafte
 
 Issues 03 and 04 can progress alongside viewer work once their inputs are available. A failed runtime gate does not prevent offline measurement or math work, but it prevents calling the PC experience complete.
 
+## Installation extension (2026-11-03)
+
+The [interaction plan](INTERACTION_PLAN.md) now has a first implementation: pure sequence/rotation, editable 2.10 m provisional hallway width, the supplied 36 x 36 cm, 43 cm high box and draft orb placement, scan-edge centreline picker, operator start/preview/STOP/reset, current-frame fingertip contact, optional local hand visuals, PC-only transcripts and offline ElevenLabs generation. Source-detail controls and private KSPLAT conversion are implemented; supported distance-based LoD remains a measured renderer-evaluation follow-up. Independent spatial validation, exact box placement/ceiling measurements, live Steam Link joints, audio audition, stationary turn/step-down and stream timing remain open. Original M0-M5 gates are not closed by the new desktop code.
+
 ## Agent responsibilities
 
 These are working roles, not required separate bots or paid services. One coding agent can perform them sequentially; parallel agents should own distinct files and share the coordinate contract.

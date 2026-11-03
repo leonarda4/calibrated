@@ -4,6 +4,8 @@
 import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
 import { resolveLayerPath, withHiddenXrWebGlBinding } from '../xr/enterVR';
+import { parseRenderQuality } from './quality';
+export type { ScanVariant } from './quality';
 
 // Quality ladder — the same scan at 4 export levels. Switch on the headset
 // with a URL parameter: https://<pc>:5173/?scan=std|high|ultra|max
@@ -11,27 +13,14 @@ import { resolveLayerPath, withHiddenXrWebGlBinding } from '../xr/enterVR';
 //   high  = 1.06M splats ( 69 MB)  default
 //   ultra = 2.13M splats (138 MB)
 //   max   = 4.25M splats (276 MB)  PC-grade; headset will likely struggle
-const SCAN_VARIANTS: Record<string, string> = {
-  std: '/models/hallway.ply',
-  high: '/models/hallway_high.ply',
-  ultra: '/models/hallway_ultra.ply',
-  max: '/models/hallway_max.ply',
-};
-export type ScanVariant = keyof typeof SCAN_VARIANTS;
 
 /** Resolve the scan file from ?scan=… (defaults to 'high'). */
 export function getScanUrl(): string {
-  const requested = new URLSearchParams(window.location.search).get('scan');
-  return SCAN_VARIANTS[requested ?? ''] ?? SCAN_VARIANTS.high;
+  return parseRenderQuality(window.location.search).modelUrl;
 }
 
-/**
- * Global splat opacity (0–1). 0.70 makes the scan see-through so the real
- * room (AR passthrough) is visible through the splats during calibration.
- * Implemented as a shader patch: the fragment shader's final alpha is
- * multiplied by a uGlobalOpacity uniform.
- */
-export const SCAN_OPACITY = 0.70;
+/** Global experience opacity. Calibration controls its own fade independently. */
+export const SCAN_OPACITY = 1;
 
 // ---------------------------------------------------------------------------
 // Scan-root transform — the ONLY thing allowed to move the world.
@@ -82,6 +71,7 @@ export interface ViewerRig {
  * calibration transform may touch — the tracked XR rig stays at identity.
  */
 export function createViewerRig(): ViewerRig {
+  const quality = parseRenderQuality(window.location.search);
   // Task spec: create the WebGL2 context ourselves — XR-compatible and on
   // the discrete GPU — and hand it to the renderer.
   const WEBGL_ANTIALIAS = false; // splat rendering: fill-rate beats MSAA
@@ -104,7 +94,8 @@ export function createViewerRig(): ViewerRig {
     ? withHiddenXrWebGlBinding(() => new THREE.WebGLRenderer(rendererOptions))
     : new THREE.WebGLRenderer(rendererOptions);
 
-  renderer.setPixelRatio(1);
+  // Desktop only: XR owns its framebuffer after session entry.
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.desktopPixelRatioLimit));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x000000, 0); // transparent clear for AR passthrough
   renderer.xr.enabled = true;
@@ -120,9 +111,16 @@ export function createViewerRig(): ViewerRig {
 
   const splats = new GaussianSplats3D.DropInViewer({
     gpuAcceleratedSort: false,       // CPU sort — more compatible across browsers
-    antialiased: true,                // smoother splat edges
+    antialiased: quality.antialiased, // opt-in for compensation-trained exports
     dynamicScene: true,               // re-sort every frame
-    sphericalHarmonicsDegree: 0,
+    sphericalHarmonicsDegree: quality.sphericalHarmonicsDegree,
+    halfPrecisionCovariancesOnGPU: false,
+    integerBasedSort: false,          // avoid large-scene integer overflow
+    optimizeSplatData: true,
+    // Calibration already owns the reveal. The library's raw-origin radial
+    // reveal otherwise masks off-centre scans long after loading completes.
+    sceneRevealMode: GaussianSplats3D.SceneRevealMode.Instant,
+    inMemoryCompressionLevel: 0,      // avoid an additional lossy compression pass
     sharedMemoryForWorkers: false,    // avoids SharedArrayBuffer (needs COOP/COEP otherwise)
   });
   scene.add(splats as unknown as THREE.Object3D);
@@ -148,13 +146,14 @@ export async function loadScene(
   splats: GaussianSplats3D.DropInViewer,
   onProgress?: (percent: number) => void,
 ): Promise<string> {
-  const modelUrl = getScanUrl();
+  const quality = parseRenderQuality(window.location.search);
+  const modelUrl = quality.modelUrl;
   await splats.addSplatScenes([{
     path: modelUrl,
     rotation: [0, 0, 0, 1],
     position: [0, 0, 0],
     scale: [1, 1, 1] as [number, number, number],
-    splatAlphaRemovalThreshold: 20, // cull faint flyer splats → cleaner image
+    splatAlphaRemovalThreshold: quality.alphaRemovalThreshold,
     onProgress: (percent: number) => onProgress?.(percent),
   }]);
   splats.quaternion.set(...SCAN_ROOT_ROTATION);
