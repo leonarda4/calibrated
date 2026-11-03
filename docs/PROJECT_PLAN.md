@@ -15,15 +15,18 @@ The first deliverable is a supervised, repeatable demonstration in one measured 
 | Headset | Meta Quest 3 |
 | Rendering computer | Windows PC confirmed; OS version, GPU, driver, and RAM pending |
 | Transport | Wireless streaming over strong local Wi-Fi confirmed |
-| Streaming software | **SteamVR / Steam Link — accepted on hardware 2026-11-02.** Meta Link tried first and **parked**: three.js sessions never present over Horizon Link 208 (upstream bug); the classic `XRWebGLLayer` path fix (`src/xr/enterVR.ts`) made the SteamVR route work |
-| Browser/runtime | Chrome on the PC + **SteamVR as the active OpenXR runtime**; Quest Browser route (headset renders itself) kept as secondary and fully working |
+| Streaming software | **SteamVR / Steam Link — the single active route (user decision 2026-11-03).** Accepted on hardware 2026-11-02. Meta Link tried first and **parked**: three.js sessions never present over Horizon Link 208 (upstream bug); the classic `XRWebGLLayer` path fix (`src/xr/enterVR.ts`) made the SteamVR route work |
+| Browser/runtime | Chrome on the PC + **SteamVR as the active OpenXR runtime** — the only working combination; all further work targets this path |
 | Scan | Supplied: `01_GS_Model/00_Export/point_cloud_4.ply` (INRIA-style 3DGS, 265,974 splats) served locally as `public/models/hallway.ply`; heavier variants (`?scan=ultra/max`, 2.13M/4.25M splats) for the PC-rendered route; **metric scale still unverified (M2)** |
 | Authoring | Agents work directly on the Windows PC (OpenCode + OpenRouter); headset validation runs on the same machine |
-| Calibration assistance | Operator drives from the PC panel (required on the PCVR route — no passthrough); person in the headset places the remotes on predefined floor landmarks |
+| Calibration assistance | Operator drives from the PC panel (required on this route — no passthrough); person in the headset places the remotes on predefined floor landmarks |
 
-The intended path is **PC web app → PC WebXR/OpenXR → wireless stream → Quest 3**, demonstrated via Steam Link. Opening a PC-hosted URL in Quest Browser renders on the headset and remains a working secondary route (it is where the calibration UX was developed and hardware-tested).
+The working path is **PC web app → PC WebXR (Chrome + SteamVR OpenXR) → Steam Link wireless stream → Quest 3**. This is the only route under active development from 2026-11-03 onward.
 
-**Status update 2026-11-02:** stereo + tracked controllers + working calibration demonstrated on hardware on both routes (Quest Browser first, then SteamVR/Steam Link). M0's formal enter/exit cycles and streaming-timing record are still to be captured; see `ai/strategy.md` for the evidence chain.
+- **Meta Link route:** parked, upstream presentation bug (Horizon Link 208). Retry after the next Horizon Link/Chrome update; not part of the current work.
+- **Quest Browser route (headset renders itself, opens the PC-served URL):** development history — the calibration UX was built and hardware-tested there before the PCVR route worked. Not part of the current working path; kept working as of 2026-11-02 but receives no further feature work.
+
+**Status update 2026-11-02:** stereo + tracked controllers + working calibration demonstrated on hardware via SteamVR/Steam Link (developed on the Quest Browser route first). M0's formal enter/exit cycles and streaming-timing record are still to be captured; see `ai/strategy.md` for the evidence chain.
 
 Chromium documents Windows OpenXR VR support, and Meta documents Windows Link support with Quest 3. Their combination is a candidate stack, not proof that this particular machine works. Verify it before committing to the rest of the build. [Chromium support](https://chromium.googlesource.com/chromium/src/+/main/device/vr/), [Meta Link](https://developers.meta.com/vr/documentation/unity/unity-link/)
 

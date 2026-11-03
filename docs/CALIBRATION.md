@@ -4,13 +4,13 @@ This is a proposed method to validate experimentally. It is not a claim of achie
 
 ## Current implemented method (MVP, 2026-11-02)
 
-What the app actually does today — deliberately simplified at the user's request, hardware-confirmed on the Quest Browser route and on the SteamVR/Steam Link PCVR route:
+What the app actually does today — deliberately simplified at the user's request, hardware-confirmed on the active route (SteamVR / Steam Link; earlier iterations were developed and hardware-tested on the Quest Browser route, which is now development history):
 
 - **Predefined landmarks:** points A and B live in `src/calibration/landmarks.ts` (scan-local coordinates), editable at runtime from the flat page via the **EDIT A/B** button (idle clicks never modify them).
 - **Remotes ARE the landmarks:** LEFT remote goes on real spot A, RIGHT on spot B. No probe tip, no docking fixture; `PROBE_TIP_OFFSET` describes grip-origin → placed-point on the remote and is currently 0.
-- **Flow:** CALIBRATE screen (50 % scan opacity so the camera feed stays visible on the passthrough route) → 10-second countdown → remotes read at 0 s → closed-form **yaw+translation** fit (`src/calibration/yawTranslationSolver.ts`, 2D Procrustes on the x/z plane; floor level is the runtime's job via `local-floor`) → applied to the **scan root only**. Guards: both remotes tracked, ≥ 0.3 m apart, RMS ≤ 1 m — otherwise a hint and nothing is applied.
+- **Flow:** CALIBRATE screen (50 % scan opacity — on the active SteamVR route this is a visibility aid over the black background, not passthrough) → 10-second countdown → remotes read at 0 s → closed-form **yaw+translation** fit (`src/calibration/yawTranslationSolver.ts`, 2D Procrustes on the x/z plane; floor level is the runtime's job via `local-floor`) → applied to the **scan root only**. Guards: both remotes tracked, ≥ 0.3 m apart, RMS ≤ 1 m — otherwise a hint and nothing is applied.
 - **No automatic anything:** watchdog, reference-space reset re-solve, smoothed glide, and localStorage restore were implemented and then removed at the user's request. Every session starts from the default transform; a boundary/tracking event that shifts the world requires re-placing the remotes and re-running CALIBRATE.
-- **Operator-driven on the PCVR route:** the flat page's operator panel (CALIBRATE button + live countdown/status) drives the same state machine, because the PCVR route has no passthrough. On Steam Link each remote's streamed grip position is buffered every frame (the hand-takeover fix) so the countdown reads floor spots, not hands.
+- **Operator-driven on the active route:** the flat page's operator panel (CALIBRATE button + live countdown/status) drives the same state machine, because the SteamVR route has no passthrough. On Steam Link each remote's streamed grip position is buffered every frame (the hand-takeover fix) so the countdown reads floor spots, not hands.
 
 The sections below are the **validation-grade protocol** this MVP simplifies. The two-landmark, no-held-out-check flow above cannot support the accuracy claims of section 5; the full protocol is the target once the hallway measurements exist (M2/M3).
 

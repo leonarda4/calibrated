@@ -2,14 +2,35 @@
 
 Environment record for the calibrated hallway experience. Last verified 2026-11-02.
 
-## Serving the app
+## The active route — SteamVR / Steam Link (PC renders, streams to the headset)
 
-1. PC: `npm run dev` → serves `https://<PC-IP>:5173` (self-signed cert).
-2. Headset browser: open `https://<PC-IP>:5173`, accept the certificate warning
+This is the **only route under active development** (user decision 2026-11-03).
+The PC renders; Steam Link streams the picture to Quest 3 over Wi-Fi.
+
+1. PC: Steam + SteamVR installed; **SteamVR set as the active OpenXR runtime**.
+2. Headset: "Steam Link" app, connected to the PC (5 GHz Wi-Fi recommended).
+3. PC: `npm run dev` → serves `https://localhost:5173` (self-signed cert).
+4. PC: Chrome → `https://localhost:5173` (accept the cert warning once).
+   Optional URL params: `?scan=ultra` / `?scan=max` for the heavy splat
+   variants, `?xrDebug=1` for the diagnostics overlay.
+5. Click **Enter VR** — the session renders on the PC and streams to the
+   headset. **No passthrough exists on this route**: calibration runs against
+   a black background, driven by the operator from the flat page
+   (CALIBRATE button + live countdown/status, bottom-left).
+
+Technical details, root-cause notes and troubleshooting are in the
+"SteamVR / Steam Link details" section below.
+
+## Development-history route — Quest Browser (not active work)
+
+Previously used to develop and hardware-test the calibration UX; kept working
+as of 2026-11-02 but **no longer part of the active path**:
+
+1. Headset browser: open `https://<PC-IP>:5173`, accept the certificate warning
    (Advanced → proceed). Wait for `loaded ✓`.
-3. The page prefers an **immersive-ar** session (passthrough) and falls back
+2. The page prefers an **immersive-ar** session (passthrough) and falls back
    to immersive-vr. The status line names the mode that was granted.
-4. `Enter VR` starts the session. The green **CALIBRATE** screen appears
+3. `Enter VR` starts the session. The green **CALIBRATE** screen appears
    (aim + trigger); it does not start by itself.
 
 ## Boundary (guardian) configuration
@@ -85,11 +106,10 @@ Differences vs. the Quest Browser route: no passthrough (desktop Chrome has
 no AR over Link — calibration runs against a black background instead of the
 camera image), and splat resolution can go up to the 4.25M variant.
 
-## Delivery route 2 — ACCEPTED: PCVR via SteamVR / Steam Link (classic XRWebGLLayer path)
+## SteamVR / Steam Link details (classic XRWebGLLayer path)
 
-**User-confirmed working 2026-11-02.** This is the primary PC-rendered route:
-install Steam + SteamVR on the PC, the "Steam Link" app on the headset, and
-set **SteamVR as the active OpenXR runtime**.
+**User-confirmed working 2026-11-02; the single active route since 2026-11-03.**
+Root cause and fix details:
 
 Root cause found by the user: three.js (r180 AND current r187) always takes
 the WebXR **projection-layer** path when the browser exposes
@@ -116,7 +136,8 @@ Acceptance test (SteamVR route): install Steam + SteamVR on the PC, "Steam
 Link" app on the headset, set SteamVR as active OpenXR runtime, then
 `https://localhost:5173/?xrDebug=1` in Chrome → Enter VR → the overlay must
 show the `XRWebGLLayer` base layer, frames counting, and the first-frame
-time in the console. The Quest browser route must keep working unchanged.
+time in the console. Quest Browser regression checks are optional — that
+route is development history now.
 
 **Hand-tracking takeover on Steam Link (user-verified behaviour):** SteamVR
 registers the remotes, but as soon as they are put down on the floor, the

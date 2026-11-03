@@ -33,6 +33,8 @@ The detailed deliverables and gates live in `docs/PROJECT_PLAN.md`; implementati
 - 2026-10-29 â€” Scan binary `hallway.ply` (17 MB, INRIA-style 3DGS with normals, 265,974 splats, exported from the user's `01_GS_Model/00_Export/point_cloud_4.ply`) lives at `public/models/hallway.ply`, matching `src/viewer/splatViewer.ts` (`MODEL_URL = /models/hallway.ply`); `.gitignore`'s `*.ply` rule keeps it out of Git. The app loads the same file 3Ã— stacked 6 m apart (test configuration; will be replaced by the single metric-normalized scan at M2).
 - 2026-10-29 â€” `sharedMemoryForWorkers: false` on the splat viewer: the library's sort worker otherwise requires a cross-origin-isolated context (COOP/COEP), which the dev server does not set.
 
+- 2026-11-03 - SteamVR / Steam Link is the ONLY active delivery route from now on (user decision). The Quest Browser route is development history (calibration UX was built and hardware-tested there) and receives no further work; Meta Link stays parked until an upstream fix. All validation and feature work targets Chrome + SteamVR as the active OpenXR runtime.
+
 ## Open inputs
 
 - Windows version, GPU and driver, streaming software/version, router, and whether the PC has Ethernet to the router. Wireless streaming is confirmed; PC specifications will follow.
