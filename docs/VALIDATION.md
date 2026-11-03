@@ -4,9 +4,11 @@ All gates are **pending**. Thresholds below are proposed engineering targets, no
 
 ## M0: prove the actual wireless runtime
 
-Record date, Windows version, GPU/driver/RAM, Chrome version, Quest firmware, Link version, active OpenXR runtime, streaming client, refresh rate/resolution, router/access point, wireless band, PC network connection, and test location.
+Record date, Windows version, GPU/driver/RAM, Chrome version, Quest firmware, Link/SteamVR version, active OpenXR runtime, streaming client, refresh rate/resolution, router/access point, wireless band, PC network connection, and test location.
 
-1. Check the GPU against [Meta's current Link requirements](https://www.meta.com/help/quest/articles/headsets-and-accessories/oculus-link/requirements-quest-link/). Pair the wireless headset and PC; select Meta as the active OpenXR runtime for the proposed Air Link path. Avoid mixing runtimes during the baseline test.
+**Status 2026-11-02:** the wireless runtime is proven in principle on two routes — (a) Quest Browser opening the PC-served HTTPS page (headset renders; stereo + tracked controllers + working calibration, user-confirmed), and (b) **SteamVR / Steam Link** (PC renders and streams; user-confirmed working after the classic `XRWebGLLayer` fix in `src/xr/enterVR.ts`). The **Meta Link route is parked** — upstream presentation bug (three.js sessions never present over Horizon Link 208). What M0 still owes: the formal three enter/exit cycles, baseline streaming timing, and the assistant-operated landmark-acquisition record below.
+
+1. Check the GPU against [Meta's current Link requirements](https://www.meta.com/help/quest/articles/headsets-and-accessories/oculus-link/requirements-quest-link/). Pair the wireless headset and PC; set **SteamVR as the active OpenXR runtime** for the accepted Steam Link path. Avoid mixing runtimes during the baseline test.
 2. From **Chrome on the PC**, run the official [immersive VR sample](https://immersive-web.github.io/webxr-samples/immersive-vr-session.html). Confirm stereo and positional head tracking in Quest 3. Repeat enter/exit three times.
 3. Build a minimal local probe with required `local-floor`, a metre reference, both controller grips, and capture controls. Verify measured controller displacement and button behavior. Log available features and unsupported capabilities.
 4. Demonstrate assistant-operated landmark acquisition without relying on passthrough. Verify stable controller tracking at the intended contact points.

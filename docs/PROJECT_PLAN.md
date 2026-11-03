@@ -15,13 +15,15 @@ The first deliverable is a supervised, repeatable demonstration in one measured 
 | Headset | Meta Quest 3 |
 | Rendering computer | Windows PC confirmed; OS version, GPU, driver, and RAM pending |
 | Transport | Wireless streaming over strong local Wi-Fi confirmed |
-| Streaming software | Meta Air Link proposed; user has not named a particular client |
-| Browser/runtime | Chrome + Meta's active OpenXR runtime proposed; must pass M0 |
-| Scan | One hallway; file, format, size, scan quality, and metric scale pending |
-| Authoring | This Mac can prepare code/docs; PC XR validation runs on Windows |
-| Calibration assistance | Assistant/operator and repeatable controller probe or fixture required for first trial |
+| Streaming software | **SteamVR / Steam Link — accepted on hardware 2026-11-02.** Meta Link tried first and **parked**: three.js sessions never present over Horizon Link 208 (upstream bug); the classic `XRWebGLLayer` path fix (`src/xr/enterVR.ts`) made the SteamVR route work |
+| Browser/runtime | Chrome on the PC + **SteamVR as the active OpenXR runtime**; Quest Browser route (headset renders itself) kept as secondary and fully working |
+| Scan | Supplied: `01_GS_Model/00_Export/point_cloud_4.ply` (INRIA-style 3DGS, 265,974 splats) served locally as `public/models/hallway.ply`; heavier variants (`?scan=ultra/max`, 2.13M/4.25M splats) for the PC-rendered route; **metric scale still unverified (M2)** |
+| Authoring | Agents work directly on the Windows PC (OpenCode + OpenRouter); headset validation runs on the same machine |
+| Calibration assistance | Operator drives from the PC panel (required on the PCVR route — no passthrough); person in the headset places the remotes on predefined floor landmarks |
 
-The intended path is **PC web app → PC WebXR/OpenXR → wireless Link stream → Quest 3**. Opening a PC-hosted URL in Quest Browser would render on the headset and is a separate deployment option.
+The intended path is **PC web app → PC WebXR/OpenXR → wireless stream → Quest 3**, demonstrated via Steam Link. Opening a PC-hosted URL in Quest Browser renders on the headset and remains a working secondary route (it is where the calibration UX was developed and hardware-tested).
+
+**Status update 2026-11-02:** stereo + tracked controllers + working calibration demonstrated on hardware on both routes (Quest Browser first, then SteamVR/Steam Link). M0's formal enter/exit cycles and streaming-timing record are still to be captured; see `ai/strategy.md` for the evidence chain.
 
 Chromium documents Windows OpenXR VR support, and Meta documents Windows Link support with Quest 3. Their combination is a candidate stack, not proof that this particular machine works. Verify it before committing to the rest of the build. [Chromium support](https://chromium.googlesource.com/chromium/src/+/main/device/vr/), [Meta Link](https://developers.meta.com/vr/documentation/unity/unity-link/)
 
@@ -41,22 +43,22 @@ Later work: automatic registration, persistent spatial anchors, passthrough over
 
 PC passthrough is not an MVP dependency. Chromium's Windows AR path is not enabled by default; Meta's browser mixed-reality documentation concerns Quest Browser and does not establish the same features through PC Link. If passthrough becomes essential, evaluate a separate Quest Browser branch and retest its rendering budget. [Chromium support](https://chromium.googlesource.com/chromium/src/+/main/device/vr/), [Meta browser MR](https://developers.meta.com/vr/documentation/web/webxr-mixed-reality/)
 
-## Proposed implementation
+## Proposed implementation (as built)
 
-Use plain JavaScript ES modules, Vite, Three.js, and Spark, with Node's test runner and Playwright. This follows the source kit without introducing a UI framework. At M0, verify and pin a compatible dependency set and commit its lockfile; the reference kit uses Spark 2.4.0 and Three.js 0.186.1, which are starting candidates, not a tested combination for this project. [Reference package](https://github.com/leonarda4/photolipsia-agentic-kit/blob/49d501e551e4e2a1e2c96af3a95666ac32e97dff/02-splat-viewer/package.json)
+TypeScript ES modules, Vite, Three.js 0.180, with Node's test runner — no UI framework. **Gaussian splat rendering uses `@mkkellogg/gaussian-splats-3d` 0.4.7** (proven working with this project's INRIA-style `.ply` on both routes); Spark from the original proposal remains an unadopted candidate. [Reference package](https://github.com/leonarda4/photolipsia-agentic-kit/blob/49d501e551e4e2a1e2c96af3a95666ac32e97dff/02-splat-viewer/package.json)
 
-Spark supplies Gaussian splat rendering inside Three.js. Start with a tiny synthetic splat, then one verified hallway format, preferably the original `.ply` or `.spz` if available. Add LoD/compressed streaming only if measured asset size and performance require it. [Spark documentation](https://sparkjs.dev/docs/)
+Splat serving keeps the original `.ply` (private, gitignored at `public/models/`). Add LoD/compressed streaming only if measured asset size and performance require it.
 
 Planned module boundaries, to be created during implementation:
 
 | Area | Responsibility |
 | --- | --- |
 | `src/viewer/` | Load/dispose splats, desktop inspection, shared content root, rendering quality |
-| `src/xr/` | Session lifecycle, reference space, input poses, stop/recovery events |
-| `src/calibration/` | Pure transform math, sample quality, fit/validation, state machine |
-| `src/ui/` | Operator wizard, in-headset status, progress/errors, stop action |
-| `src/storage/` | Versioned asset/probe/profile metadata and local report export |
-| `tests/` + `scripts/` | Synthetic math fixtures, browser checks, report/screenshot harness |
+| `src/xr/` | Session lifecycle (`enterVR.ts` classic-layer PCVR fix), reference space, calibration capture input |
+| `src/calibration/` | Pure transform math (yaw+translation solver), predefined landmarks |
+| `src/ui/` | Operator panel (flat page), in-headset head-locked HUD, CALIBRATE screen |
+| ~~`src/storage/`~~ | **Removed at the user's request** with the auto-recalibration machinery — calibration state is per-session; local persistence is a debugging record only |
+| `tests/` | Solver unit tests (Node test runner, 5/5); browser checks via `npm run check` + manual/Playwright later |
 
 Use a separate desktop inspection camera. In calibrated VR, leave tracked camera/controller parents at identity and apply alignment to the hallway content root. Do not inherit the kit's miniature-scene rig scaling, artificial eye-height offset, or stick locomotion. Draw every XR frame through Three.js's XR-compatible animation loop. Desktop checks remain separate from hardware proof.
 

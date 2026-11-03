@@ -4,7 +4,7 @@
 
 Read `ai/strategy.md`, then the relevant sections of `docs/PROJECT_PLAN.md`, `docs/CALIBRATION.md`, and `docs/VALIDATION.md`.
 
-This repository is currently a project plan. The user asked to plan first; do not start application implementation until they request it. Once implementation is authorized, continue through the agreed work without asking for a new “go” after every step.
+This repository is in active implementation (viewer, XR session, calibration; hardware-validated on the Quest Browser and SteamVR/Steam Link routes). Continue through the agreed work without asking for a new “go” after every step, but keep the plan/build/check/log loop and record decisions in `ai/strategy.md`.
 
 ## Work loop
 

@@ -1,4 +1,4 @@
-﻿# Strategy
+# Strategy
 
 ## Goal
 
@@ -6,12 +6,12 @@ Calibrated: a PC-rendered WebXR experience for Meta Quest 3 that displays one ha
 
 ## Current phase
 
-Planning pack published; **implementation started**. The working desktop/XR splat viewer prototype (Vite + TypeScript + Three.js + `@mkkellogg/gaussian-splats-3d`) was combined into this repository on 2026-10-29 and now lives under `src/` split along the plan's module boundaries. Desktop browser checks pass; **no hardware test has been run yet** â€” M0 remains open.
+Planning pack published; **implementation started**. The working desktop/XR splat viewer prototype (Vite + TypeScript + Three.js + `@mkkellogg/gaussian-splats-3d`) was combined into this repository on 2026-10-29 and now lives under `src/` split along the plan's module boundaries. Desktop browser checks pass; **hardware-confirmed since (user-observed): the Quest Browser route (stereo, tracked controllers, working calibration) and the SteamVR/Steam Link PCVR route (accepted 2026-11-02 after the classic `XRWebGLLayer` fix; Meta Link parked, upstream presentation bug). M0's formal enter/exit cycles and streaming-timing record are still to be captured** â€”
 
 ## Plan
 
 - [x] Draft the project plan and agent workflow.
-- [ ] M0 â€” Prove the Windows PC â†’ browser â†’ Meta Link â†’ Quest 3 runtime path. **Open: no hardware test run.**
+- [~] M0 â€” Prove the Windows PC â†’ browser â†’ streamed PCVR â†’ Quest 3 runtime path. **Demonstrated on hardware: Quest Browser route + SteamVR/Steam Link PCVR route (user-confirmed). Remaining: formal enter/exit cycles + streaming-timing record.**
 - [~] M1 â€” Build and check the desktop/XR splat viewer. **In progress:** viewer renders the scan 3Ã— stacked; desktop browser checks pass (type-check clean, no console errors, ~29 fps in the test browser with ~800k splats); Quest hardware rendering untested.
 - [ ] M2 â€” Prepare the hallway scan, metric scale, and landmark dataset.
 - [ ] M3 â€” Implement guided landmark calibration and independent validation.

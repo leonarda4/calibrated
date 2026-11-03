@@ -1,6 +1,6 @@
 # Headset setup (Quest / Horizon OS)
 
-Environment record for the calibrated hallway experience. Last verified 2026-10-29.
+Environment record for the calibrated hallway experience. Last verified 2026-11-02.
 
 ## Serving the app
 
@@ -9,7 +9,8 @@ Environment record for the calibrated hallway experience. Last verified 2026-10-
    (Advanced → proceed). Wait for `loaded ✓`.
 3. The page prefers an **immersive-ar** session (passthrough) and falls back
    to immersive-vr. The status line names the mode that was granted.
-4. `Enter VR` starts the session. The calibration wizard begins automatically.
+4. `Enter VR` starts the session. The green **CALIBRATE** screen appears
+   (aim + trigger); it does not start by itself.
 
 ## Boundary (guardian) configuration
 
@@ -53,12 +54,18 @@ Fallbacks if boundary-off is unavailable at any point:
    you anyway; mind doorways and stairs.
 3. **Enlarge the stationary boundary** around the standing position.
 
-The app-level safety net is independent of the boundary setting: the remotes
-act as reference anchors and the watchdog re-solves the alignment whenever
-the tracking origin is redefined. The old "Settings → Device → Tracking off"
-trick is NOT an option — it disables 6DoF tracking entirely.
+The app-level safety net is **manual**: there is no automatic re-anchoring —
+the auto-recalibration machinery was removed at the user's request. If the
+world shifts after a boundary event, re-place the remotes on spots A/B and
+re-run **CALIBRATE**. The old "Settings → Device → Tracking off" trick is NOT
+an option — it disables 6DoF tracking entirely.
 
-## Delivery route 2 — PC renders, streams via Meta Link
+## Delivery route 2 (PARKED) — PC renders, streams via Meta Link
+
+**Status: parked since 2026-11-02 — upstream presentation bug** (details and
+the full measured trace at the end of this section). The accepted PCVR route
+is **SteamVR / Steam Link** (next section). The setup below is kept for the
+retry after the next Horizon Link / Chrome update.
 
 The headset renders nothing itself; the PC GPU does and Link (Air Link / USB)
 streams the picture. Setup:
@@ -78,7 +85,11 @@ Differences vs. the Quest Browser route: no passthrough (desktop Chrome has
 no AR over Link — calibration runs against a black background instead of the
 camera image), and splat resolution can go up to the 4.25M variant.
 
-## PCVR via SteamVR / Steam Link (classic XRWebGLLayer path)
+## Delivery route 2 — ACCEPTED: PCVR via SteamVR / Steam Link (classic XRWebGLLayer path)
+
+**User-confirmed working 2026-11-02.** This is the primary PC-rendered route:
+install Steam + SteamVR on the PC, the "Steam Link" app on the headset, and
+set **SteamVR as the active OpenXR runtime**.
 
 Root cause found by the user: three.js (r180 AND current r187) always takes
 the WebXR **projection-layer** path when the browser exposes
@@ -169,34 +180,24 @@ separate network from GPU problems.
 ## Session start behaviour
 
 Every VR session starts **from the beginning**: the scan sits at its default
-transform and the calibration wizard opens at step 1/4. A page reload always
-returns the app to this default state. The last calibration is stored
-locally as a debugging record only — it is never applied automatically.
+transform and the green **CALIBRATE** screen appears (aim + trigger to start;
+on the PCVR route the operator clicks the flat-page CALIBRATE button instead).
+A page reload always returns the app to this default state. The last
+calibration is stored locally as a debugging record only — it is never
+applied automatically, and no automatic re-anchoring exists.
 
 ## Why the world "shifts" after a boundary event
 
 Crossing the boundary / passthrough takeovers can **redefine the tracking
 origin** (`local-floor` origin and yaw are re-derived). This cannot be
-prevented from a web app. The app mitigates it:
-
-- a solved calibration is saved and **restored as a candidate** on re-entry
-  (in-headset notice asks you to verify landmarks),
-- a reference-space `reset` **mid-wizard clears all captured pairs and
-  restarts** the wizard (mixed-frame pairs would corrupt the fit),
-- outside the wizard a reset marks alignment **invalid** until recalibrated.
+prevented from a web app, and the app deliberately has **no automatic
+recovery** (the watchdog/auto-recalibration machinery was removed at the
+user's request after it produced random recalibrations on hardware).
 
 Procedure after a boundary interruption: return to roughly the same physical
-spot and facing as during calibration, re-enter, verify the restored
-alignment, or squeeze the grip button to recalibrate.
-
-With remotes armed as references this is automatic: within ~1.5 s of resuming
-(faster right after entering) the app re-solves from the remotes and glides
-the correction in over ~0.5 s ("REALIGNING…" → "AUTO-RECALIBRATED"). A second
-correction is rate-limited to one per 5 s — this is a loop guard, not a
-delay; the first correction itself is immediate. Corrections larger than
-3 m or 45° are refused (that means the remotes moved, not the tracking
-origin) and the references are marked invalid until the remotes are
-re-placed.
+spot and facing as during calibration, re-place the LEFT remote on real spot
+A and the RIGHT remote on spot B, and re-run **CALIBRATE**. Fit errors are
+shown in-headset and on the flat page, so a bad re-fit is visible.
 
 ## Calibration quick reference
 
@@ -216,27 +217,16 @@ Then in VR the flow is:
 | **10-second countdown** | place the **LEFT** remote on real spot A (cyan marker) and the **RIGHT** remote on spot B (orange marker) — on the floor |
 | **Result** | remotes are read at 0 s, yaw+translation solved and applied, fit errors shown (~4 s) |
 
-Afterwards only the green ⟲ button remains — aim + trigger to recalibrate
-(e.g. after the world shifted from leaving the boundary box). During the
-whole calibration process the scan runs at 50% opacity so the camera feed
-stays visible; it returns to 70% once calibrated.
-
-The instruction HUD is parented to the camera, so it never drifts or hides
-behind the scan. After calibration the message fades after ~4 s and only the
-green **⟲ CALIBRATE** button remains — aim at it + trigger to recalibrate
-(e.g. after the world shifted from leaving the boundary box). There is no
-automatic re-arrangement: if the scan shifts after a boundary event,
-re-place the remotes and pull the trigger again.
-
-After 4/4 the remotes stay as **reference anchors**: a tracking reset
-(guardian/passthrough takeover) re-solves the alignment from wherever the
-remotes currently are ("AUTO-RECALIBRATED"). If the remotes get moved
-(residual > 1 m) the app refuses to auto-apply and asks for manual
-recalibration. Fit errors are shown in-headset and printed on the flat page.
-
-Grip button (squeeze) = restart calibration manually.
+Afterwards only the green **⟲ CALIBRATE** button remains — aim + trigger to
+recalibrate (e.g. after the world shifted from leaving the boundary box).
+There is no automatic re-arrangement and no squeeze shortcut (the grip
+button restart was removed because handling the remotes accidentally
+restarted the flow): if the scan shifts after a boundary event, re-place
+the remotes and run CALIBRATE again. Fit errors are shown in-headset and
+printed on the flat page.
 
 Tips: pick scan points that are easy to reach with a physical remote
 (floor/waist-height corners beat ceiling points), keep A and B well
-separated, and leave the remotes undisturbed for as long as the
-auto-recalibration should work.
+separated, and on the Steam Link route **hold both remotes when triggering
+CALIBRATE** and place them during the countdown (hand-takeover buffering,
+see above).

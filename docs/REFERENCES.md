@@ -23,7 +23,7 @@ The kit's skeleton/code is MIT licensed, copyright 2026 Max Rheiner; its notice 
 | [Immersive Web VR sample](https://immersive-web.github.io/webxr-samples/immersive-vr-session.html) | Independent first runtime probe |
 | [WebXR Device API](https://www.w3.org/TR/webxr/) | Coordinates, reference spaces, input poses, session lifecycle and reset semantics |
 | [Meta browser mixed reality](https://developers.meta.com/vr/documentation/web/webxr-mixed-reality/) | Quest Browser capability branch; not evidence for PC Link parity |
-| [Spark getting started](https://sparkjs.dev/docs/), [SplatMesh](https://sparkjs.dev/docs/splat-mesh/), [SparkRenderer](https://sparkjs.dev/docs/spark-renderer/) | Candidate rendering pipeline, asset transformations, and quality controls |
+| [Spark getting started](https://sparkjs.dev/docs/), [SplatMesh](https://sparkjs.dev/docs/splat-mesh/), [SparkRenderer](https://sparkjs.dev/docs/spark-renderer/) | Candidate rendering pipeline — **not adopted**; this project renders with `@mkkellogg/gaussian-splats-3d` 0.4.7, proven on both delivery routes |
 | [Umeyama: Least-Squares Estimation of Transformation Parameters Between Two Point Patterns](https://web.stanford.edu/class/cs273/refs/umeyama.pdf) | General rigid/similarity-fit reference for diagnostics; MVP constrains rotation to yaw |
 
 Calibration workflow, milestones, and numerical acceptance targets are project proposals. They are not guarantees made by the hardware vendor or these sources.
