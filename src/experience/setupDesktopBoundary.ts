@@ -7,7 +7,7 @@ import { bindBoundaryPanel, type BoundaryBoxMarker } from '../ui/boundaryPanel.t
 export function setupDesktopBoundary(
   renderer: Pick<THREE.WebGLRenderer, 'xr'>,
   scene: THREE.Scene,
-  options: { getBox?(): BoundaryBoxMarker } = {},
+  options: { getBox?(): BoundaryBoxMarker | undefined } = {},
 ) {
   const boundary = setupMovementBoundary(renderer);
   const outline = createMovementBounds(scene);

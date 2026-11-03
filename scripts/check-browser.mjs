@@ -5,6 +5,9 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from '@playwright/test';
+import { Vector3, Quaternion } from 'three';
+import { ACTIVE_SCAN } from '../src/viewer/scanAsset.ts';
+import { scanOriginForStart } from '../src/viewer/scanPlacement.ts';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const output = path.join(root, '.check');
@@ -13,6 +16,7 @@ const report = { date: new Date().toISOString(), environment: 'Desktop Chrome; s
 let server;
 let browser;
 let page;
+let releaseModel;
 const check = async (name, action) => {
   const details = await action();
   report.checks.push({ name, passed: true, ...(details === undefined ? {} : { details }) });
@@ -21,9 +25,14 @@ const check = async (name, action) => {
 
 function corridorPly() {
   const points = [];
-  // Raw coordinates offset to the current viewer normalization. This fixture
+  // Raw coordinates follow the inverse inspection transform. This fixture
   // depicts a made-up 2.10 m corridor and contains no captured space data.
-  const add = (x, y, z, color) => points.push([x - 18.3, -z - 13.55, y - 1.27, ...color]);
+  const inverseRotation = new Quaternion(...ACTIVE_SCAN.rotation).normalize().invert();
+  const translation = new Vector3(...scanOriginForStart(ACTIVE_SCAN.startPoint, ACTIVE_SCAN.rotation));
+  const add = (x, y, z, color) => {
+    const raw = new Vector3(x, y, z).sub(translation).applyQuaternion(inverseRotation);
+    points.push([...raw.toArray(), ...color]);
+  };
   for (let z = -10; z <= 6; z += 0.12) {
     for (let y = 0; y <= 2.5; y += 0.12) {
       const stripe = Math.floor((z + 10) / 1.5) % 2;
@@ -82,13 +91,60 @@ try {
     return { forcedRuntime: 'no-xr-runtime', nativeXrReplacedWithInertStub: true,
       syntheticXrOnly: true, applicationBrowserChanged: false };
   });
-  await page.route('**/models/*.ply', route => route.fulfill({ status: 200, contentType: 'application/octet-stream', body: corridorPly() }));
+  const modelGate = new Promise(resolve => { releaseModel = resolve; });
+  await page.route('**/splats/hallway3/*.ply', async route => {
+    await modelGate;
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: corridorPly() });
+  });
   // Missing clips report on the PC; they must never create headset captions.
   await page.route('**/audio/generated/*.mp3', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<html>clips not generated</html>' }));
-  await page.goto('http://127.0.0.1:5175/?scan=std', { waitUntil: 'networkidle' });
+  await page.goto('http://127.0.0.1:5175/?format=ply', { waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => !!window.__debug);
+  // The public fixture uses a known corridor view for pointer/prop checks.
+  // The separate actual-asset smoke below retains the production overview.
+  await page.evaluate(() => {
+    const { camera, controls } = window.__debug;
+    camera.position.set(0, 1.6, 10);
+    controls.target.set(0, 1.2, 0);
+    controls.update();
+  });
+  await check('installation preview waits for initial scan placement to finish', async () => {
+    assert.equal(await page.locator('#experience-preview').isDisabled(), true);
+    assert.equal(await page.locator('#experience-start').isDisabled(), true);
+    assert.equal(await page.evaluate(() => window.__debug.experience.installation.snapshot().phase), 'idle');
+  });
+  releaseModel();
   await page.waitForFunction(() => document.getElementById('status')?.textContent?.includes('loaded'));
   await page.waitForTimeout(1000); // allow the asynchronous splat sort to present
   await page.screenshot({ path: path.join(output, 'loaded.png'), fullPage: true });
+  await check('scan preserves manual placement and loads the supplied A/B pair', async () => {
+    return await page.evaluate(async () => {
+      const THREE = await import('/node_modules/.vite/deps/three.js');
+      const { parseRenderQuality } = await import('/src/viewer/quality.ts');
+      const { ACTIVE_SCAN } = await import('/src/viewer/scanAsset.ts');
+      const { splats, scene, experience, calibration } = window.__debug;
+      const state = experience.installation.snapshot();
+      const box = scene.getObjectByName('installation-box');
+      if (state.placementSource !== 'default-ply' || state.placementConfirmed) throw new Error('New scan lost the authored unchecked box anchor.');
+      const landmarks = calibration.snapshot();
+      if (!landmarks.landmarksReady || JSON.stringify(landmarks.scanPointA) !== JSON.stringify([2.99, 19.14, -1.41]) ||
+        JSON.stringify(landmarks.scanPointB) !== JSON.stringify([2.90, 18.16, -1.26])) throw new Error('User-supplied A/B were not loaded.');
+      const startPoint = ACTIVE_SCAN.startPoint;
+      if (['spawn-x', 'spawn-y', 'spawn-z'].some((id, i) => Number(document.getElementById(id).value) !== startPoint[i])) throw new Error('Start fields do not use the supplied raw PLY point.');
+      splats.updateWorldMatrix(true, false);
+      if (splats.localToWorld(new THREE.Vector3(...startPoint)).length() > 1e-8) throw new Error('Raw start floor point did not map to the XR origin.');
+      const configuredRotation = new THREE.Quaternion(...ACTIVE_SCAN.rotation).normalize();
+      if (1 - Math.abs(splats.quaternion.dot(configuredRotation)) > 1e-8) throw new Error('Scan did not retain the manually configured orientation.');
+      const expectedBase = new THREE.Vector3(...ACTIVE_SCAN.boxPlyBase).sub(new THREE.Vector3(...startPoint)).applyQuaternion(configuredRotation);
+      if (box.position.distanceTo(expectedBase.clone().add(new THREE.Vector3(0, .215, 0))) > 1e-8 ||
+        Math.abs(state.config.floorY - expectedBase.y) > 1e-8) throw new Error('Box base or height does not follow the configured raw anchor.');
+      if (parseRenderQuality('?scan=max&quality=detail&format=ksplat').modelUrl !== '/splats/hallway3/hallway3_0.ply') throw new Error('Legacy bookmark loaded an old or compressed export.');
+      if (state.config.boxWidth !== .36 || state.config.boxDepth !== .36 || state.config.boxHeight !== .43) throw new Error('Real box dimensions changed.');
+      if (box.parent === splats) throw new Error('Physical box inherits the artistic scan turn.');
+      return { placementSource: state.placementSource, landmarksReady: true, scanPointA: landmarks.scanPointA, scanPointB: landmarks.scanPointB,
+        startPoint, boxBasePly: state.defaultPlyBase, boxWorldCentre: box.position.toArray(), boxDimensions: [.36, .36, .43] };
+    });
+  });
   await check('scan loads with a nonblank canvas and gated physical start', async () => {
     assert.equal(await page.locator('#experience-start').isDisabled(), true);
     return await page.evaluate(() => {
@@ -231,24 +287,37 @@ try {
     assert.ok(Math.abs(after.config.centerX - before.config.centerX - 2) < 1e-6);
     assert.ok(Math.abs(after.config.centerZ - before.config.centerZ + 1) < 1e-6);
     assert.equal(after.placementConfirmed, false);
-    return { selectedWidth: before.config.hallwayWidth, calibrationTranslationFollowed: true };
+    const overridden = await page.evaluate(() => {
+      const { experience, splats } = window.__debug;
+      experience.installation.configure({ ...experience.installation.snapshot().config, centerX: 7, centerZ: 9, floorY: 0.35 });
+      experience.prepareForCalibration();
+      splats.position.x += 1;
+      splats.updateMatrixWorld(true);
+      experience.calibrated();
+      return experience.installation.snapshot();
+    });
+    assert.equal(overridden.placementSource, 'manual-world');
+    assert.equal(overridden.config.centerX, 7);
+    assert.equal(overridden.config.centerZ, 9);
+    assert.equal(overridden.config.floorY, 0.35);
+    return { selectedWidth: before.config.hallwayWidth, calibrationTranslationFollowed: true, manualOverrideSurvivesCachedPicks: true };
   });
   await check('no desktop JavaScript errors', () => { assert.deepEqual(report.consoleErrors, []); });
 
   if (process.env.CHECK_REAL_SCAN === '1') {
-    console.log('Checking private compressed ultra scan (desktop only).');
+    console.log('Checking private original hallway3 PLY (desktop only).');
     await page.evaluate(() => window.__debug.renderer.setAnimationLoop(null));
     const realPage = await context.newPage();
     const errors = [];
     realPage.on('pageerror', error => errors.push(error.message));
-    await realPage.goto('http://127.0.0.1:5175/?quality=detail&format=ksplat', { waitUntil: 'domcontentloaded' });
+    await realPage.goto('http://127.0.0.1:5175/?quality=detail', { waitUntil: 'domcontentloaded' });
     await realPage.waitForFunction(() => document.getElementById('status')?.textContent?.includes('loaded'), undefined, { timeout: 180000 });
     // Software WebGL can queue expensive frames for a multi-million-splat scan.
     // Pause this desktop-only smoke before capture, leaving the last frame visible.
     await realPage.evaluate(() => window.__debug.renderer.setAnimationLoop(null));
     await realPage.screenshot({ path: path.join(output, 'private-scan.png'), fullPage: true, timeout: 60000 });
     assert.deepEqual(errors, []);
-    report.checks.push({ name: 'private compressed ultra scan loads on desktop', passed: true, details: await realPage.locator('#status').textContent() });
+    report.checks.push({ name: 'private original hallway3 PLY loads on desktop', passed: true, details: await realPage.locator('#status').textContent() });
     await realPage.close();
   }
   report.passed = true;
@@ -257,6 +326,7 @@ try {
   await page?.screenshot({ path: path.join(output, 'failure.png'), fullPage: true }).catch(() => {});
   process.exitCode = 1;
 } finally {
+  releaseModel?.();
   await browser?.close();
   await server?.close();
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');

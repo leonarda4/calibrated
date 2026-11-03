@@ -1,13 +1,27 @@
 import * as THREE from 'three';
-import { InstallationFlow, type ExperienceSnapshot, type FingertipContact, type InstallationConfig, type VoiceCue } from './flow.ts';
+import { InstallationFlow, validateInstallationConfig, type ExperienceSnapshot, type FingertipContact, type InstallationConfig, type Position3, type VoiceCue } from './flow.ts';
 import { rotateContentAroundPivot, type ContentTransform } from './rotation.ts';
+import { ACTIVE_SCAN } from '../viewer/scanAsset.ts';
 
 export type { ExperienceSnapshot, FingertipContact, InstallationConfig, VoiceCue } from './flow.ts';
+
+export type PlacementSource = 'unplaced' | 'default-ply' | 'manual-world' | 'picked-scan';
+export interface InstallationSnapshot extends ExperienceSnapshot {
+  placementSource: PlacementSource;
+  /** Authored mesh centre for this scan only; exclusive with the base anchor. */
+  defaultPlyCenter: Position3 | null;
+  /** Authored floor contact / bottom centre for this scan only. */
+  defaultPlyBase: Position3 | null;
+}
 
 export interface InstallationOptions {
   scene: THREE.Scene;
   camera?: THREE.Camera;
   scanRoot: THREE.Object3D;
+  /** Explicit mesh-centre override; null suppresses all active-profile anchors. */
+  defaultPlyCenter?: Position3 | null;
+  /** Explicit bottom-centre override; null suppresses active-profile anchors. */
+  defaultPlyBase?: Position3 | null;
   onCue?(cue: VoiceCue): void;
   onStopAudio?(): void;
   onStatus?(status: string): void;
@@ -18,8 +32,36 @@ export type Installation = ReturnType<typeof createInstallation>;
 /** Props are deliberately outside the scan root: the physical box stays still. */
 export function createInstallation(options: InstallationOptions) {
   const { scene, scanRoot } = options;
+  const anchorOverride = options.defaultPlyCenter !== undefined || options.defaultPlyBase !== undefined;
+  const authoredCentre = anchorOverride ? options.defaultPlyCenter ?? null : ACTIVE_SCAN.boxPlyCenter;
+  const authoredBase = anchorOverride ? options.defaultPlyBase ?? null : ACTIVE_SCAN.boxPlyBase;
+  for (const anchor of [authoredCentre, authoredBase]) {
+    if (anchor !== null && (anchor.length !== 3 || !anchor.every(Number.isFinite))) {
+      throw new Error('A scan-local box anchor must contain three finite coordinates.');
+    }
+  }
+  if (authoredCentre !== null && authoredBase !== null) {
+    throw new Error('Specify the box bottom centre or mesh centre, not both.');
+  }
+  const defaultPlyCenter: Position3 | null = authoredCentre ? [...authoredCentre] : null;
+  const defaultPlyBase: Position3 | null = authoredBase ? [...authoredBase] : null;
   const flow = new InstallationFlow();
-  const listeners = new Set<(snapshot: ExperienceSnapshot) => void>();
+  const listeners = new Set<(snapshot: InstallationSnapshot) => void>();
+  let placementSource: PlacementSource = defaultPlyCenter === null && defaultPlyBase === null ? 'unplaced' : 'default-ply';
+  const snapshot = (): InstallationSnapshot => {
+    const state = flow.snapshot();
+    if (placementSource === 'unplaced') {
+      if (state.preview && state.phase !== 'stopped') state.status = 'DESKTOP PREVIEW: box location is unset. Draft coordinates only.';
+      else if (state.phase === 'idle' || state.phase === 'ready') {
+        state.status = 'New scan: box placement unset. Apply placement or pick two floor edges, then check the real box.';
+      }
+    }
+    return {
+      ...state, placementSource,
+      defaultPlyCenter: defaultPlyCenter ? [...defaultPlyCenter] : null,
+      defaultPlyBase: defaultPlyBase ? [...defaultPlyBase] : null,
+    };
+  };
   const props = new THREE.Group();
   props.name = 'installation-fixed-props';
   props.visible = false;
@@ -81,31 +123,57 @@ export function createInstallation(options: InstallationOptions) {
     orb.position.set(config.centerX, config.floorY + config.orbHeight, config.centerZ);
     orb.scale.setScalar(config.orbRadius);
   };
+  const positionChanged = (a: InstallationConfig, b: InstallationConfig): boolean =>
+    (['centerX', 'centerZ', 'floorY'] as const).some(key => Math.abs(a[key] - b[key]) > 1e-9);
+  const projectDefaultAnchor = (config: InstallationConfig): InstallationConfig => {
+    const anchor = defaultPlyBase ?? defaultPlyCenter;
+    if (!anchor) return config;
+    scanRoot.updateWorldMatrix(true, false);
+    const point = scanRoot.localToWorld(new THREE.Vector3(...anchor));
+    return {
+      ...config, centerX: point.x, centerZ: point.z,
+      floorY: defaultPlyBase ? point.y : point.y - config.boxHeight / 2,
+    };
+  };
+  const syncDefaultAnchor = (): boolean => {
+    const state = flow.snapshot();
+    // An artistic turn must never drag the real box along with the scan. The
+    // coordinator explicitly prepares an idle baseline before a new real fit.
+    if (placementSource !== 'default-ply' || !['idle', 'ready'].includes(state.phase) || state.yaw !== 0) return false;
+    const projected = projectDefaultAnchor(state.config);
+    validateInstallationConfig(projected);
+    if (!positionChanged(projected, state.config)) return false;
+    flow.configure(projected);
+    layout();
+    return true;
+  };
   const publish = (): void => {
-    const snapshot = flow.snapshot();
-    props.visible = ['badge', 'rotating', 'reversed'].includes(snapshot.phase);
-    orb.visible = snapshot.phase === 'badge';
-    if (snapshot.status !== previousStatus) {
-      previousStatus = snapshot.status;
-      options.onStatus?.(snapshot.status);
+    const state = snapshot();
+    props.visible = ['badge', 'rotating', 'reversed'].includes(state.phase);
+    orb.visible = state.phase === 'badge';
+    if (state.status !== previousStatus) {
+      previousStatus = state.status;
+      options.onStatus?.(state.status);
     }
-    for (const listener of listeners) listener(snapshot);
+    for (const listener of listeners) listener(state);
     for (const cue of flow.drainCues()) options.onCue?.(cue);
-    lastPhase = snapshot.phase;
+    lastPhase = state.phase;
   };
   const haltAudio = (): void => options.onStopAudio?.();
+  syncDefaultAnchor();
   layout();
 
   return {
-    snapshot: () => flow.snapshot(),
-    subscribe(listener: (snapshot: ExperienceSnapshot) => void) {
+    snapshot,
+    subscribe(listener: (snapshot: InstallationSnapshot) => void) {
       listeners.add(listener);
-      listener(flow.snapshot());
+      listener(snapshot());
       return () => { listeners.delete(listener); };
     },
     setCalibrated() {
       if (flow.snapshot().yaw !== 0) throw new Error('Prepare for calibration before recording a new baseline.');
       haltAudio();
+      syncDefaultAnchor();
       baseline = readTransform();
       flow.setCalibrated();
       publish();
@@ -119,14 +187,37 @@ export function createInstallation(options: InstallationOptions) {
       publish();
     },
     configure(config: InstallationConfig) {
-      flow.configure(config);
+      validateInstallationConfig(config);
+      const manualPosition = positionChanged(config, flow.snapshot().config);
+      // Editing a duration or box dimensions does not turn a PLY landmark into
+      // a world-space override. Height edits preserve the authored base/centre.
+      const next = placementSource === 'default-ply' && !manualPosition ? projectDefaultAnchor(config) : config;
+      flow.configure(next);
+      // Applying even unchanged draft fields is an explicit placement action.
+      // A fit, refresh or checkbox alone cannot set a new scan's box source.
+      if (manualPosition || placementSource === 'unplaced') placementSource = 'manual-world';
       haltAudio();
       layout();
       publish();
     },
+    /** Picker-owned scan landmarks are reprojected by the picker after a fit. */
+    applyScanPlacement(config: InstallationConfig) {
+      flow.configure(config);
+      placementSource = 'picked-scan';
+      haltAudio();
+      layout();
+      publish();
+    },
+    /** Call after real scan/load/start-point changes, never as a render update. */
+    syncPlacementFromScan() {
+      if (!syncDefaultAnchor()) return;
+      haltAudio();
+      publish();
+    },
     confirmPlacement(confirmed: boolean) {
-      flow.confirmPlacement(confirmed);
-      if (!confirmed) haltAudio();
+      const accepted = confirmed && placementSource !== 'unplaced';
+      flow.confirmPlacement(accepted);
+      if (!accepted) haltAudio();
       publish();
     },
     confirmStationary(confirmed: boolean) {
@@ -135,6 +226,7 @@ export function createInstallation(options: InstallationOptions) {
       publish();
     },
     start(preview = false): boolean {
+      syncDefaultAnchor();
       // Preview captures a temporary baseline but never grants XR authority.
       if (preview && !baseline) baseline = readTransform();
       const started = flow.start(preview);

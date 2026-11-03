@@ -1,15 +1,14 @@
-// src/calibration: predefined landmark points (scan-LOCAL frame = raw PLY
-// coordinates). The calibration is placement-only: the LEFT remote is put
-// on real spot A, the RIGHT remote on real spot B, and the scan is aligned
-// from those two correspondences.
-//
-// HOW TO SET THESE VALUES: run the app on the PC (flat view), click on the
-// scan — the 1st click prints point A, the 2nd point B, further clicks
-// alternate. Copy the printed coordinates into these constants.
-// Rule of thumb: pick two spots that are easy to mark with a physical
-// remote (floor/waist height) and at least 1.5 m apart.
+// User-supplied raw PLY landmarks for hallway3. Keep these separate from the
+// manually adjusted placement in scanAsset.ts; match LEFT/A and RIGHT/B.
 
 import type { Vec3 } from './yawTranslationSolver';
+import { ACTIVE_SCAN } from '../viewer/scanAsset.ts';
 
-export const SCAN_POINT_A: Vec3 = [-19.45, -17.23, -1.32];
-export const SCAN_POINT_B: Vec3 = [-19.43, -16.34, -1.34];
+export interface ScanLandmarkPair { a: Vec3; b: Vec3; }
+
+export const SCAN_LANDMARKS: ScanLandmarkPair | null = ACTIVE_SCAN.id === 'hallway3' ? {
+  a: [2.99, 19.14, -1.41],
+  b: [2.90, 18.16, -1.26],
+} : null;
+export const SCAN_POINT_A: Vec3 | null = SCAN_LANDMARKS?.a ?? null;
+export const SCAN_POINT_B: Vec3 | null = SCAN_LANDMARKS?.b ?? null;

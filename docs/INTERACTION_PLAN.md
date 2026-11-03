@@ -6,6 +6,8 @@ Measured input update: the user reports approximately **2.10 m hallway width**, 
 
 ## Intended sequence
 
+Scan replacement update (2026-11-03): hallway3 uses the manually adjusted, protected scanAsset.ts profile. No agent may change it without explicit user permission. Calibration defaults A [2.99, 19.14, -1.41] and B [2.90, 18.16, -1.26] are stored separately in calibration/landmarks.ts. The metric 0.36 x 0.36 x 0.43 m box follows its current raw anchor and the fit; its physical location and floor still require checking. Floor-edge picks or applied XR placement can override the preview without granting acceptance. See [new scan setup](CALIBRATION.md).
+
 1. **Prepare and calibrate.** Load the scan, place the remotes at A/B, run the existing fit, and let the hallway fade in. The operator checks the floor, physical box, reach target, and independent landmarks. Fit success alone does not certify touch alignment. Show tracked hands when the active runtime exposes WebXR hand joints; show an honest capability message otherwise.
 2. **Purpose / exploration.** The operator starts the experience after checking placement. A clear lead voice says "Find your purpose and bring it back here." Allow approximately 20 seconds of quiet exploration; keep this duration configurable. The hallway remains at its calibrated transform.
 3. **Education / badge.** Reveal the 36 x 36 cm, 43 cm high box on the floor and a glowing badge orb above its centre. Whisper layers prompt "Get your badge. Claim your education." The box sits at the hallway's measured lateral and longitudinal midpoint, away from walls. Initial placement coordinates remain draft values until checked on site.
@@ -16,7 +18,7 @@ Measured input update: the user reports approximately **2.10 m hallway width**, 
 ## Coordinate and lifecycle contract
 
 - Preserve the existing scan-root calibration transform and one XR unit = one metre. Store a baseline at experience start; apply the experience yaw to that baseline, never to an already rotated result.
-- Installation props live in XR space after placement. Their centre is expressed in metres in the calibrated floor frame; they do not rotate with the splat. Default floor Y is zero, pending the actual floor check.
+- Installation props live in XR space after placement. The authored hallway3 bottom-centre anchor, or a picked floor-edge pair, remains scan-local and reprojects after a fresh calibration. The box remains upright and metric, extending upward from its base; height edits preserve the floor. Freeze props during the artistic turn so they do not rotate with the splat. Recheck the resulting floor/base height physically.
 - Rotate about a world-Y axis through the box centre. For a floor-level baseline this preserves floor height, roll, pitch, and scale. Do not rotate the tracked rig or add locomotion.
 - A new fit, edited placement/scan/start point, new session, reference-space reset, focus interruption, missing/emulated viewer tracking, or operator stop disarms the sequence and stops voice playback. Hand/controller loss alone pauses contact; it does not declare hallway drift.
 - Recovery is explicit manual recalibration and placement checks. Restore the baseline before recalibration; never solve against an experience-rotated scan. No automatic re-anchoring or persistence of accepted alignment.
@@ -46,7 +48,7 @@ Inspect the pinned renderer and actual PLY headers/metadata before changing defa
 
 First preserve available source detail with full experience opacity, supported SH shading, and appropriate precision/quality controls. Keep the working classic XR layer path. Use the existing high/ultra/max source variants deliberately; additional points cannot restore details absent from reconstruction. Do not blindly densify the scan, silently change normalization, or claim a screenshot proves streaming quality.
 
-For fast loading, provide an offline converter to the pinned renderer's compressed KSPLAT format, preserving available source SH and coordinate convention, with bounded position quantization recorded in private metadata. Keep private binaries ignored. Prefer a compressed full-detail scan for this initial asset over an unmeasured renderer migration. Distance-based LoD needs a spatial hierarchy, a compatible renderer, and measured transition/calibration behaviour; record a researched follow-up if the pinned renderer does not support it. Compare source and rendered evidence before deciding that reconstruction or streaming is the bottleneck. Actual audit and conversion results: [render quality](RENDER_QUALITY.md). Voice generation and hand capabilities: [voice setup](VOICE_SETUP.md).
+The user requests **no compression** for hallway3: load its original PLY directly with in-memory compression disabled. Keep private binaries ignored. The older offline converter remains a utility and is not used by loading. Distance-based LoD needs a spatial hierarchy, a compatible renderer, and measured transition/calibration behaviour; record a researched follow-up if the pinned renderer does not support it. Compare source and rendered evidence before deciding that reconstruction or streaming is the bottleneck. Actual audit: [render quality](RENDER_QUALITY.md). Voice generation and hand capabilities: [voice setup](VOICE_SETUP.md).
 
 ## Parallel implementation and reviewable steps
 

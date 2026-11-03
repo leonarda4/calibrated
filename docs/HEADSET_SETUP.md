@@ -7,7 +7,7 @@ Current calibration baseline: restored from local commit `8754817` on 2026-11-03
 The active route remains **PC Chrome -> SteamVR/OpenXR -> Steam Link -> Quest 3**. Keep hand tracking enabled: physical controllers supply calibration landmarks, and real hand joints can supply the later fingertip interaction. The sequential trigger-hold setup has been removed.
 
 1. On the PC, open Steam and SteamVR. Set SteamVR as the active OpenXR runtime.
-2. Run `npm.cmd run dev` from the repository's PowerShell terminal and leave it running. In PC Chrome, open `https://localhost:5173/?quality=balanced&format=ksplat&xrDebug=1` and accept the local certificate warning once. Prepared private KSPLAT files must exist; see [render quality](RENDER_QUALITY.md).
+2. Run `npm.cmd run dev` from the repository's PowerShell terminal and leave it running. In PC Chrome, open `https://localhost:5173/?quality=balanced&xrDebug=1` and accept the local certificate warning once. The original hallway3 PLY loads directly without compression; see [render quality](RENDER_QUALITY.md).
 3. Put on the headset in the marked setup area and connect Steam Link to the PC. Pick up both controllers and press a button on each to wake them. Keep them in view of the headset. The headset should already be worn and Steam Link connected before requesting VR.
 4. Click **Enter VR** on the PC page, or use **Desktop** in SteamVR to click that browser button yourself while wearing the headset. There is no queued setup request or PC-before-wearing start mode.
 5. Wait for the scan to finish loading and the headset view to be visible/tracked. The scan is hidden; the **HALLWAY PROJECT** title and floor grid are the calibration view. Confirm the app recognizes both physical controllers.
@@ -26,13 +26,17 @@ Start while holding both controllers, then place them during the countdown while
 
 If the countdown ends without both controller measurements, the **WAITING FOR REMOTES / CONFIRM** fallback keeps the fit pending. Wake and hold both controllers where the headset can see them, place LEFT on A and RIGHT on B, then pinch or pull a trigger to confirm. A hand pinch confirms available controller measurements; it cannot supply missing positions. If measurements are still absent, retry the placement instead of treating the hands as controllers. Hand tracking can stay enabled throughout.
 
+CONFIRM now shows the remaining attempt budget. After **three failed confirmations** or **30 seconds**, it returns to the HALLWAY PROJECT title with **Wake BOTH remotes** guidance. Wake each physical controller with a button press, then pull a physical controller trigger on the title to start a fresh seven-second attempt. A hand pinch cannot restart READY. No old controller buffer or confirmation budget carries into the new attempt. If a system menu or tracking interruption is active, follow that specific recovery message first.
+
 The buffer records the last tracked controller positions; it cannot prove that an untracked controller was placed correctly afterward. Fit residuals are a consistency check, not independent physical acceptance. Check the actual placements and held-out landmarks. An invalid fit requires another attempt.
 
 ## Interruption and recovery
 
 The SteamVR route has no passthrough. A hidden scan during calibration is expected and a dark canvas does not reveal the physical hallway. Keep the system boundary enabled.
 
-A reference-space reset, viewer-tracking loss or interrupted established headset view cancels capture and invalidates the installation. Once tracking and visibility are restored, use **CALIBRATE** on the PC page, including through SteamVR Desktop if working alone, and repeat the complete seven-second LEFT/A plus RIGHT/B placement. The app never accepts old alignment automatically.
+On the title screen, before capture or a successful fit, an unfocused headset view waits without latching a STOP. **visible-blurred** means the page is covered or unfocused, commonly by the SteamVR dashboard or Quest menu; close that menu to return input to the page. **hidden** means the page is not visible and may receive no frames; keep the headset on and return to the browser's VR view. The message names the actual state. Closing a menu restores readiness but does not start the countdown or accept alignment.
+
+During the countdown/CONFIRM step or after a successful fit, a reference-space reset, viewer-tracking loss or interrupted headset view cancels capture and invalidates the installation. When visible, real tracking returns, the headset message changes to **View restored** and asks for one press of either physical controller's **front/index trigger**. That explicit press starts a fresh seven-second LEFT/A plus RIGHT/B placement; the PC **CALIBRATE** button remains available. Hands cannot restart a stopped calibration or supply its controller landmarks. Old alignment never returns automatically.
 
 If the VR session actually ends, reconnect Steam Link as needed and click **Enter VR** again on the browser page while wearing the headset. Session end restores desktop scan visibility and keeps recovery instructions on the PC. A fresh session needs fresh calibration and placement checks; there is no queued solo preparation.
 
@@ -41,6 +45,10 @@ If Steam Link says **Online** but Chrome repeatedly refuses VR, the stream conne
 Desktop browser checks use `--force-webxr-runtime=no-xr-runtime` plus synthetic XR fixtures, so they cannot replace the live browser's SteamVR registration. This isolation is retained independently of the calibration rollback. See [validation](VALIDATION.md) for what these checks do and do not prove.
 
 To recalibrate after a completed fit, pull a controller trigger to return to the title screen, then pull it again to start the countdown. The PC **CALIBRATE** button starts a new countdown directly. No automatic re-anchoring or saved acceptance returns.
+
+## New hallway3 scan setup
+
+Before entering VR, use the configured raw PLY landmarks A [2.99, 19.14, -1.41] and B [2.90, 18.16, -1.26]; match them to physical LEFT/A and RIGHT/B marks. They load automatically from calibration/landmarks.ts. EDIT A/B intentionally replaces the pair for the page session; missing or partial replacements block capture, and reload restores the configured defaults. Preserve manually adjusted scanAsset.ts unless the user explicitly authorizes a change. Check the actual floor, metric scale and 36 x 36 x 43 cm box placement after every physical fit. See [new scan setup](CALIBRATION.md).
 
 ## Start the installation after calibration
 

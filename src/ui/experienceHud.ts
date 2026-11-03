@@ -17,18 +17,22 @@ export function createExperienceHud(camera: THREE.Camera) {
   camera.add(sprite);
   let stopped = false;
   let stopReason = '';
+  let viewRestored = false;
 
   const draw = () => {
     sprite.visible = stopped;
     context.clearRect(0, 0, canvas.width, canvas.height);
-    if (!sprite.visible) return;
-    context.fillStyle = 'rgba(65,12,18,.94)';
+    if (!sprite.visible) { sprite.userData.message = ''; return; }
+    context.fillStyle = viewRestored ? 'rgba(12,38,32,.94)' : 'rgba(65,12,18,.94)';
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.fillStyle = '#ffd5d5';
     context.font = '32px sans-serif';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    const text = `PAUSED — stay still.\n${stopReason}\nAfter tracking returns: press CALIBRATE on the PC or SteamVR Desktop.`;
+    const text = viewRestored
+      ? 'VIEW RESTORED — RECALIBRATE\nPress either controller FRONT trigger once.\nThen place LEFT on A and RIGHT on B (7 seconds).'
+      : `PAUSED — stay still.\n${stopReason}`;
+    sprite.userData.message = text;
     const lines: string[] = [];
     for (const paragraph of text.split('\n')) {
       let line = '';
@@ -44,7 +48,9 @@ export function createExperienceHud(camera: THREE.Camera) {
     texture.needsUpdate = true;
   };
   return {
-    setStopped(value: boolean, reason = 'Press CALIBRATE after tracking returns.') { stopped = value; stopReason = reason; draw(); },
+    setStopped(value: boolean, reason = 'Return to the VR app and close system menus.', ready = false) {
+      stopped = value; stopReason = reason; viewRestored = ready; draw();
+    },
     clear() { stopped = false; draw(); },
     dispose() { camera.remove(sprite); texture.dispose(); material.dispose(); },
   };

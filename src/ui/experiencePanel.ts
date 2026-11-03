@@ -2,6 +2,7 @@ import type { Installation, InstallationConfig } from '../experience/installatio
 
 export interface ExperiencePanelOptions {
   isPresenting(): boolean;
+  isScanReady?(): boolean;
   onStartGesture?(): void;
   /** Choose opposite floor edges at the hallway's longitudinal midpoint. */
   onPickCenter?(): void;
@@ -47,6 +48,8 @@ export function bindExperiencePanel(installation: Installation, options: Experie
     <details id="experience-placement">
       <summary id="experience-placement-label">Draft placement · metres</summary>
       <p>Hallway width starts at a provisional 2.10 m. Pick opposite floor edges at the hallway's longitudinal midpoint, then check the real box. Approximate values do not establish alignment.</p>
+      <p id="experience-placement-source"></p>
+      <p>Fields below use the current XR world coordinates in metres.</p>
       <button id="experience-pick-center" type="button">Pick two floor edges</button>
       <p id="experience-clearance"></p>
       <div class="experience-fields"></div>
@@ -127,11 +130,13 @@ export function bindExperiencePanel(installation: Installation, options: Experie
   stationary.addEventListener('change', () => installation.confirmStationary(stationary.checked), { signal: events.signal });
   click('experience-start', () => {
     if (!options.isPresenting()) return;
+    if (options.isScanReady?.() === false) { error.textContent = 'Wait for the hallway scan to finish loading.'; return; }
     options.onStartGesture?.();
     installation.start(false);
   });
   click('experience-preview', () => {
     if (options.isPresenting()) return;
+    if (options.isScanReady?.() === false) { error.textContent = 'Wait for the hallway scan to finish loading.'; return; }
     options.onStartGesture?.();
     installation.start(true);
   });
@@ -145,20 +150,32 @@ export function bindExperiencePanel(installation: Installation, options: Experie
 
   const unsubscribe = installation.subscribe(snapshot => {
     const presenting = options.isPresenting();
+    const scanReady = options.isScanReady?.() !== false;
     const active = ['exploring', 'badge', 'rotating'].includes(snapshot.phase);
     const mayStart = ['idle', 'ready'].includes(snapshot.phase);
+    const unplaced = snapshot.placementSource === 'unplaced';
     phase.textContent = `${snapshot.preview ? 'DESKTOP PREVIEW · ' : ''}${snapshot.phase.toUpperCase()}` +
-      (snapshot.phase === 'rotating' ? ` · ${(snapshot.yaw * 180 / Math.PI).toFixed(0)}°` : '');
+      (snapshot.phase === 'rotating' ? ` · ${(snapshot.yaw * 180 / Math.PI).toFixed(0)}°` : '') +
+      (unplaced ? ' · BOX UNPLACED' : '');
     status.textContent = snapshot.status;
     checked.checked = snapshot.placementConfirmed;
-    checked.disabled = configDirty || active || snapshot.phase === 'reversed';
+    checked.disabled = unplaced || configDirty || active || snapshot.phase === 'reversed';
+    checked.title = unplaced ? 'Place the box for this scan before checking its physical position.' : '';
     stationary.checked = snapshot.stationaryConfirmed;
     stationary.disabled = snapshot.phase !== 'badge' && snapshot.phase !== 'rotating';
-    find('experience-placement-label').textContent = configDirty ? 'Unsaved placement · apply changes' :
+    find('experience-placement-label').textContent = configDirty ? 'Unsaved placement · apply changes' : unplaced ? 'Unplaced box · choose position' :
       snapshot.placementConfirmed ? 'Placement checked · metres' : 'Draft placement · metres';
     find('experience-clearance').textContent = `Side clearance if centred: ${((snapshot.config.hallwayWidth - snapshot.config.boxWidth) / 2).toFixed(2)} m each. Check against the real walls.`;
-    start.disabled = configDirty || !presenting || !mayStart || !snapshot.calibrated || !snapshot.placementConfirmed;
-    preview.disabled = configDirty || presenting || !mayStart;
+    start.disabled = unplaced || !scanReady || configDirty || !presenting || !mayStart || !snapshot.calibrated || !snapshot.placementConfirmed;
+    preview.disabled = !scanReady || configDirty || presenting || !mayStart;
+    preview.title = scanReady ? (unplaced ? 'Preview draft box coordinates only; this scan has no placed box yet.' : 'Preview the loaded installation on the desktop') : 'Wait for the hallway scan to finish loading';
+    find('experience-placement-source').textContent = unplaced
+      ? 'New scan: no box location is set. Apply the fields below or pick two floor edges. Preview uses draft coordinates.'
+      : snapshot.placementSource === 'default-ply'
+      ? snapshot.defaultPlyBase
+        ? `Box bottom centre from PLY: [${snapshot.defaultPlyBase.join(', ')}]. Floor follows this point; box height extends upward. Follows scan placement and calibration.`
+        : `Box mesh centre from this scan's PLY anchor: [${snapshot.defaultPlyCenter?.join(', ')}]. Follows scan placement and calibration.`
+      : snapshot.placementSource === 'picked-scan' ? 'Box base from picked scan floor edges.' : 'Manual XR-world placement.';
     reveal.disabled = presenting || !snapshot.preview || snapshot.phase !== 'exploring';
     collect.disabled = presenting || !snapshot.preview || snapshot.phase !== 'badge' || !snapshot.stationaryConfirmed;
     const editable = !active && snapshot.phase !== 'reversed' && snapshot.yaw === 0;

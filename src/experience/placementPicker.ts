@@ -23,14 +23,15 @@ export function setupPlacementPicker(
   let picking = false;
   let disposed = false;
   const clearMarkers = () => markers.clear();
-  const applyFromScan = () => {
+  const applyFromScan = (newPick = false) => {
     if (picks.length !== 2) return;
+    if (!newPick && installation.snapshot().placementSource !== 'picked-scan') return;
     scanRoot.updateMatrixWorld(true);
     const a = scanRoot.localToWorld(picks[0].clone());
     const b = scanRoot.localToWorld(picks[1].clone());
     const width = Math.hypot(a.x - b.x, a.z - b.z);
     const config = installation.snapshot().config;
-    installation.configure({ ...config, centerX: (a.x + b.x) / 2, centerZ: (a.z + b.z) / 2, floorY: (a.y + b.y) / 2 });
+    installation.applyScanPlacement({ ...config, centerX: (a.x + b.x) / 2, centerZ: (a.z + b.z) / 2, floorY: (a.y + b.y) / 2 });
     onStatus(`Centre from picked floor edges; scan width ${width.toFixed(2)} m versus provisional ${config.hallwayWidth.toFixed(2)} m. Check floor and choose the intended lengthwise midpoint. Placement remains unchecked.`);
   };
   const onPointer = (event: PointerEvent) => {
@@ -52,7 +53,7 @@ export function setupPlacementPicker(
     markers.add(marker);
     if (picks.length === 1) { onStatus('Pick the opposite wall/floor edge at the same hallway cross-section.'); return; }
     picking = false;
-    try { applyFromScan(); } catch (cause) { onStatus(String(cause)); }
+    try { applyFromScan(true); } catch (cause) { onStatus(String(cause)); }
   };
   renderer.domElement.addEventListener('pointerdown', onPointer);
   return {

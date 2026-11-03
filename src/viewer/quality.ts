@@ -1,11 +1,8 @@
 // Pure, bounded quality settings. Nothing here changes the metric transform.
-export type ScanVariant = 'std' | 'high' | 'ultra' | 'max';
+import { ACTIVE_SCAN } from './scanAsset.ts';
+export type ScanVariant = typeof ACTIVE_SCAN.id;
 export type QualityProfile = 'fast' | 'balanced' | 'detail';
-export type ScanFormat = 'ply' | 'ksplat';
-
-const VARIANTS: Record<ScanVariant, string> = {
-  std: 'hallway', high: 'hallway_high', ultra: 'hallway_ultra', max: 'hallway_max',
-};
+export type ScanFormat = 'ply';
 
 export interface RenderQuality {
   profile: QualityProfile;
@@ -24,11 +21,11 @@ export function parseRenderQuality(search: string): RenderQuality {
   const requestedProfile = query.get('quality');
   const profile: QualityProfile = requestedProfile === 'fast' || requestedProfile === 'detail'
     ? requestedProfile : 'balanced';
-  const defaultVariant: ScanVariant = profile === 'detail' ? 'ultra' : profile === 'fast' ? 'std' : 'high';
-  const requestedScan = query.get('scan');
-  const variant: ScanVariant = requestedScan !== null && Object.hasOwn(VARIANTS, requestedScan)
-    ? requestedScan as ScanVariant : defaultVariant;
-  const format: ScanFormat = query.get('format') === 'ksplat' ? 'ksplat' : 'ply';
+  // There is one new export. Old scan=std/high/ultra/max bookmarks must not
+  // silently select the previous coordinate system or an empty chunk.
+  const variant: ScanVariant = ACTIVE_SCAN.id;
+  // User requests the original PLY only, including older format bookmarks.
+  const format: ScanFormat = 'ply';
   const requestedSh = query.get('sh');
   const sphericalHarmonicsDegree = requestedSh === '0' ? 0 : requestedSh === '1' ? 1 : 2;
   const rawAlpha = query.get('alphaCutoff');
@@ -37,7 +34,7 @@ export function parseRenderQuality(search: string): RenderQuality {
   const alphaRemovalThreshold = Number.isInteger(alpha) && alpha >= 1 && alpha <= 255 ? alpha : defaultAlpha;
   return {
     profile, variant, format,
-    modelUrl: `/models/${VARIANTS[variant]}.${format}`,
+    modelUrl: ACTIVE_SCAN.plyUrl,
     sphericalHarmonicsDegree,
     // Compensation-trained AA is different from ordinary WebGL antialiasing.
     // Export training metadata is unknown: opt in only after an A/B comparison.

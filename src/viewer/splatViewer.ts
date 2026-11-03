@@ -5,16 +5,11 @@ import * as GaussianSplats3D from '@mkkellogg/gaussian-splats-3d';
 import * as THREE from 'three';
 import { resolveLayerPath, withHiddenXrWebGlBinding } from '../xr/enterVR';
 import { parseRenderQuality } from './quality';
+import { ACTIVE_SCAN } from './scanAsset';
+import { scanOriginForStart } from './scanPlacement';
 export type { ScanVariant } from './quality';
 
-// Quality ladder — the same scan at 4 export levels. Switch on the headset
-// with a URL parameter: https://<pc>:5173/?scan=std|high|ultra|max
-//   std   = 266k splats (  17 MB)  fastest
-//   high  = 1.06M splats ( 69 MB)  default
-//   ultra = 2.13M splats (138 MB)
-//   max   = 4.25M splats (276 MB)  PC-grade; headset will likely struggle
-
-/** Resolve the scan file from ?scan=… (defaults to 'high'). */
+/** Resolve the active original hallway3 PLY; no compressed derivative is used. */
 export function getScanUrl(): string {
   return parseRenderQuality(window.location.search).modelUrl;
 }
@@ -27,36 +22,16 @@ export const SCAN_OPACITY = 1;
 // Per docs/PROJECT_PLAN.md the tracked XR rig (camera/controllers) stays at
 // identity; alignment is applied to the scan root instead.
 //
-// The scan's own axes (from the .ply header): long axis = Y (≈58 m, that's
-// why the hallway stood vertical in VR), thin axis = Z (≈4.7 m ≈ corridor
-// height), spread axis = X (≈30 m). We rotate -90° about X so that:
-//   scan Y (length)  -> world -Z (running away from you, horizontal)
-//   scan Z (height)  -> world +Y (up)
-//   scan X (width)    -> world +X
-//
-// Rotation is a quaternion [x, y, z, w]; -90° about X = [-√½, 0, 0, √½].
-// Position is an offset in metres applied AFTER the rotation.
-// Header bounds: x −26.6…3.0, y −45.9…12.8, z −2.03…2.69
+// The asset profile supplies the requested Y/Z rotation. The raw floor start
+// maps to the XR origin; physical registration still requires matching A/B.
 // ---------------------------------------------------------------------------
-export const SCAN_ROOT_ROTATION: [number, number, number, number] = [
-  -0.70710678, 0, 0, 0.70710678, // -90° about X
-];
-export const SCAN_ROOT_POSITION: [number, number, number] = [
-  11.8,   // -center of scan X  (−(−26.6+3.0)/2): hallway centered left/right
-  -0.33,  // -center of scan Z (−(−2.03+2.69)/2): you stand mid-corridor height
-  -16.55, // -center of scan Y after rotation (−((−45.9+12.8)/2)): hallway centered front/back
-];
+export const SCAN_ROOT_ROTATION = ACTIVE_SCAN.rotation;
 
 // ---------------------------------------------------------------------------
-// Start point: the point of the map (in the ROTATED world frame) that ends up
-// at the XR origin — i.e. exactly where you physically stand when you enter VR.
-// The map is shifted so this point lands on you; the player is never moved.
-// All three values are metres. Leave [0,0,0] to keep the current centered view.
-//
-// How to find the numbers: enter VR, walk to where you want to spawn, exit —
-// the page then prints your last head position. Copy it into START_POINT.
+// Raw PLY floor point that lands at the XR origin before calibration.
+// Changes move the scan only; a new A/B fit determines physical registration.
 // ---------------------------------------------------------------------------
-export const START_POINT: [number, number, number] = [-6.5, -1.6, -3];
+export const START_POINT = ACTIVE_SCAN.startPoint;
 
 export interface ViewerRig {
   renderer: THREE.WebGLRenderer;
@@ -106,7 +81,7 @@ export function createViewerRig(): ViewerRig {
   const camera = new THREE.PerspectiveCamera(
     75, window.innerWidth / window.innerHeight, 0.1, 500,
   );
-  camera.position.set(0, 1.6, 10); // desktop inspection: eye height, some distance back
+  camera.position.set(...ACTIVE_SCAN.desktopCamera); // overview of the new export
   scene.add(camera); // the XR HUD (calibration panel/button) parents to the camera
 
   const splats = new GaussianSplats3D.DropInViewer({
@@ -140,7 +115,7 @@ export function createViewerRig(): ViewerRig {
  * Load the hallway scan ONCE with an identity transform, then apply the
  * scan-root transform to the viewer group (the scan root). Keeping the
  * transform on the group (instead of baking it into the load) lets the
- * start point be repositioned live without reloading the 17 MB scan.
+ * start point be repositioned live without reloading the scan.
  */
 export async function loadScene(
   splats: GaussianSplats3D.DropInViewer,
@@ -156,7 +131,6 @@ export async function loadScene(
     splatAlphaRemovalThreshold: quality.alphaRemovalThreshold,
     onProgress: (percent: number) => onProgress?.(percent),
   }]);
-  splats.quaternion.set(...SCAN_ROOT_ROTATION);
   applyStartPoint(splats, START_POINT);
   const patched = patchSplatOpacity(splats, SCAN_OPACITY);
   if (!patched) console.warn('scan opacity patch failed (shader string not found)');
@@ -196,19 +170,16 @@ export function setScanOpacity(splats: GaussianSplats3D.DropInViewer, opacity: n
 }
 
 /**
- * Shift the map so that the given point (in rotated world metres) lands on
- * the XR origin — where the user will physically stand. The player/rig is
- * never moved; only the scan root is.
+ * Shift the map so that the raw PLY floor point lands on the XR origin.
+ * Reset to the asset's orientation before a new calibration. The tracked
+ * player/rig is never moved; only the scan root is.
  */
 export function applyStartPoint(
   splats: GaussianSplats3D.DropInViewer,
   startPoint: [number, number, number],
 ): void {
-  splats.position.set(
-    SCAN_ROOT_POSITION[0] - startPoint[0],
-    SCAN_ROOT_POSITION[1] - startPoint[1],
-    SCAN_ROOT_POSITION[2] - startPoint[2],
-  );
+  splats.quaternion.set(...SCAN_ROOT_ROTATION).normalize();
+  splats.position.set(...scanOriginForStart(startPoint, SCAN_ROOT_ROTATION));
 }
 
 /**

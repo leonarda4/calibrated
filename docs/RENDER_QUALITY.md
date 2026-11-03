@@ -1,19 +1,21 @@
-# Rendering quality and local scan preparation
+# Rendering quality and the active scan
 
 Audit: 2026-11-03, installed `@mkkellogg/gaussian-splats-3d` **0.4.7**, Three.js **0.180.0**. Active display route: PC Chrome -> SteamVR -> Steam Link -> Quest 3. The classic XR layer workaround is unchanged.
 
 ## What the assets contain
 
-Only bounded PLY headers were read for this audit; scan bodies were processed locally by the converter, never printed into agent context.
+The active scan is the original `public/splats/hallway3/hallway3_0.ply`, loaded directly with **no compression** at the user's request. Old `scan=` and `format=ksplat` URL parameters cannot switch to the previous exports or a compressed derivative. Original scan files are unchanged and private.
 
 | Private source | Splats in actual header | PLY bytes | Available SH degree |
 | --- | ---: | ---: | ---: |
-| `hallway.ply` | 265,972 | 18,086,900 | 0 |
-| `hallway_high.ply` | 1,064,203 | 72,366,609 | 0 |
-| `hallway_ultra.ply` | 2,128,334 | 144,727,517 | 0 |
-| `hallway_max.ply` | 4,254,452 | 289,303,541 | 0 |
+| `hallway3/hallway3_0.ply` | 2,109,500 | 143,446,489 | 0 |
+| `hallway3/hallway3_1.ply` | 0 | 420 | unused |
+| `hallway3/hallway3_2.ply` | 0 | 420 | unused |
+| `hallway3/hallway3_3.ply` | 0 | 420 | unused |
 
-All four exports have `f_dc_0..2` and **no `f_rest_*` coefficients**. Raising the renderer's SH cap cannot add the missing view-dependent detail. Header comments identify `lcc2` exports; they do not establish whether the larger variants were independently trained, filtered, or densified. More splats are not evidence of better reconstruction. Future exports should preserve their trained SH coefficients if available; the pinned renderer supports degrees 0–2.
+The valid file has `f_dc_0..2` and **no `f_rest_*` coefficients**. Raising the renderer's SH cap cannot add absent view-dependent detail. The other three files are empty placeholders, not detail levels or additional chunks. The pinned renderer supports degrees 0–2.
+
+Bounded header inspection and streaming position statistics confirm a different coordinate frame from the previous scan. The old A/B were outside the new bounds. User-supplied raw landmarks now load from calibration/landmarks.ts: A [2.99, 19.14, -1.41], B [2.90, 18.16, -1.26]. Preserve the manually adjusted scanAsset.ts profile without explicit permission to change it. Whole-scene extrema do not establish the 2.10 m hallway width, 2.40 m floor-to-bars height, floor orientation or metric scale. See [new scan setup](CALIBRATION.md).
 
 The previous global opacity of 0.70 made even the opaque PC route look translucent. Experience opacity now starts at 1.0; calibration still owns its hide/reveal fade. The default PLY alpha pruning threshold is reduced from 20 to 5 out of 255, retaining more faint detail. That may also reveal floaters: compare `?alphaCutoff=20` before deciding that every visible low-opacity splat is desirable.
 
@@ -25,42 +27,29 @@ The export does not record whether training used antialias compensation. The pin
 
 | URL query | Effect |
 | --- | --- |
-| `?quality=balanced` | Default: high source, cutoff 5, desktop pixel ratio capped at 1.5 |
-| `?quality=detail` | Ultra source, cutoff 1, desktop pixel ratio capped at 2 |
-| `?quality=fast` | Standard source, cutoff 20, desktop pixel ratio 1 |
-| `?quality=detail&scan=max` | Explicit largest source; measure memory and frame delivery first |
-| `?quality=detail&format=ksplat` | Ultra compressed source after preparing it below |
+| `?quality=balanced` | Original hallway3 PLY, cutoff 5, desktop pixel ratio capped at 1.5 |
+| `?quality=detail` | Same original PLY, cutoff 1, desktop pixel ratio capped at 2 |
+| `?quality=fast` | Same original PLY, cutoff 20, desktop pixel ratio 1 |
+| `?quality=detail&scan=max` | Old bookmark; still the original hallway3 PLY |
+| `?quality=detail&format=ksplat` | Old bookmark; still the original hallway3 PLY |
 | `?quality=detail&splatAA=1` | A/B comparison with training compensation enabled |
-| `?scan=high&sh=0&alphaCutoff=20` | Explicit source/SH/pruning comparison |
+| `?sh=0&alphaCutoff=20` | SH/pruning comparison on the original PLY |
 
-`scan=std|high|ultra|max` overrides the profile's source. `format=ksplat` is explicit: missing prepared files produce the normal loading error, rather than silently substituting a different-quality scan. Keep the matching private file beside the PLY. The SH cap defaults to 2 and the library clamps it to the actual source degree, currently zero. High DPI changes affect desktop inspection; XR resolution remains owned by the runtime/session framebuffer. No camera/rig scaling or normalization changes are introduced.
+Quality changes affect rendering settings, not the source file. The SH cap defaults to 2 and the library clamps it to the actual source degree, currently zero. High DPI changes affect desktop inspection; XR resolution remains owned by the runtime/session framebuffer. GPU covariance precision is full and `inMemoryCompressionLevel` stays zero. No scan compression, coordinate quantization, rescaling or compressed fallback is applied.
 
-## Faster loading with KSPLAT
+## Local inspection and original-file handling
 
-Run locally from the repository. The script uses the installed renderer's parser and cache-ordering/bucket generator. It does not require network access.
-
-```powershell
-node scripts/prepare-scan.mjs public/models/hallway_ultra.ply --inspect
-node --max-old-space-size=8192 scripts/prepare-scan.mjs public/models/hallway_ultra.ply
-```
-
-Open the viewer at `https://localhost:5173/?quality=detail&format=ksplat`. For the largest source:
+The existing preparer has a bounded, header-only inspection mode. This command does not create a converted asset:
 
 ```powershell
-node --max-old-space-size=8192 scripts/prepare-scan.mjs public/models/hallway_max.ply
+node scripts/prepare-scan.mjs public/splats/hallway3/hallway3_0.ply --inspect
 ```
 
-Then use `?quality=detail&scan=max&format=ksplat`. Memory use during preparation grows with source size; process variants sequentially.
-
-Default conversion uses level 1 and alpha cutoff 1; it keeps the original file unchanged, retains its renderer-supported SH degree, and writes `.ksplat` plus `.ksplat.meta.json` with source SHA-256, exact counts, parameters, timing, and coordinate convention. Both outputs are private and ignored. Existing outputs require explicit `--force`. The script rejects silent degree-3 SH truncation; `--sh=2` is an explicit lossy choice for such a source. Use a renderer supporting degree 3 if those coefficients must survive.
-
-Compression is **not lossless**. Positions use rounded offsets inside five-raw-unit buckets (step approximately 0.0000763 raw units); scales, rotations and SH use half precision. No translation, scale or axis conversion is baked in. Level 0 (`--compression=0`) avoids that position/covariance quantization and is useful for comparison. The application applies the same normalization/calibration to either format. Changing the asset still requires a fresh physical check. [Pinned KSPLAT format and conversion](https://github.com/mkkellogg/GaussianSplats3D/tree/v0.4.7#creating-ksplat-files)
-
-Local preparation results with level 1, alpha 1: high **25,596,372 bytes** from 72,366,609; ultra **51,185,404 bytes** from 144,727,517; max **102,311,896 bytes** from 289,303,541. Every input splat survived in these conversions. These are file-size observations, not browser load-time or headset performance measurements.
+Open `https://localhost:5173/?quality=detail` for the lowest pruning threshold. The original file remains 143,446,489 bytes. Older PLY/KSPLAT files under `public/models/` remain local historical assets and are not selected by the app. The newly generated hallway3 compressed derivative was removed after the user requested no compression. The converter remains an existing offline utility, not part of loading.
 
 ## Near detail and distance-based LoD
 
-The pinned renderer already performs octree visibility culling, but its documented future work includes streamed sections and LoD; visibility culling is not distance-based detail selection. Keep the complete detailed scan initially, compress it, and measure both PC frame time and Steam Link stream quality. A hallway this size may be limited by fill rate, reconstruction, or streaming rather than point count. [Pinned renderer scope](https://github.com/mkkellogg/GaussianSplats3D/tree/v0.4.7#future-work)
+The pinned renderer already performs octree visibility culling, but its documented future work includes streamed sections and LoD; visibility culling is not distance-based detail selection. Keep the original detailed scan and measure both PC frame time and Steam Link stream quality. A hallway this size may be limited by fill rate, reconstruction, or streaming rather than point count. [Pinned renderer scope](https://github.com/mkkellogg/GaussianSplats3D/tree/v0.4.7#future-work)
 
 If native-resolution detail remains inadequate, first compare the actual trained export against this viewer from the same camera position. If close surfaces are already blurred in the source viewer, recover texture through a better reconstruction/export. If this viewer is sharp on the PC but blurred in the headset, measure and adjust the SteamVR render resolution and Steam Link encode/network/decode settings. If the detailed source looks good but misses frame time or loading targets, evaluate a renderer with a supported spatial LoD format in an isolated branch, preserving transforms and testing stereo sorting, hand/mesh composition, transitions, calibration and the 180-degree turn before adoption. Distance alone should never remove the nearby interaction surfaces unpredictably.
 
@@ -68,4 +57,4 @@ If native-resolution detail remains inadequate, first compare the actual trained
 
 Synthetic tests cover bounded settings, local-only asset selection, source-coordinate preservation, retained degree-1 SH, compression quantization, unchanged source bytes, and overwrite/truncation rejection. Hardware evidence is still pending: native-eye A/B comparisons, PC frame p95, dropped/reprojected frames, streaming resolution/bitrate/timing, load-to-first-detail time, and interaction-time sorting. See [validation](VALIDATION.md) and the [interaction plan](INTERACTION_PLAN.md).
 
-Desktop evidence 2026-11-03: the actual private ultra KSPLAT loaded successfully in headless Chrome; `.check/private-scan.png` was inspected. The local image shows the hallway walls/floor and remaining ceiling smear, so fine-detail quality is not declared solved. Software rendering was paused for screenshot capture because continuous multi-million-splat frames delayed the first attempt. The screenshot's FPS counter is not a PCVR performance measurement. Compare the trained source viewer and real Steam Link route before attributing the remaining blur to reconstruction, this renderer, or streaming.
+`CHECK_REAL_SCAN=1 npm run check` loads the actual private hallway3 PLY in the isolated desktop browser and writes `.check/private-scan.png`. Software rendering is paused before capture because continuous multi-million-splat frames can delay screenshot readback. Neither its FPS counter nor a successful screenshot establishes PCVR frame timing or physical alignment. Compare the trained source viewer and real Steam Link route before attributing blur to reconstruction, rendering or streaming. Historical compressed-scan evidence remains in `ai/strategy.md`.

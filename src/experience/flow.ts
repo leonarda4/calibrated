@@ -19,9 +19,13 @@ export interface InstallationConfig {
   rotationSeconds: number;
 }
 
+const DEFAULT_BOX_HEIGHT = 0.43;
+
 export const DEFAULT_INSTALLATION_CONFIG: Readonly<InstallationConfig> = {
-  centerX: 0, centerZ: -2, floorY: 0, hallwayWidth: 2.1,
-  boxWidth: 0.36, boxDepth: 0.36, boxHeight: 0.43,
+  // World-space draft values only. A new scan needs an explicit placement;
+  // these values are not an authored scan anchor or a physical acceptance.
+  centerX: 0, centerZ: 0, floorY: 0, hallwayWidth: 2.1,
+  boxWidth: 0.36, boxDepth: 0.36, boxHeight: DEFAULT_BOX_HEIGHT,
   orbHeight: 2.1, orbRadius: 0.14,
   explorationSeconds: 20, rotationSeconds: 4,
 };

@@ -11,13 +11,14 @@ import { logger } from '../debug/logger.ts';
 type ScanRoot = THREE.Object3D & { viewer: { splatMesh: unknown } };
 
 /** Keep device/lifecycle orchestration out of both sequence math and main.ts. */
-export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, scanRoot: ScanRoot) {
+export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, scanRoot: ScanRoot, options: { isScanReady?(): boolean } = {}) {
   const hud = createExperienceHud(camera);
   let reportAudio = (_text: string) => {};
   let reportCaption = (_text: string) => {};
   let reportHands = (_text: string) => {};
   let invalidateCalibration = (_reason: string) => {};
   let calibrationActive = false;
+  let captureInProgress = () => false;
   const voices = createVoiceGuide({
     onCaption(text) { reportCaption(text); },
     onStatus(text) { reportAudio(text); },
@@ -34,6 +35,7 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
   const unlockAudio = () => { void voices.unlock().then(ready => { if (ready) void voices.preload(); }); };
   const panel = bindExperiencePanel(installation, {
     isPresenting: () => renderer.xr.isPresenting,
+    isScanReady: options.isScanReady,
     onStartGesture: unlockAudio,
     onPickCenter: () => placementPicker.start(),
     onStop: () => interrupt('STOPPED. Stay still; press CALIBRATE when ready to realign.'),
@@ -52,20 +54,20 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
   const hands = setupTrackedHands(renderer, scene, { onStatus: text => reportHands(text), meshPath: '/hands/' });
 
   let sessionEnded = false;
+  let viewerReady = false;
   const unsubscribe = installation.subscribe(snapshot => {
     if (snapshot.preview) sessionEnded = false;
     if (sessionEnded && !renderer.xr.isPresenting) {
       hud.clear();
       return;
     }
-    hud.setStopped(snapshot.phase === 'stopped', snapshot.status);
+    hud.setStopped(snapshot.phase === 'stopped', snapshot.status, viewerReady);
     if (snapshot.phase === 'idle' || snapshot.phase === 'ready') hud.clear();
   });
   let observedReference: XRReferenceSpace | null = null;
   let observedSession: XRSession | null = null;
   let interrupted = false;
-  let trackingEstablished = false;
-  let viewerReady = false;
+  const hasProtectedWork = () => installation.snapshot().calibrated || captureInProgress();
   const interrupt = (reason: string) => {
     if (interrupted && installation.snapshot().phase === 'stopped') return;
     interrupted = true;
@@ -79,9 +81,11 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
   const visibility = () => {
     if (observedSession?.visibilityState !== 'visible') {
       viewerReady = false;
-      // An entering session can start hidden/blurred before its first pose.
-      // No capture is allowed then; there is no established alignment to lose.
-      if (trackingEstablished) interrupt('HEADSET VIEW PAUSED. Close Quest/SteamVR menus and keep the headset on.');
+      // READY has no accepted fit or active capture to lose. A menu during
+      // entry should wait, rather than trapping the wearer in a STOP state.
+      if (hasProtectedWork()) interrupt(observedSession?.visibilityState === 'visible-blurred'
+        ? 'ANOTHER VR PANEL HAS FOCUS\nDismiss SteamVR with LEFT menu (≡).\nDismiss Quest menu with RIGHT Meta.\nReported state: visible-blurred.'
+        : 'THE APP VIEW IS HIDDEN\nKeep the headset on and return to Steam Link.\nDismiss Quest / SteamVR menus.\nReported state: hidden.');
     }
   };
   const detach = () => {
@@ -104,7 +108,6 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
     installation.prepareForCalibration(); // restores any desktop preview before XR
     placementPicker.cancel();
     interrupted = false;
-    trackingEstablished = false;
     viewerReady = false;
     observedSession = renderer.xr.getSession();
     observedSession?.addEventListener('visibilitychange', visibility);
@@ -116,7 +119,6 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
     hands.clear();
     detach();
     interrupted = true;
-    trackingEstablished = false;
     viewerReady = false;
     calibrationActive = false;
   };
@@ -128,10 +130,15 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
     hands,
     voices,
     bindCalibrationInvalidator(callback: (reason: string) => void) { invalidateCalibration = callback; },
+    bindCalibrationCaptureState(callback: () => boolean) { captureInProgress = callback; },
     setCalibrationActive(active: boolean) { calibrationActive = active; if (active) hands.clear(); },
     calibrationBlockReason(): string | null {
+      if (observedSession?.visibilityState === 'visible-blurred') return (
+        'STEAMVR / QUEST MENU IS IN FRONT\nPress LEFT menu (≡) to dismiss SteamVR.\nUse RIGHT Meta to dismiss the Quest menu.\nThen pull a front trigger to calibrate.\nReported state: visible-blurred.');
+      if (observedSession?.visibilityState === 'hidden') return (
+        'RETURN TO THE VR APP\nKeep the headset on; return to Steam Link.\nDismiss any system menus.\nReported state: hidden.');
       return viewerReady && observedSession?.visibilityState === 'visible' ? null :
-        'HEADSET NOT READY\nKeep it on and close Quest / SteamVR menus.\nWhen tracking returns, press CALIBRATE.';
+        'WAITING FOR HEADSET POSITION\nKeep the headset on and look around a lit area.\nWhen the title returns, pull a front trigger.';
     },
     prepareForCalibration() {
       calibrationActive = true;
@@ -139,6 +146,10 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
       installation.prepareForCalibration();
       hud.clear();
       interrupted = false;
+    },
+    scanTransformChanged() {
+      installation.syncPlacementFromScan();
+      placementPicker.applyFromScan();
     },
     calibrated() {
       calibrationActive = false;
@@ -149,9 +160,7 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
     update(deltaSeconds: number, frame?: XRFrame) {
       let contacts: ReturnType<typeof hands.update> = [];
       if (renderer.xr.isPresenting) {
-        if (installation.snapshot().calibrated && deltaSeconds > 0.5) {
-          interrupt('VR FRAMES PAUSED. Stay still; check the Steam Link connection.');
-        }
+        const previouslyReady = viewerReady;
         observeReference();
         let viewerValid = false;
         try {
@@ -160,9 +169,16 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
             [pose.transform.position.x, pose.transform.position.y, pose.transform.position.z].every(Number.isFinite);
         } catch { /* a failed current-frame pose has no tracking authority */ }
         viewerReady = viewerValid && observedSession?.visibilityState === 'visible';
-        if (!viewerValid && trackingEstablished) interrupt('HEADSET POSITION LOST. Look around in a lit area; keep the headset on.');
+        // A visible-but-blurred session suppresses input poses by design.
+        // Diagnose focus before interpreting null poses as tracking loss.
         if (observedSession?.visibilityState !== 'visible') visibility();
-        if (viewerReady) trackingEstablished = true;
+        else if (!viewerValid && hasProtectedWork()) interrupt('HEADSET POSITION LOST\nKeep it on; look around a lit area.\nCalibration points have been cleared.');
+        else if (installation.snapshot().calibrated && deltaSeconds > 0.5) {
+          interrupt('VR FRAMES PAUSED\nStay still; check the Steam Link connection.');
+        }
+        if (previouslyReady !== viewerReady && installation.snapshot().phase === 'stopped') {
+          hud.setStopped(true, installation.snapshot().status, viewerReady);
+        }
         if (viewerReady && !interrupted && !calibrationActive) contacts = hands.update(frame, observedReference);
         else hands.clear();
       }

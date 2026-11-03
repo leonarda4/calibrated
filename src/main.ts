@@ -14,6 +14,8 @@ import { bindOperatorPanel } from './ui/operatorPanel';
 import { createXrDebugOverlay, gpuRendererString } from './ui/xrDebugOverlay';
 import { logger } from './debug/logger';
 import { START_POINT } from './viewer/splatViewer';
+import { ACTIVE_SCAN } from './viewer/scanAsset';
+import { SCAN_LANDMARKS } from './calibration/landmarks';
 import { setupExperience } from './experience/setupExperience';
 import { setupDesktopBoundary } from './experience/setupDesktopBoundary';
 
@@ -22,9 +24,16 @@ logger.info('boot', 'app starting');
 const hud = makeHud();
 
 const { renderer, scene, camera, splats } = createViewerRig();
+let scanReady = false;
 const operatorPanel = bindOperatorPanel();
-const experience = setupExperience(renderer, scene, camera, splats);
-const desktopBoundary = setupDesktopBoundary(renderer, scene, { getBox: () => experience.installation.snapshot().config });
+operatorPanel.setStatus(SCAN_LANDMARKS
+  ? 'Configured A/B loaded. Match LEFT to physical A and RIGHT to physical B, then calibrate in VR.'
+  : 'New scan: use EDIT A/B on the desktop to select both floor landmarks before calibration.');
+const experience = setupExperience(renderer, scene, camera, splats, { isScanReady: () => scanReady });
+const desktopBoundary = setupDesktopBoundary(renderer, scene, { getBox: () => {
+  const state = experience.installation.snapshot();
+  return state.placementSource === 'unplaced' ? undefined : state.config;
+} });
 const enterVr = setupEnterVr(renderer, text => operatorPanel.setStatus(text));
 const xrDebug = createXrDebugOverlay();
 const gpuInfo = xrDebug
@@ -45,9 +54,8 @@ scene.add(spawnMarker);
 
 hud.setStatus('loading hallway scan …');
 let lastLoggedPercent = 0;
-let scanReady = false;
 loadScene(splats, (percent) => {
-  // ultra/max parse for minutes — a live percentage prevents "stuck" looks
+  // Keep asset preparation/loading progress visible to the operator.
   hud.setStatus(`loading ${getScanUrl().split('/').pop()} … ${Math.round(percent)}%`);
   if (percent - lastLoggedPercent >= 25) {           // log every 25%
     lastLoggedPercent = percent;
@@ -56,6 +64,7 @@ loadScene(splats, (percent) => {
 })
   .then((url) => {
     scanReady = true;
+    experience.scanTransformChanged();
     // Entering XR before an asset finishes loading must keep the unregistered
     // hallway hidden; the calibration reveal will make it visible after a fit.
     if (renderer.xr.isPresenting) setScanOpacity(splats, 0);
@@ -65,16 +74,16 @@ loadScene(splats, (percent) => {
   .catch((err: unknown) => { logger.error('load', 'scan load FAILED:', err); hud.setStatus(`load error: ${String(err)}`); });
 
 // Operator panel: shift the map around the player, live, before entering VR.
-// Prefilled with the committed START_POINT so the UI mirrors the constant.
+// Fields use the supplied raw PLY floor-start coordinates.
 bindSpawnPanel((point) => {
   experience.prepareForCalibration();
   applyStartPoint(splats, point);
+  experience.scanTransformChanged();
 }, START_POINT);
 
 // Restored November 2 flow: enter VR first, then trigger/CALIBRATE starts
 // the seven-second placement countdown for both controller landmarks.
-// Desktop clicks on the scan pick landmark coordinates (copy into
-// src/calibration/landmarks.ts).
+// Desktop EDIT A/B picks the new export's raw-local landmark coordinates.
 const calibration = setupCalibrationCapture(
   renderer, scene, camera, splats,
   (solution) => {
@@ -92,7 +101,7 @@ const calibration = setupCalibrationCapture(
   (which, point) => {
     hud.appendStatus(
       `landmark ${which}: [${point.map((n) => n.toFixed(2)).join(', ')}] ` +
-      '→ copy into src/calibration/landmarks.ts',
+      `— ${ACTIVE_SCAN.id}, session selection; record for the active scan profile`,
     );
   },
   (text) => { operatorPanel.setStatus(text); },
@@ -102,6 +111,7 @@ const calibration = setupCalibrationCapture(
   () => experience.calibrationBlockReason(),
 );
 experience.bindCalibrationInvalidator(reason => calibration.invalidate(reason));
+experience.bindCalibrationCaptureState(() => calibration.isCapturing());
 operatorPanel.onCalibrateClick(() => calibration.startCalibration());
 operatorPanel.onEditClick(() => {
   // toggle via the module (it owns the state and reports it back)
@@ -175,14 +185,13 @@ renderer.setAnimationLoop((_time, frame) => {
   }
 });
 
-// After leaving VR: print the last head position so it can be copied into
-// START_POINT in src/viewer/splatViewer.ts (persist across sessions).
+// Runtime-space telemetry is not a raw scan point or a start offset.
 renderer.xr.addEventListener('sessionend', () => {
   hud.appendStatus('VR connection ended. Enter VR again while wearing the headset, then press CALIBRATE.');
   if (lastHead) {
     hud.appendStatus(
       `last head position in VR: [${lastHead.map((n) => n.toFixed(2)).join(', ')}]` +
-      ' — copy into START_POINT to spawn here',
+      ' — runtime coordinates; choose scan start placement on the desktop',
     );
     lastHead = null;
   }

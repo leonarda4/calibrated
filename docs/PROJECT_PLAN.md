@@ -17,7 +17,7 @@ The first deliverable is a supervised, repeatable demonstration in one measured 
 | Transport | Wireless streaming over strong local Wi-Fi confirmed |
 | Streaming software | **SteamVR / Steam Link — the single active route (user decision 2026-11-03).** Accepted on hardware 2026-11-02. Meta Link tried first and **parked**: three.js sessions never present over Horizon Link 208 (upstream bug); the classic `XRWebGLLayer` path fix (`src/xr/enterVR.ts`) made the SteamVR route work |
 | Browser/runtime | Chrome on the PC + **SteamVR as the active OpenXR runtime** — the only working combination; all further work targets this path |
-| Scan | Supplied: `01_GS_Model/00_Export/point_cloud_4.ply` (INRIA-style 3DGS, 265,974 splats) served locally as `public/models/hallway.ply`; heavier variants (`?scan=ultra/max`, 2.13M/4.25M splats) for the PC-rendered route; **metric scale still unverified (M2)** |
+| Scan | Active original `public/splats/hallway3/hallway3_0.ply` (2,109,500 splats), loaded without compression; older exports retained privately; **metric scale still unverified (M2)** |
 | Authoring | Agents work directly on the Windows PC (OpenCode + OpenRouter); headset validation runs on the same machine |
 | Calibration setup | Restored guided flow: wear the headset with Steam Link connected, wake both controllers, enter VR, then start **CALIBRATE** or pull a controller trigger. Seven seconds to place LEFT/A and RIGHT/B in the same attempt; buffered physical poses handle hand takeover. Hand tracking stays enabled. |
 
@@ -58,7 +58,7 @@ PC passthrough is not an MVP dependency. Chromium's Windows AR path is not enabl
 
 TypeScript ES modules, Vite, Three.js 0.180, with Node's test runner — no UI framework. **Gaussian splat rendering uses `@mkkellogg/gaussian-splats-3d` 0.4.7** (proven working with this project's INRIA-style `.ply` on both routes); Spark from the original proposal remains an unadopted candidate. [Reference package](https://github.com/leonarda4/photolipsia-agentic-kit/blob/49d501e551e4e2a1e2c96af3a95666ac32e97dff/02-splat-viewer/package.json)
 
-Splat serving keeps the original `.ply` private at `public/models/`. Offline KSPLAT preparation now provides explicitly selected compressed variants; high/ultra/max files are about 65% smaller while retaining every source splat, with bounded quantization. Source SH is degree 0. The pinned renderer has no supported distance-based LoD; inspect [RENDER_QUALITY.md](RENDER_QUALITY.md) before a renderer migration or higher-detail claim.
+The active private export is the original public/splats/hallway3/hallway3_0.ply (143,446,489 bytes, 2,109,500 splats), loaded directly without compression. Empty companion PLYs are ignored; all quality profiles and legacy bookmarks use the original export. The manually adjusted placement in scanAsset.ts is protected: do not modify it without explicit user permission. User-supplied A [2.99, 19.14, -1.41] and B [2.90, 18.16, -1.26] load from calibration/landmarks.ts; EDIT A/B can replace them for a page session. Physical calibration and independent floor, scale and box checks remain required. See [new scan setup](CALIBRATION.md). Source SH is degree 0; the pinned renderer has no supported distance-based LoD. See [RENDER_QUALITY.md](RENDER_QUALITY.md) before a renderer migration or higher-detail claim.
 
 Planned module boundaries, to be created during implementation:
 
