@@ -132,7 +132,7 @@ export class InstallationFlow {
       return false;
     }
     if (this.state.phase === 'box') return true;
-    this.clear('box', preview ? 'DESKTOP PREVIEW: box shown. Press Rotate hallway to preview the turn.' : 'Box shown. Press Rotate hallway when ready.');
+    this.clear('box', preview ? 'DESKTOP PREVIEW: box shown. Press Rotate hallway to preview the turn.' : 'Box shown. Move the headset inside or above its footprint to turn the hallway, or press Rotate hallway.');
     this.state.preview = preview;
     return true;
   }

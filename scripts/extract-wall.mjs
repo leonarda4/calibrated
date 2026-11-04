@@ -11,6 +11,7 @@ import { WALL_SECTION } from '../src/viewer/wallSectionConfig.ts';
 const DEFAULT_SOURCE = 'public/splats/hallway3/hallway3_0.ply';
 const DEFAULT_OUTPUT = `public${WALL_SECTION.modelUrl}`;
 const RAW_TO_LOCAL = new Quaternion(-.5, -.5, -.5, .5);
+const BACK_ROTATION = new Quaternion(0, 1, 0, 0);
 
 /** Only SH0 is accepted: rotating higher SH requires rotating its coefficients. */
 function parseHeader(file) {
@@ -89,7 +90,7 @@ export async function extractWall(source = DEFAULT_SOURCE, output = DEFAULT_OUTP
   for (let i = 0; i < header.count; i++) {
     const at = header.start + i * header.stride;
     const x = read(at, 'y') - cy, y = read(at, 'z') - floor, z = read(at, 'x') - cx;
-    if (![x,y,z].every(Number.isFinite) || Math.abs(x) > WALL_SECTION.width / 2 || y < 0 || y > WALL_SECTION.height || Math.abs(z) > WALL_SECTION.depth / 2) continue;
+    if (![x,y,z].every(Number.isFinite) || Math.abs(x) > WALL_SECTION.width / 2 || y < 0 || y > WALL_SECTION.height || Math.abs(z) > WALL_SECTION.sourceDepth / 2) continue;
     const vertex = Buffer.from(file.subarray(at, at + header.stride));
     const write = (name, value) => vertex.writeFloatLE(value, header.offset[name]);
     write('x', x); write('y', y); write('z', z);
@@ -103,28 +104,53 @@ export async function extractWall(source = DEFAULT_SOURCE, output = DEFAULT_OUTP
     rotation.normalize().premultiply(RAW_TO_LOCAL);
     write('rot_0', rotation.w); write('rot_1', rotation.x); write('rot_2', rotation.y); write('rot_3', rotation.z);
     kept.push(vertex);
-    [x,y,z].forEach((value, axis) => { bounds[0][axis] = Math.min(bounds[0][axis], value); bounds[1][axis] = Math.max(bounds[1][axis], value); });
     if (read(at, 'opacity') >= 0) {
       opaqueCount++;
       occupied[Math.min(xCells - 1, Math.floor((x + WALL_SECTION.width / 2) * 10)) + xCells * Math.min(yCells - 1, Math.floor(y * 10))] = 1;
     }
   }
   if (kept.length < 1000) throw new Error('Crop has too few splats; inspect scan identity and crop coordinates.');
-  const body = Buffer.concat(kept), outputHeader = Buffer.from(header.text.replace(/element vertex \d+/, `element vertex ${kept.length}`));
+  // Keep both slabs at full source thickness. Rotate the second copy about up
+  // so its good +Z face points outward toward -Z; never mirror or flatten it.
+  const faces = [[], []];
+  for (const vertex of kept) for (let face = 0; face < 2; face++) {
+    const copy = Buffer.from(vertex), sign = face === 0 ? 1 : -1;
+    const get = name => vertex.readFloatLE(header.offset[name]);
+    const write = (name, value) => copy.writeFloatLE(value, header.offset[name]);
+    const xyz = [sign * get('x'), get('y'), sign * (get('z') + WALL_SECTION.faceOffset)];
+    ['x', 'y', 'z'].forEach((name, axis) => {
+      write(name, xyz[axis]);
+      bounds[0][axis] = Math.min(bounds[0][axis], xyz[axis]);
+      bounds[1][axis] = Math.max(bounds[1][axis], xyz[axis]);
+    });
+    if (face === 1) {
+      if (['nx', 'ny', 'nz'].every(name => name in header.offset)) {
+        write('nx', -get('nx')); write('nz', -get('nz'));
+      }
+      rotation.set(get('rot_1'), get('rot_2'), get('rot_3'), get('rot_0')).premultiply(BACK_ROTATION);
+      write('rot_0', rotation.w); write('rot_1', rotation.x); write('rot_2', rotation.y); write('rot_3', rotation.z);
+    }
+    faces[face].push(copy);
+  }
+  const count = kept.length * 2;
+  const body = Buffer.concat(faces.flat()), outputHeader = Buffer.from(header.text.replace(/element vertex \d+/, `element vertex ${count}`));
   const data = Buffer.concat([outputHeader, body]);
   const metadata = {
-    schemaVersion: 1, sourceScanId: WALL_SECTION.sourceScanId,
+    schemaVersion: 2, sourceScanId: WALL_SECTION.sourceScanId,
     sourceSha256: createHash('sha256').update(file).digest('hex'),
-    sourceVertexCount: header.count, outputVertexCount: kept.length, outputBytes: data.length,
+    sourceVertexCount: header.count, sourceCropVertexCount: kept.length, outputVertexCount: count, outputBytes: data.length,
     sourceRawBottomCenter: WALL_SECTION.sourceRawCenter,
     sourceRawYRange: [cy - WALL_SECTION.width / 2, cy + WALL_SECTION.width / 2],
     sourceRawZRange: [floor, floor + WALL_SECTION.height],
     objectDimensions: { width: WALL_SECTION.width, height: WALL_SECTION.height, depth: WALL_SECTION.depth },
+    faces: { count: 2, splatsPerFace: kept.length, sourceDepth: WALL_SECTION.sourceDepth,
+      gap: WALL_SECTION.faceGap, centerOffsets: [WALL_SECTION.faceOffset, -WALL_SECTION.faceOffset],
+      backRotationXYZW: BACK_ROTATION.toArray(), sameSceneAndTransform: true },
     objectCenterBounds: bounds,
-    objectTransform: '(rawY-20.8, rawZ+1.45, rawX-0.9); proper rotation plus translation; full Gaussian quaternion rotated',
+    objectTransform: 'Crop (rawY-20.8, rawZ+1.45, rawX-0.9); front translated +faceOffset along Z; back is front rotated 180 degrees about Y. Positions, normals and full Gaussian orientations rotated; scales unchanged.',
     compressionLevel: 0, resampled: false, sphericalHarmonicsDegree: 0,
     sourceSelection: 'Visually door-free continuous left wall; densest 2.10 m interval on a 0.10 m search grid inside rawY 16.25..22.75. Full original SH0 splats retained inside crop; graffiti preserved.',
-    opaqueSplatCount: opaqueCount,
+    opaqueSplatCount: opaqueCount * 2,
     occupiedTenCentimetreCells: occupied.reduce((sum, value) => sum + value, 0), totalTenCentimetreCells: occupied.length,
     heightEvidence: 'Source elevation inspected above the horizontal band at raw Z +0.95. Continuous wall ends at +1.15: opaque counts per 2.5 cm bin are 123/81/81/101/109/44 at Z +1.000/+1.025/+1.050/+1.075/+1.100/+1.125, then 5/1 at +1.150/+1.175. Retain wall from existing raw floor -1.45 to +1.15. Scan-derived height; physical metric dimensions remain unverified.',
     physicalValidation: 'NOT TESTED',
@@ -138,6 +164,7 @@ export async function extractWall(source = DEFAULT_SOURCE, output = DEFAULT_OUTP
   }
   await fs.writeFile(output, data);
   await fs.writeFile(`${output}.meta.json`, `${JSON.stringify(metadata, null, 2)}\n`);
+  // Preview only the outward front, not two overlapping mirrored elevations.
   await fs.writeFile(`${output}.preview.png`, elevationPreview(body, header, kept.length));
   return metadata;
 }

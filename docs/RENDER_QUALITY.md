@@ -4,9 +4,9 @@ Audit: 2026-11-03, installed `@mkkellogg/gaussian-splats-3d` **0.4.7**, Three.js
 
 ## What the assets contain
 
-The active scan is the original `public/splats/hallway3/hallway3_0.ply`, loaded directly with **no compression** at the user's request. Old `scan=` and `format=ksplat` URL parameters cannot switch to the previous exports or a compressed derivative. Original scan files are unchanged and private.
+The active scan is the original `public/splats/hallway3/hallway3_0.ply`, loaded directly with **no compression** at the user's request. Old `scan=` and `format=ksplat` URL parameters cannot switch to the previous exports or a compressed derivative. The original active scan is unchanged and shared through Git LFS; unused exports remain local.
 
-| Private source | Splats in actual header | PLY bytes | Available SH degree |
+| Source export | Splats in actual header | PLY bytes | Available SH degree |
 | --- | ---: | ---: | ---: |
 | `hallway3/hallway3_0.ply` | 2,109,500 | 143,446,489 | 0 |
 | `hallway3/hallway3_1.ply` | 0 | 420 | unused |
@@ -57,4 +57,4 @@ If native-resolution detail remains inadequate, first compare the actual trained
 
 Synthetic tests cover bounded settings, local-only asset selection, source-coordinate preservation, retained degree-1 SH, compression quantization, unchanged source bytes, and overwrite/truncation rejection. Hardware evidence is still pending: native-eye A/B comparisons, PC frame p95, dropped/reprojected frames, streaming resolution/bitrate/timing, load-to-first-detail time, and interaction-time sorting. See [validation](VALIDATION.md) and the [interaction plan](INTERACTION_PLAN.md).
 
-`CHECK_REAL_SCAN=1 npm run check` loads the actual private hallway3 PLY in the isolated desktop browser and writes `.check/private-scan.png`. Software rendering is paused before capture because continuous multi-million-splat frames can delay screenshot readback. Neither its FPS counter nor a successful screenshot establishes PCVR frame timing or physical alignment. Compare the trained source viewer and real Steam Link route before attributing blur to reconstruction, rendering or streaming. Historical compressed-scan evidence remains in `ai/strategy.md`.
+`CHECK_REAL_SCAN=1 npm run check` loads the actual Git LFS hallway3 PLY in the isolated desktop browser and writes `.check/private-scan.png`. Software rendering is paused before capture because continuous multi-million-splat frames can delay screenshot readback. Neither its FPS counter nor a successful screenshot establishes PCVR frame timing or physical alignment. Compare the trained source viewer and real Steam Link route before attributing blur to reconstruction, rendering or streaming. Historical compressed-scan evidence remains in `ai/strategy.md`.

@@ -122,10 +122,10 @@ export function createVoiceGuide(options: VoiceGuideOptions = {}) {
         const gain = audio.createGain();
         const pan = audio.createStereoPanner();
         source.buffer = buffer;
-        if (definition.layers.length === 1 && layer.role === 'lead' &&
+        if (layer.role === 'lead' &&
             definition.maxDurationSeconds && definition.maxDurationSeconds > 0) {
           // Leave room for the source scheduling lead-in and the next frame's cue.
-          // Short recordings retain their natural rate; layered cues never change.
+          // Short recordings and supporting whispers retain their natural rate.
           source.playbackRate.value = Math.max(1, buffer.duration / definition.maxDurationSeconds);
         }
         gain.gain.value = layer.gain;

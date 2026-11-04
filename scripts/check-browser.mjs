@@ -11,6 +11,18 @@ import { Vector3, Quaternion } from 'three';
 import { ACTIVE_SCAN } from '../src/viewer/scanAsset.ts';
 import { WALL_SECTION } from '../src/viewer/wallSectionConfig.ts';
 import { scanOriginForStart } from '../src/viewer/scanPlacement.ts';
+import { BROOM } from '../src/viewer/broomConfig.ts';
+import { runBroomScenario } from '../tests/browser/broomScenario.mjs';
+import { runLightingScenario } from '../tests/browser/lightingScenario.mjs';
+import { runSecondBoxLightsScenario } from '../tests/browser/secondBoxLightsScenario.mjs';
+import { runFloorHoleScenario, capturePrivateFloorHole } from '../tests/browser/floorHoleScenario.mjs';
+import { WOODEN_BOX, woodenBoxSourceTransform } from '../src/viewer/woodenBox.ts';
+import { runWoodenBoxScenario } from '../tests/browser/woodenBoxScenario.mjs';
+import { captureWallFaces } from '../tests/browser/wallFacesScenario.mjs';
+import { runWallGameplayScenario } from '../tests/browser/wallGameplayScenario.mjs';
+import { runWallRouteFrameScenario } from '../tests/browser/wallRouteFrameScenario.mjs';
+import { runRotationOffsetScenario } from '../tests/browser/rotationOffsetScenario.mjs';
+import { runSpawnPanelScenario } from '../tests/browser/spawnPanelScenario.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const reportName = process.env.CHECK_REPORT_NAME ?? '';
@@ -19,12 +31,15 @@ const output = path.join(root, '.check', reportName);
 await fs.mkdir(output, { recursive: true });
 // CHECK_WALL_ONLY=1 runs source/wall checks; CHECK_REAL_SCAN=1 adds the private wall image.
 const wallOnly = process.env.CHECK_WALL_ONLY === '1';
-const report = { date: new Date().toISOString(), environment: `${wallOnly ? 'Focused wall checks; ' : ''}Desktop Chrome; synthetic public corridor; no XR/hardware acceptance`, checks: [], consoleErrors: [], passed: false };
+const startPanelOnly = process.env.CHECK_START_PANEL_ONLY === '1';
+const report = { date: new Date().toISOString(), environment: `${startPanelOnly ? 'Focused start-panel checks; ' : wallOnly ? 'Focused wall checks; ' : ''}Desktop Chrome; synthetic public corridor; no XR/hardware acceptance`, checks: [], consoleErrors: [], passed: false };
 let server;
 let browser;
 let page;
 let releaseModel;
 let releaseWall;
+let releaseBroom;
+let releaseBox;
 const check = async (name, action) => {
   const details = await action();
   report.checks.push({ name, passed: true, ...(details === undefined ? {} : { details }) });
@@ -32,21 +47,60 @@ const check = async (name, action) => {
 };
 
 async function readBoxVisibility(targetPage, meshName = 'installation-box') {
+  await targetPage.waitForFunction(meshName => {
+    const state = window.__debug.experience.installation.snapshot();
+    return (meshName === 'installation-box' ? state.boxReveal : state.secondBox.reveal).motion === 'visible';
+  }, meshName);
   const colors = await targetPage.evaluate(async meshName => {
     const THREE = await import('/node_modules/.vite/deps/three.js');
-    const { renderer, scene, camera } = window.__debug;
-    renderer.render(scene, camera);
+    const { renderer, scene, camera, splats } = window.__debug;
+    const object = splats.getSplatScene(meshName === 'installation-box' ? 3 : 4);
+    camera.updateMatrixWorld(true);
+    scene.updateMatrixWorld(true);
+    splats.viewer.update(renderer, camera);
+    const settle = async () => {
+      let timer;
+      try {
+        await Promise.race([splats.viewer.sortPromise, new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('Box visibility sort did not settle.')), 30000);
+        })]);
+      } finally { clearTimeout(timer); }
+    };
+    await settle(); splats.viewer.splatMesh.updateTransforms();
+    await splats.viewer.runSplatSort(true, true); await settle();
     const point = scene.getObjectByName(meshName).getWorldPosition(new THREE.Vector3()).project(camera);
     const gl = renderer.getContext();
     const x = Math.floor((point.x + 1) * gl.drawingBufferWidth / 2);
     const y = Math.floor((point.y + 1) * gl.drawingBufferHeight / 2);
-    const bytes = new Uint8Array(3 * 3 * 4);
-    gl.readPixels(x - 1, y - 1, 3, 3, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
-    return Array.from({ length: 9 }, (_, i) => Array.from(bytes.slice(i * 4, i * 4 + 3)));
+    const read = () => {
+      splats.viewer.update(renderer, camera); renderer.render(scene, camera);
+      const bytes = new Uint8Array(11 * 11 * 4);
+      gl.readPixels(x - 5, y - 5, 11, 11, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+      return bytes;
+    };
+    const shown = read();
+    object.opacity = 0;
+    const hidden = read();
+    object.opacity = 1;
+    read();
+    return { changedChannels: shown.reduce((sum, value, i) => sum + (i % 4 !== 3 && Math.abs(value - hidden[i]) > 3 ? 1 : 0), 0),
+      center: Array.from(shown.slice(60 * 4, 60 * 4 + 3)), splats: object.splatBuffer.getSplatCount() };
   }, meshName);
-  assert.ok(colors.some(rgb => rgb.every((value, i) => Math.abs(value - [120, 140, 162][i]) <= 4)),
+  assert.ok(colors.changedChannels > 10,
     `Projected box is occluded by the scan: ${JSON.stringify(colors)}`);
-  return colors[4];
+  return colors;
+}
+
+function woodenBoxPly() {
+  const points = [], inverse = woodenBoxSourceTransform(.36, .43, .36).invert();
+  for (let x = -.18; x <= .1801; x += .018) for (let z = -.18; z <= .1801; z += .018) {
+    for (let y = 0; y <= .4301; y += .0215) {
+      if (Math.abs(x) < .179 && Math.abs(z) < .179 && y > .001 && y < .429) continue;
+      const p = new Vector3(x, y, z).applyMatrix4(inverse);
+      points.push([...p.toArray(), .5 + .12 * Math.sin(y * 100), .32, .16]);
+    }
+  }
+  return pointsPly(points, .025);
 }
 
 function corridorPly() {
@@ -59,7 +113,8 @@ function corridorPly() {
     const raw = new Vector3(x, y, z).sub(translation).applyQuaternion(inverseRotation);
     points.push([...raw.toArray(), ...color]);
   };
-  for (let z = -10; z <= 8; z += 0.12) {
+  // Include the fitting windows for -8 m before and after the pivoted turn.
+  for (let z = -10; z <= 16; z += 0.12) {
     for (let y = 0; y <= 2.5; y += 0.12) {
       const stripe = Math.floor((z + 10) / 1.5) % 2;
       add(-1.05, y, z, stripe ? [0.56, 0.67, 0.72] : [0.38, 0.48, 0.55]);
@@ -92,11 +147,26 @@ function wallPly() {
   for (let ix = 0; ix <= 42; ix++) {
     for (let iy = 0; iy <= 48; iy++) {
       const stripe = Math.floor(iy / 8) % 2;
-      points.push([-1.05 + ix * .05, iy * WALL_SECTION.height / 48, 0,
-        ...(stripe ? [.76, .57, .31] : [.61, .42, .22])]);
+      const x = -1.05 + ix * .05, y = iy * WALL_SECTION.height / 48;
+      const color = stripe ? [.76, .25 + ix * .008, .31] : [.61, .20 + ix * .008, .22];
+      points.push([x, y, WALL_SECTION.faceOffset, ...color]);
+      points.push([-x, y, -WALL_SECTION.faceOffset, ...color]);
     }
   }
   return pointsPly(points, .045);
+}
+
+function broomPly() {
+  // Public invented fixture in the supplied object's authored coordinate frame.
+  const points = [], inverse = new Quaternion(...BROOM.sourceRotation).invert();
+  for (let y = .02; y <= BROOM.height; y += .015) {
+    const halfWidth = y < .32 ? .19 * (1 - y / .4) : .012;
+    for (let x = -halfWidth; x <= halfWidth; x += .012) {
+      const raw = new Vector3(x, y, 0).applyQuaternion(inverse).add(new Vector3(...BROOM.sourceBase));
+      points.push([...raw.toArray(), .65, .48, .24]);
+    }
+  }
+  return pointsPly(points, .012);
 }
 
 async function sha256File(file) {
@@ -107,8 +177,9 @@ async function sha256File(file) {
 
 try {
   // IDE edits must not reload this isolated browser part-way through a check.
-  // Vite's pinned server API supports watch:null to disable its file watcher.
-  server = await createServer({ configFile: path.join(root, 'vite.http.config.ts'),
+  // Keep test-only watch:null out of the development config's watch-object
+  // merge, which can re-enable watching locked generated scan binaries.
+  server = await createServer({ configFile: false, root,
     server: { host: '127.0.0.1', port: 0, strictPort: false, watch: null, hmr: false } });
   await server.listen();
   const address = server.httpServer.address();
@@ -119,7 +190,7 @@ try {
   // Chromium's explicit no-runtime selector also covers xrCompatible WebGL.
   const noHardwareXr = '--force-webxr-runtime=no-xr-runtime';
   browser = await chromium.launch({ channel: 'chrome', headless: true,
-    args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--enable-automation', noHardwareXr] });
+    args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--enable-automation', '--mute-audio', noHardwareXr] });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   // Applied before application scripts on every page/navigation. Detached
   // regression factories may replace this with their own fake XRSystem.
@@ -158,10 +229,29 @@ try {
     await wallGate;
     await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: wallPly() });
   });
+  let broomRequests = 0;
+  const broomGate = new Promise(resolve => { releaseBroom = resolve; });
+  const privateBroom = process.env.CHECK_REAL_BROOM === '1';
+  const broomData = privateBroom ? await fs.readFile(path.join(root, 'public', BROOM.modelUrl.slice(1))) : broomPly();
+  await page.route('**/splats/broooooommm.ply', async route => {
+    broomRequests++; await broomGate;
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: broomData });
+  });
+  const boxGate = new Promise(resolve => { releaseBox = resolve; });
+  const boxData = process.env.CHECK_REAL_BOX === '1'
+    ? await fs.readFile(path.join(root, 'public', WOODEN_BOX.modelUrl.slice(1))) : woodenBoxPly();
+  await page.route('**/splats/WoodenBox.ply', async route => {
+    await boxGate;
+    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: boxData });
+  });
   // Missing clips report on the PC; they must never create headset captions.
   await page.route('**/audio/generated/*.mp3', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<html>clips not generated</html>' }));
+  const startupWallRequest = page.waitForRequest('**/splats/wall-section/wall-section.ply');
+  const startupBroomRequest = page.waitForRequest('**/splats/broooooommm.ply');
   await page.goto(`${baseUrl}?format=ply`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => !!window.__debug);
+  await startupWallRequest;
+  await startupBroomRequest;
   // The public fixture uses a known corridor view for pointer/prop checks.
   // The separate actual-asset smoke below retains the production overview.
   await page.evaluate(() => {
@@ -171,10 +261,16 @@ try {
     controls.update();
   });
   await check('installation preview waits for initial scan placement to finish', async () => {
+    await page.waitForFunction(() => document.getElementById('spawn-x')?.disabled);
+    assert.equal(await page.locator('#spawn-y').isDisabled(), true);
+    assert.equal(await page.locator('#spawn-z').isDisabled(), true);
     assert.equal(await page.locator('#experience-show-box').isDisabled(), true);
     assert.equal(await page.locator('#experience-rotate').isDisabled(), true);
     assert.equal(await page.locator('#experience-show-wall').isDisabled(), true);
-    assert.equal(wallRequests, 0);
+    assert.equal(await page.locator('#experience-show-broom').isDisabled(), true);
+    assert.equal(await page.locator('#experience-lights-out').isDisabled(), true);
+    assert.equal(await page.locator('#experience-lights-brightness').isDisabled(), true);
+    assert.equal(wallRequests, 1);
     assert.equal(await page.evaluate(() => window.__debug.wallBlocker.snapshot().visible), false);
     assert.equal(await page.evaluate(async () => {
       const { getSourceCenters } = await import('/src/viewer/splatViewer.ts');
@@ -182,10 +278,63 @@ try {
     }), true, 'Picking an unfinished source scan must return no centres without querying a missing scene.');
     assert.equal(await page.evaluate(() => window.__debug.experience.installation.snapshot().phase), 'idle');
   });
-  releaseModel();
+  await check('startup preloads the hidden wall before completing one shared scene build', async () => {
+    const modelResponse = page.waitForResponse('**/splats/hallway3/*.ply');
+    releaseModel();
+    await modelResponse;
+    assert.equal(await page.locator('#experience-show-box').isDisabled(), true);
+    assert.equal(await page.locator('#experience-show-wall').isDisabled(), true);
+    assert.equal(await page.evaluate(() => window.__debug.splats.getSceneCount()), 0,
+      'The hallway was built alone while its wall was still loading.');
+    await page.locator('#experience-reset').click();
+    assert.equal(await page.evaluate(() => window.__debug.wallBlocker.snapshot().visible), false);
+    releaseWall();
+    // The third hidden object must join the same initial build as the hallway/wall.
+    assert.equal(await page.locator('#experience-show-broom').isDisabled(), true);
+    assert.equal(await page.evaluate(() => window.__debug.splats.getSceneCount()), 0);
+    releaseBroom();
+    assert.equal(await page.evaluate(() => window.__debug.splats.getSceneCount()), 0);
+    releaseBox();
+    await page.waitForFunction(() => document.getElementById('status')?.textContent?.includes('loaded'));
+    return await page.evaluate(() => {
+      const { splats, wallBlocker } = window.__debug;
+      const state = wallBlocker.snapshot();
+      if (state.phase !== 'ready' || state.motion !== 'hidden' || state.visible || splats.getSceneCount() <= state.sceneIndex) {
+        throw new Error('Both assets must finish startup with the wall hidden.');
+      }
+      const mesh = splats.viewer.splatMesh;
+      window.__wallResources = { material: mesh.material, geometry: mesh.geometry,
+        textures: mesh.splatDataTextures, worker: splats.viewer.sortWorker };
+      if (!mesh.material.uniforms.uWallDimensions) throw new Error('Wall shader was not prepared during startup.');
+      return { ...state, sceneCount: splats.getSceneCount(), preparedBeforeReady: true };
+    });
+  });
   await page.waitForFunction(() => document.getElementById('status')?.textContent?.includes('loaded'));
   await page.waitForTimeout(1000); // allow the asynchronous splat sort to present
   await page.screenshot({ path: path.join(output, 'loaded.png'), fullPage: true });
+  await check('10 cm flipped-hallway draft preserves the original alignment before the turn', async () => {
+    const original = await page.evaluate(() => {
+      const { splats, experience } = window.__debug;
+      splats.updateMatrix();
+      return { matrix: splats.matrix.toArray(), state: experience.installation.snapshot() };
+    });
+    assert.equal(original.state.rotationOffsetMetres, .1);
+    assert.deepEqual(original.state.rotationOffsetWorld, [0, 0, 0]);
+    await page.locator('#experience-flip-alignment').evaluate(element => { element.open = true; });
+    assert.equal(await page.locator('#experience-flip-offset').inputValue(), '10');
+    // The established zero-offset checks below retain their explicit baseline.
+    await page.locator('#experience-flip-offset').fill('0');
+    await page.locator('#experience-flip-apply').click();
+    const after = await page.evaluate(() => {
+      const { splats, experience } = window.__debug;
+      splats.updateMatrix();
+      return { matrix: splats.matrix.toArray(), offset: experience.installation.snapshot().rotationOffsetMetres };
+    });
+    assert.deepEqual(after.matrix, original.matrix);
+    assert.equal(after.offset, 0);
+    await page.locator('#experience-flip-alignment').evaluate(element => { element.open = false; });
+    return { productionDraftMetres: .1, originalAlignmentUnchanged: true };
+  });
   await check('scan preserves manual placement and loads the supplied A/B pair', async () => {
     return await page.evaluate(async () => {
       const THREE = await import('/node_modules/.vite/deps/three.js');
@@ -227,15 +376,9 @@ try {
       return { litSamples: lit, experienceOpacity: splats.viewer.splatMesh.material.uniforms.uGlobalOpacity.value };
     });
   });
-  await check('wall loads only on request and a reset cancels its pending reveal', async () => {
-    assert.equal(wallRequests, 0);
+  await check('preloaded wall stays hidden and excluded from landmark and placement centres', async () => {
+    assert.equal(wallRequests, 1);
     assert.equal(await page.locator('#experience-show-wall').isDisabled(), false);
-    await page.locator('#experience-show-wall').click();
-    await page.waitForFunction(() => window.__debug.wallBlocker.snapshot().phase === 'loading');
-    await page.locator('#experience-reset').click();
-    assert.equal(await page.evaluate(() => window.__debug.wallBlocker.snapshot().requested), false);
-    releaseWall();
-    await page.waitForFunction(() => window.__debug.wallBlocker.snapshot().phase === 'ready');
     const state = await page.evaluate(async () => {
       const { getSourceCenters } = await import('/src/viewer/splatViewer.ts');
       const { splats, wallBlocker } = window.__debug;
@@ -247,31 +390,95 @@ try {
     });
     assert.equal(state.visible, false);
     assert.equal(state.sceneVisible, false);
-    assert.equal(state.requested, false);
+    assert.equal(state.motion, 'hidden');
     assert.equal(state.sourceCenterLength, state.sourceSplatCount * 3);
     assert.ok(state.sourceCenterLength < state.mergedCenterLength,
       'Calibration and placement must exclude the new prop from the hallway source centres.');
     assert.equal(wallRequests, 1);
-    return { ...state, requests: wallRequests, canceledReveal: true };
+    return { ...state, requests: wallRequests, hiddenAfterStartupReset: true };
   });
-  await check('Show wall reveals one metric wall across the corridor and Hide wall removes it', async () => {
+  if (startPanelOnly) {
+    await check('raw start panel edits preserve the original view and survive later frames',
+      () => runSpawnPanelScenario(page, output, 'idle'));
+    await page.locator('#experience-test-scenario').uncheck();
+    await page.locator('#experience-show-box').click();
+    await page.waitForFunction(() => !document.getElementById('experience-rotate').disabled);
+    await page.locator('#experience-rotate').click();
+    await page.waitForFunction(() => document.getElementById('spawn-x').disabled);
+    await page.waitForFunction(() => window.__debug.experience.installation.snapshot().phase === 'reversed', undefined, { timeout: 8000 });
+    await check('raw start panel edits preserve the flipped view and survive later frames',
+      () => runSpawnPanelScenario(page, output));
+    await check('coordinate inspection rejects live XR, capture and turn edits without affecting recovery', async () => {
+      const { runExperienceScenario } = await import('../tests/browser/experienceScenario.mjs');
+      return await runExperienceScenario(page);
+    });
+  } else {
+  if (!wallOnly) {
+  await check('Show broom uses the scanned prop upright at world Z=6 and clears on recovery', async () => {
+    const details = await runBroomScenario(page, output);
+    assert.equal(broomRequests, 1);
+    return { ...details, requests: broomRequests, privateBroom,
+      ...(privateBroom ? { assetSha256: createHash('sha256').update(broomData).digest('hex') } : {}) };
+  });
+  await check('operator/system lights-out darkens RGB with unchanged alpha and restores on recovery',
+    () => runLightingScenario(page, output));
+  await check('floor button cuts a wall-sized void at Z3, restores pixels and closes on recovery',
+    () => runFloorHoleScenario(page, output));
+  }
+  await check('Show and Hide slide left to right using the existing startup resources', async () => {
     const original = await page.evaluate(() => {
-      const { splats, camera, controls } = window.__debug;
+      const { splats, camera, controls, wallBlocker } = window.__debug;
+      window.__wallUpdate = wallBlocker.update;
+      // Keep the actual render loop running, but step wall time explicitly so
+      // screenshots and signed world positions describe the same known pose.
+      wallBlocker.update = () => window.__wallUpdate(0);
       splats.updateMatrixWorld(true);
       return { scan: splats.matrixWorld.toArray(), camera: camera.position.toArray(), target: controls.target.toArray(),
         cameraParent: camera.parent?.uuid, scanCount: splats.viewer.getSceneCount() };
     });
     await page.locator('#experience-show-wall').click();
-    await page.waitForFunction(() => window.__debug.wallBlocker.snapshot().visible);
+    const entering = await page.evaluate(() => {
+      const { wallBlocker, splats, camera, controls } = window.__debug;
+      return { ...wallBlocker.snapshot(), camera: camera.position.toArray(), target: controls.target.toArray(),
+        scan: splats.matrixWorld.toArray() };
+    });
+    assert.deepEqual(entering.camera, original.camera);
+    assert.deepEqual(entering.target, original.target);
+    assert.deepEqual(entering.scan, original.scan);
+    assert.equal(entering.motion, 'entering');
+    assert.ok(entering.offset < -WALL_SECTION.width);
+    assert.equal(await page.locator('#experience-show-wall').isDisabled(), true);
+    assert.equal(await page.evaluate(() => window.__debug.wallBlocker.toggle()), false);
+    await page.evaluate(seconds => window.__wallUpdate(seconds / 2), WALL_SECTION.slideSeconds);
+    const halfwayIn = await page.evaluate(async () => {
+      const THREE = await import('/node_modules/.vite/deps/three.js');
+      const { camera, controls, splats, wallBlocker } = window.__debug;
+      const state = wallBlocker.snapshot();
+      const base = new THREE.Vector3(...state.baseRaw).applyMatrix4(splats.matrixWorld);
+      const corridor = new THREE.Vector3(0, 1, 0).transformDirection(splats.matrixWorld);
+      camera.position.copy(base).addScaledVector(corridor, -3.8); camera.position.y = base.y + 1.5;
+      controls.target.copy(base); controls.target.y += state.height / 2; controls.update();
+      const wall = splats.getSplatScene(state.sceneIndex);
+      wall.updateWorldMatrix(true, false);
+      const right = new THREE.Vector3(1, 0, 0).transformDirection(wall.matrixWorld);
+      return { ...state, measuredOffset: wall.getWorldPosition(new THREE.Vector3()).sub(base).dot(right) };
+    });
+    assert.ok(halfwayIn.offset > entering.offset && halfwayIn.offset < 0);
+    assert.ok(Math.abs(halfwayIn.measuredOffset - halfwayIn.offset) < 1e-7);
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: path.join(output, 'wall-slide-in.png'), fullPage: true });
+    await page.evaluate(seconds => window.__wallUpdate(seconds / 2), WALL_SECTION.slideSeconds);
+    assert.equal(await page.evaluate(() => window.__debug.wallBlocker.snapshot().motion), 'visible');
     const details = await page.evaluate(async () => {
       const THREE = await import('/node_modules/.vite/deps/three.js');
+      const { WALL_SECTION } = await import('/src/viewer/wallSectionConfig.ts');
       const { renderer, scene, splats, wallBlocker, camera, controls } = window.__debug;
       const snapshot = wallBlocker.snapshot();
       const wall = splats.getSplatScene(snapshot.sceneIndex);
       wall.updateWorldMatrix(true, false);
       const objectToWorld = wall.matrixWorld;
-      const edge = new THREE.Vector3(snapshot.width / 2, 0, 0).applyMatrix4(objectToWorld)
-        .sub(new THREE.Vector3(-snapshot.width / 2, 0, 0).applyMatrix4(objectToWorld));
+      const edge = new THREE.Vector3(WALL_SECTION.width / 2, 0, 0).applyMatrix4(objectToWorld)
+        .sub(new THREE.Vector3(-WALL_SECTION.width / 2, 0, 0).applyMatrix4(objectToWorld));
       const vertical = new THREE.Vector3(0, snapshot.height, 0).applyMatrix4(objectToWorld)
         .sub(new THREE.Vector3().applyMatrix4(objectToWorld));
       const corridor = new THREE.Vector3(0, 1, 0).transformDirection(splats.matrixWorld);
@@ -279,7 +486,7 @@ try {
       const unchanged = { scan: splats.matrixWorld.toArray(), camera: camera.position.toArray(), target: controls.target.toArray(),
         cameraParent: camera.parent?.uuid, scanCount: splats.viewer.getSceneCount() };
       // Face the panel down the corridor for readable, useful visual evidence.
-      camera.position.copy(base).addScaledVector(corridor, 3.8); camera.position.y = base.y + 1.5;
+      camera.position.copy(base).addScaledVector(corridor, -3.8); camera.position.y = base.y + 1.5;
       controls.target.copy(base); controls.target.y += snapshot.height / 2; controls.update();
       splats.viewer.update(renderer, camera); renderer.render(scene, camera);
       return { ...snapshot, sceneVisible: wall.visible, metricWidth: edge.length(), metricHeight: vertical.length(),
@@ -288,43 +495,168 @@ try {
     });
     assert.equal(details.visible, true);
     assert.equal(details.sceneVisible, true);
-    assert.ok(Math.abs(details.metricWidth - 2.10) < 1e-7);
+    assert.ok(Math.abs(details.metricWidth - details.width) < 1e-7);
     assert.ok(Math.abs(details.metricHeight - WALL_SECTION.height) < 1e-7);
     assert.ok(Math.abs(details.transverseDot) < 1e-7);
     assert.ok(Math.abs(details.uprightDot - 1) < 1e-7);
-    assert.deepEqual(details.scale, [1, 1, 1]);
-    assert.deepEqual(details.unchanged, original);
+    assert.ok(Math.abs(details.scale[0] - details.width / WALL_SECTION.width) < 1e-7);
+    assert.equal(details.scale[1], 1); assert.equal(details.scale[2], 1);
+    assert.deepEqual(details.unchanged.scan, original.scan);
+    assert.equal(details.unchanged.cameraParent, original.cameraParent);
+    assert.equal(details.unchanged.scanCount, original.scanCount);
     assert.equal(await page.locator('#experience-show-wall').textContent(), 'Hide wall');
     await page.waitForTimeout(500); // global splat sorting is asynchronous
     await page.screenshot({ path: path.join(output, 'wall-blocker.png'), fullPage: true });
+    const doubleFaces = await captureWallFaces(page, output);
     await page.locator('#experience-show-wall').click();
+    assert.equal(await page.evaluate(() => window.__debug.wallBlocker.snapshot().motion), 'exiting');
+    assert.equal(await page.locator('#experience-show-wall').isDisabled(), true);
+    await page.evaluate(seconds => window.__wallUpdate(seconds / 2), WALL_SECTION.slideSeconds);
+    const halfwayOut = await page.evaluate(() => window.__debug.wallBlocker.snapshot());
+    assert.ok(halfwayOut.offset > 0);
+    await page.waitForTimeout(250);
+    await page.screenshot({ path: path.join(output, 'wall-slide-out.png'), fullPage: true });
+    await page.evaluate(seconds => window.__wallUpdate(seconds / 2), WALL_SECTION.slideSeconds);
     assert.equal(await page.evaluate(() => window.__debug.wallBlocker.snapshot().visible), false);
     assert.equal(await page.locator('#experience-show-wall').textContent(), 'Show wall');
     assert.equal(wallRequests, 1);
     await page.locator('#experience-show-wall').click();
-    await page.waitForFunction(() => window.__debug.wallBlocker.snapshot().visible);
+    assert.ok(await page.evaluate(() => window.__debug.wallBlocker.snapshot().offset < 0));
     const disarmed = await page.evaluate(() => {
       const { experience, splats, wallBlocker } = window.__debug;
       experience.prepareForCalibration();
+      window.__wallUpdate(10);
       const snapshot = wallBlocker.snapshot();
-      return { visible: snapshot.visible, requested: snapshot.requested,
+      return { visible: snapshot.visible, motion: snapshot.motion,
         sceneVisible: splats.getSplatScene(snapshot.sceneIndex).visible };
     });
-    assert.deepEqual(disarmed, { visible: false, requested: false, sceneVisible: false });
+    assert.deepEqual(disarmed, { visible: false, motion: 'hidden', sceneVisible: false });
+    const resourcesStable = await page.evaluate(() => {
+      const { splats } = window.__debug;
+      const mesh = splats.viewer.splatMesh, saved = window.__wallResources;
+      return mesh.material === saved.material && mesh.geometry === saved.geometry &&
+        mesh.splatDataTextures === saved.textures && splats.viewer.sortWorker === saved.worker;
+    });
+    assert.equal(resourcesStable, true, 'A toggle rebuilt shared render data or replaced the sorter.');
     await page.evaluate(original => {
-      const { camera, controls } = window.__debug;
+      const { camera, controls, wallBlocker } = window.__debug;
       camera.position.set(...original.camera); controls.target.set(...original.target); controls.update();
+      wallBlocker.update = window.__wallUpdate;
     }, original);
     return { ...details, requests: wallRequests, sharedDepthSort: true, cameraAndScanUnchanged: true,
-      calibrationPreparationClearsReveal: true };
+      calibrationPreparationClearsReveal: true, halfwayIn, halfwayOut, resourcesStable, doubleFaces };
   });
+  await check('wall coordinates and forward/back controls preserve authored placement and shared resources', async () => {
+    await page.evaluate(() => {
+      const { wallBlocker } = window.__debug;
+      window.__wallUpdate = wallBlocker.update;
+      wallBlocker.update = () => window.__wallUpdate(0);
+    });
+    await page.locator('#experience-show-wall').click();
+    await page.evaluate(seconds => window.__wallUpdate(seconds), WALL_SECTION.slideSeconds);
+    await page.locator('#experience-wall-settings summary').click();
+    for (const [axis, value] of [['x', '.2'], ['y', '.05'], ['z', '5.5']]) {
+      await page.locator(`#experience-wall-${axis}`).fill(value);
+    }
+    await page.locator('#experience-wall-apply').click();
+    const placed = await page.evaluate(() => window.__debug.wallBlocker.snapshot());
+    placed.baseWorld.forEach((value, i) => assert.ok(Math.abs(value - [.2, .05, 5.5][i]) < 1e-8));
+    assert.equal(placed.placementSource, 'manual');
+    await page.locator('#experience-wall-speed').fill('.1');
+    await page.locator('#experience-wall-distance').fill('1');
+    await page.locator('#experience-wall-forward').click();
+    await page.evaluate(() => window.__wallUpdate(2));
+    const forward = await page.evaluate(() => window.__debug.wallBlocker.snapshot());
+    assert.ok(Math.abs(forward.baseWorld[2] - 5.7) < 1e-8);
+    assert.ok(Math.abs(forward.baseWorld[1] - .05) < 1e-8);
+    await page.locator('#experience-wall-stop').click();
+    await page.evaluate(() => window.__wallUpdate(20));
+    const stopped = await page.evaluate(() => window.__debug.wallBlocker.snapshot());
+    assert.equal(stopped.travel.moving, false);
+    assert.deepEqual(stopped.baseWorld, forward.baseWorld);
+    await page.locator('#experience-wall-distance').fill('.4');
+    await page.locator('#experience-wall-backward').click();
+    await page.evaluate(() => window.__wallUpdate(4));
+    const backward = await page.evaluate(() => window.__debug.wallBlocker.snapshot());
+    assert.ok(Math.abs(backward.baseWorld[2] - 5.3) < 1e-8);
+    assert.equal(backward.travel.moving, false);
+    await page.locator('#experience-wall-speed').fill('0');
+    await page.locator('#experience-wall-forward').click();
+    const invalid = await page.evaluate(() => window.__debug.wallBlocker.snapshot());
+    assert.equal(invalid.travel.moving, false);
+    assert.deepEqual(invalid.baseWorld, backward.baseWorld);
+    assert.match(invalid.error, /speed/);
+    await page.locator('#experience-wall-speed').fill('.1');
+    await page.locator('#experience-wall-loop').click();
+    await page.evaluate(() => window.__wallUpdate(Math.PI * .4 / (.1 * 2)));
+    const far = await page.evaluate(() => window.__debug.wallBlocker.snapshot());
+    await page.evaluate(() => window.__wallUpdate(Math.PI * .4 / .1));
+    const near = await page.evaluate(() => window.__debug.wallBlocker.snapshot());
+    assert.ok(Math.abs(far.baseWorld[2] - 5.7) < 1e-8);
+    assert.ok(Math.abs(near.baseWorld[2] - 4.9) < 1e-8);
+    await page.locator('#experience-wall-stop').click();
+    await page.locator('#experience-show-wall').click();
+    await page.evaluate(seconds => window.__wallUpdate(seconds), WALL_SECTION.slideSeconds);
+    await page.locator('#experience-show-wall').click();
+    await page.evaluate(seconds => window.__wallUpdate(seconds), WALL_SECTION.slideSeconds);
+    const restored = await page.evaluate(() => window.__debug.wallBlocker.snapshot());
+    assert.ok(new Vector3(...restored.baseWorld).distanceTo(new Vector3(...near.baseWorld)) < 1e-8,
+      'Hide/show must retain the wall anchor through scan-frame round trips.');
+    await page.locator('#experience-wall-settings').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(output, 'wall-position-motion.png'), fullPage: true });
+    const reprojected = await page.evaluate(async () => {
+      const THREE = await import('/node_modules/.vite/deps/three.js');
+      const { splats, wallBlocker, experience } = window.__debug;
+      const position = splats.position.clone(), rotation = splats.quaternion.clone();
+      const raw = new THREE.Vector3(...wallBlocker.snapshot().baseRaw);
+      wallBlocker.reset();
+      splats.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), .5));
+      splats.position.add(new THREE.Vector3(1, .1, -2)); splats.updateMatrixWorld(true);
+      const expected = raw.clone().applyMatrix4(splats.matrixWorld);
+      if (!wallBlocker.show()) throw new Error('A manual wall point could not follow a rigid scan fit.');
+      window.__wallUpdate(2);
+      const actual = wallBlocker.snapshot().baseWorld;
+      if (new THREE.Vector3(...actual).distanceTo(expected) > 1e-8) throw new Error('Wall anchor did not reproject through the current scan transform.');
+      wallBlocker.startTravel('forward', .4, .1); window.__wallUpdate(1);
+      const delta = new THREE.Vector3(...wallBlocker.snapshot().baseWorld).sub(expected);
+      if (delta.distanceTo(new THREE.Vector3(Math.sin(.5) * .1, 0, Math.cos(.5) * .1)) > 1e-6) throw new Error('Forward motion ignored the calibrated hallway heading.');
+      wallBlocker.startTravel('loop', .4, .1); window.__wallUpdate(2);
+      experience.prepareForCalibration(); window.__wallUpdate(100);
+      const cancelled = wallBlocker.snapshot();
+      if (cancelled.visible || cancelled.travel.moving || cancelled.motion !== 'hidden') throw new Error('Recovery revived wall motion.');
+      splats.position.copy(position); splats.quaternion.copy(rotation); splats.updateMatrixWorld(true);
+      wallBlocker.useFittedPosition();
+      wallBlocker.update = window.__wallUpdate;
+      const mesh = splats.viewer.splatMesh, saved = window.__wallResources;
+      return { delta: delta.toArray(), anchorReprojected: true, recoveryCancelled: true,
+        resourcesStable: mesh.material === saved.material && mesh.geometry === saved.geometry &&
+          mesh.splatDataTextures === saved.textures && splats.viewer.sortWorker === saved.worker };
+    });
+    assert.equal(reprojected.resourcesStable, true);
+    assert.equal(wallRequests, 1);
+    return { placed: placed.baseWorld, forward: forward.baseWorld, stopped: stopped.baseWorld,
+      backward: backward.baseWorld, loopFar: far.baseWorld, loopNear: near.baseWorld,
+      hideShowRetainsPosition: true, invalidCommandRetainsPosition: true, ...reprojected };
+  });
+  await check('post-turn wall approaches from -8 to -2, waits for the player and never retreats',
+    () => runWallGameplayScenario(page, output));
+  await check('live calibration preserves the desktop wall side and physical player clearance across XR axes',
+    () => runWallRouteFrameScenario(page));
+  if (wallOnly) {
+    await check('headset-triggered coordinator publishes current viewer positions and actual turn completion', async () => {
+      const { runTestScenarioScenario } = await import('../tests/browser/testScenarioScenario.mjs');
+      return await runTestScenarioScenario(page);
+    });
+  }
   if (!wallOnly) {
   await check('CALIBRATE requires a running VR session and cannot queue startup', async () => {
     const prepared = await page.evaluate(() => {
+      const beforeStep = window.__debug.calibration.snapshot().step;
       window.__debug.calibration.startCalibration();
-      return { setup: window.__debug.calibration.snapshot(), experience: window.__debug.experience.installation.snapshot() };
+      return { beforeStep, setup: window.__debug.calibration.snapshot(), experience: window.__debug.experience.installation.snapshot() };
     });
-    assert.equal(prepared.setup.step, 'READY');
+    assert.ok(['READY', 'INTERRUPTED'].includes(prepared.beforeStep));
+    assert.equal(prepared.setup.step, prepared.beforeStep);
     assert.equal(prepared.setup.hasLeft, false);
     assert.equal(prepared.setup.hasRight, false);
     assert.equal(prepared.experience.calibrated, false);
@@ -373,6 +705,8 @@ try {
     return { phase: state.snapshot.phase, hallwayWidth: state.snapshot.config.hallwayWidth, box: state.box,
       centering: state.placement, measuredDistances: state.measurement, marker: state.marker, boxPixel };
   });
+  await check('wooden splat rises upright from the floor and eases below it on Hide using existing resources',
+    () => runWoodenBoxScenario(page, output));
   await check('wall diagnostics measure the actual box after edits and Show box restores the exact bisector', async () => {
     const offset = await page.evaluate(() => {
       const { experience } = window.__debug;
@@ -474,6 +808,7 @@ try {
     const before = await page.evaluate(() => ({ position: window.__debug.splats.position.toArray(), box: window.__debug.scene.getObjectByName('installation-box').position.toArray(),
       second: window.__debug.experience.installation.snapshot().secondBox }));
     await page.locator('#experience-rotate').click();
+    await page.waitForFunction(() => document.getElementById('spawn-x').disabled);
     await page.waitForFunction(() => window.__debug.experience.installation.snapshot().phase === 'reversed', undefined, { timeout: 8000 });
     const after = await page.evaluate(() => ({ snapshot: window.__debug.experience.installation.snapshot(), position: window.__debug.splats.position.toArray(), box: window.__debug.scene.getObjectByName('installation-box').position.toArray(), propsVisible: window.__debug.scene.getObjectByName('installation-fixed-props').visible }));
     assert.equal(after.snapshot.yaw, Math.PI);
@@ -489,7 +824,7 @@ try {
     await page.screenshot({ path: path.join(output, 'reversed.png'), fullPage: true });
     return { yaw: after.snapshot.yaw, floorRootY: after.position[1], boxUnchanged: true, boxPixel };
   });
-  await check('Show second box reveals the original world placement only after the turn', async () => {
+  await check('Show second box meets the current wall at its authored world-Z station after the turn', async () => {
     const before = await page.evaluate(() => ({ scan: window.__debug.splats.matrix.toArray(),
       first: window.__debug.scene.getObjectByName('installation-box').matrixWorld.toArray(),
       prepared: window.__debug.experience.installation.snapshot().secondBox }));
@@ -499,16 +834,25 @@ try {
       const { scene, splats, experience } = window.__debug;
       const box = scene.getObjectByName('installation-second-box');
       box.updateWorldMatrix(true, false);
-      return { scan: splats.matrix.toArray(), first: scene.getObjectByName('installation-box').matrixWorld.toArray(),
+      const { measureWallDistances } = await import('/src/experience/hallwayCenter.ts');
+      const section = experience.hallwaySection(experience.installation.snapshot().secondBox.base[2]);
+      if (!section.ok) throw new Error(section.reason);
+      const corners = [-.5, .5].flatMap(x => [-.5, .5].map(z =>
+        new THREE.Vector3(x, -.5, z).applyMatrix4(box.matrixWorld)));
+      const contact = ['left', 'right'].map(side => Math.min(...corners.map(p =>
+        measureWallDistances(section.wallPlanes, p.toArray())[side])));
+      return { scan: splats.matrix.toArray(), first: scene.getObjectByName('installation-box').matrixWorld.toArray(), contact,
         second: experience.installation.snapshot().secondBox, position: box.getWorldPosition(new THREE.Vector3()).toArray(),
         visible: box.visible, parentIsScene: box.parent === scene, scale: box.scale.toArray() };
     });
     assert.equal(after.visible, true);
     assert.equal(after.second.visible, true);
     assert.equal(after.parentIsScene, true);
-    assert.deepEqual(after.second.base, before.prepared.base);
-    assert.equal(after.second.yaw, before.prepared.yaw);
-    assert.deepEqual(after.position, [before.prepared.base[0], .215, before.prepared.base[2]]);
+    assert.equal(after.second.base[2], before.prepared.base[2]);
+    assert.equal(after.second.base[1], before.prepared.base[1]);
+    assert.ok(Math.abs(Math.min(...after.contact)) < 1e-6, 'a whole footprint edge must meet a current wall');
+    assert.ok(after.contact.every(distance => distance >= -1e-6));
+    assert.deepEqual(after.position, [after.second.base[0], after.second.base[1] + .215, after.second.base[2]]);
     assert.deepEqual(after.scale, [.36, .43, .36]);
     assert.deepEqual(after.scan, before.scan);
     assert.deepEqual(after.first, before.first);
@@ -517,6 +861,12 @@ try {
     await page.screenshot({ path: path.join(output, 'second-box.png'), fullPage: true });
     return { prepared: before.prepared, revealed: after.second, pixel };
   });
+  await check('second-box appearance waits two seconds then flickers with quiet local audio and holds 30 percent',
+    () => runSecondBoxLightsScenario(page, output));
+  await check('flipped-hallway controls keep the first box fixed and align other props with current walls',
+    () => runRotationOffsetScenario(page, output));
+  await check('raw start panel edits preserve the flipped view and survive later frames',
+    () => runSpawnPanelScenario(page, output));
   await check('stop freezes a partial turn and reset cannot grant calibration', async () => {
     await page.locator('#experience-reset').click();
     assert.equal(await page.evaluate(() => window.__debug.experience.installation.snapshot().secondBox.visible), false);
@@ -590,6 +940,9 @@ try {
     assert.equal(await page.locator('#experience-show-box').isDisabled(), true);
     assert.equal(await page.locator('#experience-rotate').isDisabled(), true);
     await page.mouse.click(positions[1].x, positions[1].y);
+    await page.waitForFunction(() => window.__debug.experience.installation.snapshot().boxReveal.motion === 'visible');
+    await page.waitForFunction(() => !document.getElementById('experience-show-box').disabled &&
+      !document.getElementById('experience-rotate').disabled);
     assert.equal(await page.locator('#experience-show-box').isDisabled(), false);
     assert.equal(await page.locator('#experience-rotate').isDisabled(), false);
     const before = await page.evaluate(() => window.__debug.experience.installation.snapshot());
@@ -625,6 +978,7 @@ try {
       partialReplacementBlocksShowAndTurn: true };
   });
   }
+  }
   await check('no desktop JavaScript errors', () => { assert.deepEqual(report.consoleErrors, []); });
 
   if (process.env.CHECK_REAL_SCAN === '1') {
@@ -636,6 +990,11 @@ try {
     assert.equal(wallMetadata.outputBytes, (await fs.stat(wallFile)).size);
     assert.equal(wallMetadata.objectDimensions.width, WALL_SECTION.width);
     assert.equal(wallMetadata.objectDimensions.height, WALL_SECTION.height);
+    assert.equal(wallMetadata.objectDimensions.depth, WALL_SECTION.depth);
+    assert.equal(wallMetadata.faces.count, 2);
+    assert.equal(wallMetadata.faces.sourceDepth, WALL_SECTION.sourceDepth);
+    assert.equal(wallMetadata.faces.gap, WALL_SECTION.faceGap);
+    assert.equal(wallMetadata.outputVertexCount, wallMetadata.sourceCropVertexCount * 2);
     assert.equal(wallMetadata.compressionLevel, 0);
     assert.equal(wallMetadata.resampled, false);
     await page.evaluate(() => window.__debug.renderer.setAnimationLoop(null));
@@ -673,8 +1032,11 @@ try {
     assert.ok(privateCenter.measurement.pivotDistances.imbalance < 1e-10);
     assert.deepEqual(privateCenter.marker, privateCenter.measurement.pivot);
     report.checks.push({ name: 'private original hallway3 PLY centres and shows the manual box', passed: true, details: privateCenter });
+    const privateFloor = await capturePrivateFloorHole(realPage, output);
+    report.checks.push({ name: 'private original scan renders the floor opening into the void', passed: true, details: privateFloor });
     await realPage.locator('#experience-show-wall').click({ timeout: 60000 });
-    await realPage.waitForFunction(() => window.__debug.wallBlocker.snapshot().visible, undefined, { timeout: 60000 });
+    await realPage.evaluate(seconds => window.__debug.wallBlocker.update(seconds), WALL_SECTION.slideSeconds);
+    await realPage.waitForFunction(() => window.__debug.wallBlocker.snapshot().motion === 'visible', undefined, { timeout: 60000 });
     const privateWall = await realPage.evaluate(async () => {
       const THREE = await import('/node_modules/.vite/deps/three.js');
       const { renderer, scene, camera, controls, splats, wallBlocker } = window.__debug;
@@ -713,7 +1075,7 @@ try {
     assert.equal(privateWall.visible, true);
     assert.equal(privateWall.sceneVisible, true);
     assert.equal(privateWall.sortCompletedAfterPlacement, true);
-    assert.equal(privateWall.width, 2.10);
+    assert.ok(privateWall.width > .75 && privateWall.width < 4.3);
     assert.equal(privateWall.height, WALL_SECTION.height);
     assert.equal(privateWall.splatCount, wallMetadata.outputVertexCount);
     assert.equal(privateWall.sourceSplatCount, wallMetadata.sourceVertexCount);
@@ -721,27 +1083,46 @@ try {
     report.checks.push({ name: 'private extracted wall reveals across the original hallway without replacing its scan', passed: true,
       details: { ...privateWall, sourceSha256: wallMetadata.sourceSha256,
         sourceFingerprintMatched: true, compressionLevel: wallMetadata.compressionLevel } });
+    const privateFaces = await captureWallFaces(realPage, output, 'private-wall');
+    report.checks.push({ name: 'private wall renders the same good face outward on both full-thickness sides', passed: true, details: privateFaces });
     await realPage.locator('#experience-show-wall').click({ timeout: 60000 });
+    await realPage.evaluate(seconds => window.__debug.wallBlocker.update(seconds), WALL_SECTION.slideSeconds);
     assert.equal(await realPage.evaluate(() => window.__debug.wallBlocker.snapshot().visible), false);
     await realPage.locator('#experience-rotate').click();
     // Synthetic elapsed time on this isolated desktop smoke; no hardware run.
     await realPage.evaluate(() => window.__debug.experience.installation.update(4));
     assert.equal(await realPage.locator('#experience-show-second-box').isDisabled(), false);
     await realPage.locator('#experience-show-second-box').click();
-    const privateSecond = await realPage.evaluate(() => {
+    const privateSecond = await realPage.evaluate(async () => {
+      const THREE = await import('/node_modules/.vite/deps/three.js');
+      const { measureWallDistances } = await import('/src/experience/hallwayCenter.ts');
       const { renderer, scene, camera, controls, splats, experience } = window.__debug;
+      experience.installation.update(1.5);
       const box = scene.getObjectByName('installation-second-box');
+      box.updateWorldMatrix(true, false);
+      const second = experience.installation.snapshot().secondBox;
+      const section = experience.hallwaySection(second.base[2]);
+      if (!section.ok) throw new Error(section.reason);
+      const corners = [-.5, .5].flatMap(x => [-.5, .5].map(z => new THREE.Vector3(x, -.5, z).applyMatrix4(box.matrixWorld)));
+      const contact = ['left', 'right'].map(side => Math.min(...corners.map(p => measureWallDistances(section.wallPlanes, p.toArray())[side])));
       camera.position.set(box.position.x + 1.2, box.position.y + 1.8, box.position.z + 4);
       controls.target.copy(box.position); controls.update();
-      splats.viewer.update(renderer, camera); renderer.render(scene, camera);
-      return experience.installation.snapshot().secondBox;
+      camera.updateMatrixWorld(true); scene.updateMatrixWorld(true);
+      splats.viewer.update(renderer, camera);
+      await splats.viewer.sortPromise;
+      splats.viewer.splatMesh.updateTransforms();
+      await splats.viewer.runSplatSort(true, true);
+      renderer.render(scene, camera);
+      return { ...second, contact };
     });
     assert.equal(privateSecond.visible, true);
-    assert.deepEqual(privateSecond.base, privateCenter.second.base);
-    assert.equal(privateSecond.yaw, privateCenter.second.yaw);
+    assert.equal(privateSecond.base[2], privateCenter.second.base[2]);
+    assert.equal(privateSecond.base[1], privateCenter.second.base[1]);
+    assert.ok(Math.abs(Math.min(...privateSecond.contact)) < 1e-6);
+    assert.ok(privateSecond.contact.every(distance => distance >= -1e-6));
     await realPage.screenshot({ path: path.join(output, 'private-second-box.png'), fullPage: true, timeout: 60000 });
     assert.deepEqual(errors, []);
-    report.checks.push({ name: 'private original scan reveals the fixed pre-turn second box after rotation', passed: true,
+    report.checks.push({ name: 'private original scan reveals the second seat against the current rotated wall', passed: true,
       details: { prepared: privateCenter.second, revealed: privateSecond, placement: privateCenter.secondPlacement } });
     await realPage.close();
   }
@@ -753,6 +1134,8 @@ try {
 } finally {
   releaseModel?.();
   releaseWall?.();
+  releaseBroom?.();
+  releaseBox?.();
   await browser?.close();
   await server?.close();
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');

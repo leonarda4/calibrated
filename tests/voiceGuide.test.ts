@@ -102,7 +102,7 @@ test('mute cancels scheduled audio and subsequent cues retain PC transcripts wit
   });
 });
 
-test('scenario preload and narration use only the requested lead clips, and the next cue cancels its predecessor', async () => {
+test('scenario preload includes brief supporting whispers, and the next cue cancels every previous layer', async () => {
   const fetched: string[] = [];
   await fakeAudio(async () => {
     let caption = '';
@@ -112,19 +112,18 @@ test('scenario preload and narration use only the requested lead clips, and the 
       onStatus: (text) => { status = text; },
     });
     await guide.preload(SCENARIO_VOICE_CUES);
-    assert.equal(fetched.length, 4);
-    assert.ok(fetched.every((path) => /scenario.*-lead\.mp3$/.test(path)));
+    assert.equal(fetched.length, 12);
+    assert.ok(fetched.every((path) => /scenario.*-(lead|left|right)\.mp3$/.test(path)));
     assert.match(status, /All local voice clips ready/);
     for (const [index, cue] of SCENARIO_VOICE_CUES.entries()) {
       await guide.play(cue);
       assert.equal(caption, VOICE_CUES[cue].caption);
-      assert.equal(FakeAudio.sources.length, index + 1);
-      assert.equal(status, 'Narration playing.');
-      assert.equal(FakeAudio.sources[index].stopped, false);
-      assert.equal(FakeAudio.sources[index].playbackRate.value, 1, 'short narration retains its natural playback rate');
-      assert.ok(FakeAudio.sources.slice(0, index).every((source) => source.stopped));
+      assert.equal(FakeAudio.sources.length, (index + 1) * 3);
+      assert.equal(status, 'Voices playing: lead + layered whispers.');
+      assert.ok(FakeAudio.sources.slice(index * 3).every(source => !source.stopped && source.playbackRate.value === 1));
+      assert.ok(FakeAudio.sources.slice(0, index * 3).every((source) => source.stopped));
     }
-    assert.equal(fetched.length, 4, 'preloaded buffers are reused');
+    assert.equal(fetched.length, 12, 'preloaded buffers are reused');
     guide.stop();
     assert.ok(FakeAudio.sources.every((source) => source.stopped));
     guide.dispose();
@@ -142,9 +141,10 @@ test('long box narration fits the five-second cue gap without changing other cue
     await guide.play('scenarioWelcome');
     assert.equal(FakeAudio.sources.at(-1)!.playbackRate.value, 1);
     await guide.play('scenarioBox');
-    const boxSource = FakeAudio.sources.at(-1)!;
+    const boxSource = FakeAudio.sources.at(-3)!;
     assert.equal(boxSource.playbackRate.value, 1.5);
     assert.equal(FakeAudio.clipDuration / boxSource.playbackRate.value, 4.7);
+    assert.deepEqual(FakeAudio.sources.slice(-2).map(source => source.playbackRate.value), [1, 1]);
     assert.ok(boxSource.startedAt! + 4.7 < 15, 'slot ends before the next cue at +5 seconds');
     await guide.play('scenarioTurn');
     assert.equal(boxSource.stopped, true);

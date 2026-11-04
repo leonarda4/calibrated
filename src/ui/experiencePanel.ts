@@ -1,5 +1,7 @@
 ﻿import type { Installation, InstallationConfig } from '../experience/installation.ts';
 
+import { bindRotationOffsetControl } from './rotationOffsetControl.ts';
+
 export interface ExperiencePanelOptions {
   isPresenting(): boolean;
   isScanReady?(): boolean;
@@ -12,6 +14,10 @@ export interface ExperiencePanelOptions {
   onShowBox(): void;
   onRotate(): void;
   onShowSecondBox(): void;
+  onHideBox?(): void;
+  onHideSecondBox?(): void;
+  isRotationOffsetAllowed?(): boolean;
+  onRotationOffset?(metres: number): boolean;
   /** Choose opposite floor edges at the hallway's longitudinal midpoint. */
   onPickCenter?(): void;
   /** Refine the second box's approximate wall/floor-line guide before turning. */
@@ -54,20 +60,26 @@ export function bindExperiencePanel(installation: Installation, options: Experie
   panel.innerHTML = `
     <h2>Hallway controls</h2>
     <label><input id="experience-test-scenario" type="checkbox" checked> Narrated test after calibration</label>
-    <p id="experience-test-scenario-status" aria-live="polite">After calibration: box at 10 s, turn at 15 s, seat at 20 s.</p>
+    <p id="experience-test-scenario-status" aria-live="polite">After calibration: box at 10 s, turn when the headset is inside or above it, second box 5 s later. Desktop preview uses 10/15/20 s.</p>
     <button id="experience-preview-scenario" type="button">Preview narrated test on desktop</button>
     <div id="experience-phase">Ready</div>
     <p id="experience-status" class="experience-status" aria-live="polite"></p>
+    <div id="experience-lighting-control"></div>
     <div class="experience-row">
       <button id="experience-show-box" type="button">Show box</button>
+      <button id="experience-hide-box" type="button">Hide box</button>
       <button id="experience-rotate" type="button">Rotate hallway 180°</button>
     </div>
     <p id="experience-centering-status">Show the box first, then rotate the hallway when ready.</p>
     <p id="experience-wall-measurement" aria-live="polite">Wall distances not verified yet.</p>
     <div class="experience-row">
       <button id="experience-show-second-box" type="button">Show second box</button>
+      <button id="experience-hide-second-box" type="button">Hide second box</button>
     </div>
     <p id="experience-second-state" aria-live="polite">Second box: not prepared.</p>
+    <div id="experience-flip-offset-control"></div>
+    <div id="experience-broom-control"></div>
+    <div id="experience-floor-hole-control"></div>
     <div id="experience-wall-control"></div>
     <div class="experience-row">
       <button id="experience-stop" type="button">STOP</button>
@@ -105,6 +117,11 @@ export function bindExperiencePanel(installation: Installation, options: Experie
   let configDirty = false;
   let refresh = (): void => {};
   const fields = new Map<keyof InstallationConfig, HTMLInputElement>();
+  const rotationOffset = bindRotationOffsetControl(find('experience-flip-offset-control'), installation, {
+    canAdjust: () => options.isScanReady?.() !== false && options.isScenarioRunning?.() !== true &&
+      options.isRotationOffsetAllowed?.() !== false,
+    apply: metres => options.onRotationOffset ? options.onRotationOffset(metres) : installation.setRotationOffset(metres),
+  });
   const labels: [keyof InstallationConfig, string, string][] = [
     ['centerX', 'Box centre X', '0.05'], ['centerZ', 'Box centre Z', '0.05'], ['floorY', 'Floor Y (local-floor)', '0.01'],
     ['hallwayWidth', 'Hallway width', '0.01'],
@@ -155,6 +172,8 @@ export function bindExperiencePanel(installation: Installation, options: Experie
     options.onShowBox();
   });
   click('experience-rotate', () => options.onRotate());
+  click('experience-hide-box', () => options.onHideBox?.());
+  click('experience-hide-second-box', () => options.onHideSecondBox?.());
   click('experience-show-second-box', () => {
     if (options.isScanReady?.() === false) { error.textContent = 'Wait for the hallway scan to finish loading.'; return; }
     options.onShowSecondBox();
@@ -181,21 +200,26 @@ export function bindExperiencePanel(installation: Installation, options: Experie
     const turning = phaseName === 'rotating';
     const mayShow = ['idle', 'ready', 'box'].includes(phaseName) && snapshot.yaw === 0;
     const editable = !turning && !['exploring', 'badge', 'reversed'].includes(phaseName) && snapshot.yaw === 0;
-    phase.textContent = phaseName === 'box' ? 'BOX VISIBLE' : phaseName.toUpperCase();
+    const revealLabels = { hidden: 'BOX BELOW FLOOR', entering: 'BOX RISING', visible: 'BOX VISIBLE', exiting: 'BOX LOWERING' };
+    phase.textContent = phaseName === 'box' ? revealLabels[snapshot.boxReveal.motion] : phaseName.toUpperCase();
     if (turning) phase.textContent += ` · ${(snapshot.yaw * 180 / Math.PI).toFixed(0)}°`;
     status.textContent = snapshot.status;
-    showBox.disabled = !scanReady || configDirty || !mayShow || placementPending || scenarioRunning;
+    showBox.disabled = !scanReady || configDirty || (!mayShow && phaseName !== 'reversed') || placementPending || scenarioRunning || snapshot.boxReveal.animating;
+    find<HTMLButtonElement>('experience-hide-box').disabled = turning || scenarioRunning || snapshot.boxReveal.motion !== 'visible';
     showBox.title = scanReady ? 'Show the box using the current hallway placement' : 'Wait for the hallway scan to finish loading';
-    rotate.disabled = !scanReady || configDirty || phaseName !== 'box' || placementPending || scenarioRunning;
+    rotate.disabled = !scanReady || configDirty || phaseName !== 'box' || placementPending || scenarioRunning || snapshot.boxReveal.motion !== 'visible';
     rotate.title = phaseName === 'box' ? 'Turn only the visual hallway; keep the real box fixed' : 'Show the box before rotating the hallway';
-    showSecondBox.disabled = !scanReady || phaseName !== 'reversed' || !snapshot.secondBox.placed || snapshot.secondBox.visible || scenarioRunning;
+    showSecondBox.disabled = !scanReady || phaseName !== 'reversed' || !snapshot.secondBox.placed || snapshot.secondBox.visible || scenarioRunning || snapshot.secondBox.reveal.animating;
+    find<HTMLButtonElement>('experience-hide-second-box').disabled = scenarioRunning || snapshot.secondBox.reveal.motion !== 'visible';
     showSecondBox.title = !scanReady ? 'Wait for the hallway scan to finish loading'
       : phaseName !== 'reversed' ? 'Finish the 180° turn before showing the second box'
       : !snapshot.secondBox.placed ? 'The second box needs a reviewed placement first'
       : snapshot.secondBox.visible ? 'The second box is already visible' : 'Show the prepared second box';
-    find('experience-second-state').textContent = snapshot.secondBox.visible ? 'Second box: visible.'
+    find('experience-second-state').textContent = snapshot.secondBox.alignmentError ?? (snapshot.secondBox.reveal.motion === 'entering' ? 'Second box: rising.'
+      : snapshot.secondBox.reveal.motion === 'exiting' ? 'Second box: lowering below the floor.'
+      : snapshot.secondBox.visible ? 'Second box: visible.'
       : snapshot.secondBox.placed ? 'Second box: ready (hidden until you show it after the turn).'
-      : 'Second box: not prepared. Review its floor-line placement before rotating.';
+      : 'Second box: not prepared. Review its floor-line placement before rotating.');
     find('experience-placement-label').textContent = configDirty ? 'Unsaved placement · apply changes' : 'Box placement · metres';
     find('experience-clearance').textContent = `Hallway width: ${snapshot.config.hallwayWidth.toFixed(2)} m. Box width: ${snapshot.config.boxWidth.toFixed(2)} m. Wall distances are reported above.`;
     find('experience-placement-source').textContent = snapshot.placementSource === 'unplaced'
@@ -214,7 +238,7 @@ export function bindExperiencePanel(installation: Installation, options: Experie
     for (const input of fields.values()) input.disabled = !editable || scenarioRunning;
     if (!configDirty) for (const [key, input] of fields) input.value = String(snapshot.config[key]);
   };
-  refresh = () => renderPanel(installation.snapshot());
+  refresh = () => { renderPanel(installation.snapshot()); rotationOffset.refresh(); };
   const unsubscribe = installation.subscribe(renderPanel);
 
   return {
@@ -225,6 +249,6 @@ export function bindExperiencePanel(installation: Installation, options: Experie
     setSecondPlacementStatus(text: string) { find('experience-second-status').textContent = text; },
     setHandStatus(text: string) { find('experience-hand-status').textContent = text; },
     setAudioStatus(text: string) { find('experience-audio-status').textContent = text; },
-    dispose() { unsubscribe(); events.abort(); panel.remove(); style.remove(); },
+    dispose() { unsubscribe(); rotationOffset.dispose(); events.abort(); panel.remove(); style.remove(); },
   };
 }

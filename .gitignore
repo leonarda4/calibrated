@@ -10,14 +10,17 @@ playwright-report/
 .env*
 !.env.example
 
-# Physical-space scans and private session data
+# Historical/experimental scans and private session data
 public/splats/*
 !public/splats/.gitkeep
 !public/splats/README.md
 private/
 captures/
 calibration-local/
-public/audio/generated/
+public/audio/generated/*
+!public/audio/generated/*-lead.mp3
+!public/audio/generated/*-left.mp3
+!public/audio/generated/*-right.mp3
 public/models/*.meta.json
 *.ply
 *.spz
@@ -25,6 +28,17 @@ public/models/*.meta.json
 *.ksplat
 *.sog
 *.rad
+
+# User-approved runtime scans. Keep this list explicit; do not share other exports.
+!public/splats/hallway3/
+public/splats/hallway3/*
+!public/splats/hallway3/hallway3_0.ply
+!public/splats/wall-section/
+public/splats/wall-section/*
+!public/splats/wall-section/wall-section.ply
+!public/splats/wall-section/wall-section.ply.meta.json
+!public/splats/WoodenBox.ply
+!public/splats/broooooommm.ply
 
 # Deliberately public synthetic fixtures and metadata may be tracked here.
 !tests/fixtures/synthetic/**

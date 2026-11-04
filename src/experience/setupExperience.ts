@@ -13,8 +13,21 @@ import { setupFloorLinePicker } from './floorLinePicker.ts';
 import { getSourceCenters } from '../viewer/splatViewer.ts';
 import { createTestScenario } from './testScenario.ts';
 import { SCENARIO_VOICE_CUES } from '../audio/voiceCues.ts';
+import { createHallwaySections } from './hallwaySection.ts';
 
 type ScanRoot = THREE.Object3D & { viewer: { splatMesh: unknown } };
+
+export interface ExperienceOptions {
+  /** Operator-authored draft; applied only as the visual hallway turns. */
+  initialRotationOffsetMetres?: number;
+  isScanReady?(): boolean;
+  onDisarm?(): void;
+  onGameplayStart?(): void;
+  onCalibrationApplied?(): void;
+  onTurnCompleted?(): void;
+  onViewerPosition?(position: readonly [number, number, number] | null): void;
+  onScenarioCancelled?(): void;
+}
 
 // Approximate raw floor station visible in the supplied desktop screenshot.
 const BOX_STATION_RAW = [2, 21.1, -1.45] as const;
@@ -26,13 +39,15 @@ const SECOND_BOX_GUIDE_RAW = [2.8, 23.3, -1.45] as const;
 const SECOND_FLOOR_LINE_RAW = [2.8, 22.99, -1.45] as const;
 
 /** Keep device/lifecycle orchestration out of both sequence math and main.ts. */
-export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, scanRoot: ScanRoot, options: { isScanReady?(): boolean; onDisarm?(): void } = {}) {
+export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, scanRoot: ScanRoot, options: ExperienceOptions = {}) {
   const hud = createExperienceHud(camera);
   let reportAudio = (_text: string) => {};
   let reportCaption = (_text: string) => {};
   let reportHands = (_text: string) => {};
   let invalidateCalibration = (_reason: string) => {};
   let calibrationActive = false;
+  let viewerReady = false;
+  let interrupted = false;
   let captureInProgress = () => false;
   const voices = createVoiceGuide({
     onCaption(text) { reportCaption(text); },
@@ -43,11 +58,14 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
   let scenarioEpoch = 0;
   let reportScenario = (_text: string) => {};
   let refreshPanel = () => {};
+  const sections = createHallwaySections({ scanRoot, getCenters: () => getSourceCenters(scanRoot), floorY: FLOOR_Y });
   const installation = createInstallation({
     scene, camera, scanRoot, defaultPlyCenter: null,
+    getHallwaySection: worldZ => sections.at(worldZ),
     onCue(cue) { void voices.play(cue); },
     onStopAudio() { voices.stop(); },
   });
+  installation.setRotationOffset(options.initialRotationOffsetMetres ?? 0);
   let placementMode: 'walls' | 'edges' = 'walls';
   let centeringResult: ReturnType<typeof estimateHallwayCenter> | null = null;
   let reportPlacement = (_text: string) => {};
@@ -142,10 +160,13 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
       floorLineWorld: line, tangentSign: 1, floorY: FLOOR_Y,
       boxWidth: .36, boxDepth: .36, boxHeight: .43 });
     if (!secondPlacementResult.ok) { reportSecondPlacement(secondPlacementResult.reason); return false; }
-    installation.setSecondBoxPlacement(secondPlacementResult.baseWorld, secondPlacementResult.directionWorld);
+    if (!installation.setSecondBoxPlacement(secondPlacementResult.baseWorld, secondPlacementResult.directionWorld)) {
+      reportSecondPlacement(installation.snapshot().secondBox.alignmentError ?? 'The second seat needs a supported current-wall fit.');
+      return false;
+    }
     secondPlacementRaw = scanRoot.worldToLocal(new THREE.Vector3(...secondPlacementResult.baseWorld)).toArray() as [number, number, number];
-    reportSecondPlacement(`Second box: 36 × 36 × 43 cm, base raw [${secondPlacementRaw.map(n => n.toFixed(3)).join(', ')}]. ` +
-      'An edge meets the fitted wall; another meets the floor-line guide. Prepared in the original view; reveal after the turn.');
+    reportSecondPlacement(`Seat guide before the turn: 36 × 36 × 43 cm, raw [${secondPlacementRaw.map(n => n.toFixed(3)).join(', ')}]. ` +
+      'Station prepared from the floor-line guide; its edge follows the selected current wall after the turn.');
     return true;
   };
   const floorLinePicker = setupFloorLinePicker(renderer, camera, scanRoot, FLOOR_Y, rawPoint => {
@@ -156,31 +177,38 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
   const mayAct = (): boolean => options.isScanReady?.() !== false &&
     !placementPicker.isPicking() && !floorLinePicker.isPicking() &&
     (!renderer.xr.isPresenting || (installation.snapshot().calibrated && !calibrationActive && !interrupted && viewerReady));
+  const canInspectStartPoint = (): boolean => !renderer.xr.isPresenting && options.isScanReady?.() !== false &&
+    !calibrationActive && !captureInProgress() && installation.snapshot().phase !== 'rotating' &&
+    !placementPicker.isPicking() && !floorLinePicker.isPicking();
   const showBox = (): boolean => {
     if (!mayAct()) { reportPlacement('Wait for the scan, finish selections and complete fresh calibration with visible headset tracking.'); return false; }
+    if (installation.snapshot().phase === 'reversed') return installation.showBox(!renderer.xr.isPresenting);
     if (!centerPlacement()) return false;
     const shown = installation.showBox(!renderer.xr.isPresenting);
     const prepared = prepareSecondPlacement();
     return shown && prepared;
   };
-  const rotate = (testTurn = false): boolean => {
+  const rotate = (testTurn = false, fromHeadset = false): boolean => {
     if (!mayAct()) { reportPlacement('Restore tracking and finish calibration or floor selection before rotating.'); return false; }
-    if (!centerPlacement() || !prepareSecondPlacement()) return false;
+    if (!fromHeadset && (!centerPlacement() || !prepareSecondPlacement())) return false;
+    if (fromHeadset && !installation.snapshot().secondBox.placed) return false;
     if (testTurn && installation.snapshot().config.rotationSeconds !== 4) {
       installation.configure({ ...installation.snapshot().config, rotationSeconds: 4 });
     }
-    return installation.rotateHallway();
+    const turned = installation.rotateHallway();
+    return turned;
   };
   const showSecondBox = (): boolean => {
     if (!mayAct()) { reportSecondPlacement('Restore tracking and recalibrate before showing the second box in VR.'); return false; }
-    // No scan query: reveal the frozen pre-turn placement.
-    return installation.showSecondBox();
+    // Preserve the authored world-Z station while refitting the selected current wall.
+    const shown = installation.showSecondBox();
+    return shown;
   };
   const scenario = createTestScenario({
     onCue(cue) { void voices.play(cue); },
     onAction(action) {
       if (action === 'showBox') return showBox();
-      if (action === 'rotate') return rotate(true);
+      if (action === 'rotate') return rotate(true, renderer.xr.isPresenting);
       return showSecondBox();
     },
     onChange() { reportScenario(scenario.snapshot().status); refreshPanel(); },
@@ -188,6 +216,7 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
   const cancelScenario = (reason: string) => {
     scenarioEpoch++;
     scenario.cancel(reason);
+    options.onScenarioCancelled?.();
     voices.stop();
   };
   const startTestScenarioPreview = (): boolean => {
@@ -199,6 +228,7 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
     calibrationActive = false;
     centeringResult = null;
     interrupted = false;
+    options.onGameplayStart?.();
     scenario.start(scenarioTime);
     return true;
   };
@@ -230,6 +260,10 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
     onShowBox: () => { if (!scenario.snapshot().running) showBox(); },
     onRotate: () => { if (!scenario.snapshot().running) rotate(); },
     onShowSecondBox: () => { if (!scenario.snapshot().running) showSecondBox(); },
+    onHideBox: () => { if (mayAct() && !scenario.snapshot().running) installation.hideBox(); },
+    onHideSecondBox: () => { if (mayAct() && !scenario.snapshot().running) installation.hideSecondBox(); },
+    isRotationOffsetAllowed: () => mayAct() && !scenario.snapshot().running,
+    onRotationOffset: metres => mayAct() && !scenario.snapshot().running && installation.setRotationOffset(metres),
     onPickSecondFloorLine: () => {
       if (renderer.xr.isPresenting || !['idle', 'ready', 'box'].includes(installation.snapshot().phase)) return;
       placementPicker.cancel(); floorLinePicker.start();
@@ -271,7 +305,6 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
   const hands = setupTrackedHands(renderer, scene, { onStatus: text => reportHands(text), meshPath: '/hands/' });
 
   let sessionEnded = false;
-  let viewerReady = false;
   const unsubscribe = installation.subscribe(snapshot => {
     if (snapshot.phase === 'stopped' && scenario.snapshot().running) cancelScenario('Narrated test cancelled: installation stopped.');
     refreshWallMeasurement();
@@ -285,7 +318,6 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
   });
   let observedReference: XRReferenceSpace | null = null;
   let observedSession: XRSession | null = null;
-  let interrupted = false;
   const hasProtectedWork = () => installation.snapshot().calibrated || captureInProgress();
   const interrupt = (reason: string) => {
     cancelScenario(`Narrated test cancelled. ${reason}`);
@@ -358,6 +390,16 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
   renderer.xr.addEventListener('sessionend', onSessionEnd);
 
   return {
+    canInspectStartPoint,
+    inspectStartPoint(point: readonly [number, number, number]): boolean {
+      if (!canInspectStartPoint() || !point.every(Number.isFinite)) return false;
+      cancelScenario('Narrated test cancelled: desktop scan position changed.');
+      options.onDisarm?.();
+      centeringResult = null;
+      installation.setInspectionStartPoint(point);
+      return true;
+    },
+    hallwaySection: (worldZ: number) => sections.at(worldZ),
     installation,
     scenario,
     startTestScenarioPreview,
@@ -401,10 +443,15 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
       if (placementMode === 'edges') placementPicker.applyFromScan();
       else if (installation.snapshot().placementSource === 'picked-scan') centerPlacement();
       interrupted = false;
-      if (renderer.xr.isPresenting && scenarioEnabled) scenario.start(scenarioTime);
+      options.onCalibrationApplied?.();
+      if (renderer.xr.isPresenting && scenarioEnabled) {
+        options.onGameplayStart?.();
+        scenario.start(scenarioTime, true);
+      }
     },
     update(deltaSeconds: number, frame?: XRFrame) {
       let contacts: ReturnType<typeof hands.update> = [];
+      let headsetPosition: readonly [number, number, number] | null = null;
       if (renderer.xr.isPresenting) {
         const previouslyReady = viewerReady;
         observeReference();
@@ -413,6 +460,7 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
           const pose = frame && observedReference ? frame.getViewerPose(observedReference) : null;
           viewerValid = !!pose && !pose.emulatedPosition &&
             [pose.transform.position.x, pose.transform.position.y, pose.transform.position.z].every(Number.isFinite);
+          if (viewerValid && pose) headsetPosition = [pose.transform.position.x, pose.transform.position.y, pose.transform.position.z];
         } catch { /* a failed current-frame pose has no tracking authority */ }
         viewerReady = viewerValid && observedSession?.visibilityState === 'visible';
         // A visible-but-blurred session suppresses input poses by design.
@@ -429,14 +477,25 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
         else hands.clear();
       }
       const now = performance.now();
+      const wasTurning = installation.snapshot().phase === 'rotating';
       installation.update(deltaSeconds, contacts.map(contact => ({ position: contact.position, tracked: true, timestampMs: now })), now);
+      // Publish only the current valid XR pose. Desktop inspection uses its
+      // camera; it never supplies a substitute position during an XR session.
+      options.onViewerPosition?.(renderer.xr.isPresenting
+        ? viewerReady ? headsetPosition : null : camera.getWorldPosition(new THREE.Vector3()).toArray());
+      if (wasTurning && installation.snapshot().phase === 'reversed') options.onTurnCompleted?.();
       // Update the turn before dispatching this frame's next timed action. A
       // turn started at +15 s therefore gets its first animation step next frame.
       if (Number.isFinite(deltaSeconds) && deltaSeconds >= 0) scenarioTime += deltaSeconds;
+      const headsetInsideBox = Number.isFinite(deltaSeconds) && deltaSeconds > 0 && deltaSeconds <= .5 &&
+        renderer.xr.isPresenting && mayAct() && headsetPosition !== null &&
+        installation.headsetInsideTrigger(headsetPosition);
       if (scenario.snapshot().running) {
-        scenario.update(Number.isFinite(deltaSeconds) && deltaSeconds >= 0 ? scenarioTime : Number.NaN);
-        if (!scenario.snapshot().running && scenario.snapshot().stage === 'cancelled') voices.stop();
-      }
+        scenario.update(Number.isFinite(deltaSeconds) && deltaSeconds >= 0 ? scenarioTime : Number.NaN, headsetInsideBox);
+        if (!scenario.snapshot().running && scenario.snapshot().stage === 'cancelled') {
+          options.onScenarioCancelled?.(); voices.stop();
+        }
+      } else if (headsetInsideBox && Number.isFinite(deltaSeconds) && deltaSeconds > 0 && deltaSeconds <= .5) rotate(false, true);
     },
     invalidate: interrupt,
     dispose() {

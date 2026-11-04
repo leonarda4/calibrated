@@ -34,7 +34,7 @@ export async function runTestScenarioScenario(parentPage) {
       scan.updateMatrixWorld(true);
       const points = [];
       for (const x of [.95, 3.05]) {
-        for (let y = 18; y <= 26.001; y += .05) {
+        for (let y = 15; y <= 29.001; y += .05) {
           for (let z = -1; z <= .251; z += .1) points.push(x, y, z);
         }
       }
@@ -51,7 +51,14 @@ export async function runTestScenarioScenario(parentPage) {
       render.setSize(940, 640);
       render.domElement.style.cssText = 'display:block;margin:100px 0 0 12px;max-width:calc(100vw - 350px);height:auto';
       document.body.append(render.domElement);
-      const experience = setupExperience({ xr, domElement: render.domElement }, scene, camera, scan, { isScanReady: () => true });
+      const wallEvents = [];
+      let currentViewer = null;
+      const experience = setupExperience({ xr, domElement: render.domElement }, scene, camera, scan, {
+        isScanReady: () => true,
+        onGameplayStart() { wallEvents.push({ action: 'arm' }); },
+        onTurnCompleted() { wallEvents.push({ action: 'turnCompleted', phase: experience.installation.snapshot().phase }); },
+        onViewerPosition(position) { currentViewer = position; },
+      });
       const installation = experience.installation;
       const state = () => installation.snapshot();
       const clock = () => experience.scenario.snapshot();
@@ -65,8 +72,9 @@ export async function runTestScenarioScenario(parentPage) {
         events.push({ cue, elapsed: clock().elapsedSeconds, phase: state().phase, yaw: state().yaw });
       };
       let viewerValid = true;
+      let viewerPosition = { x: 10, y: 1.65, z: 0 };
       const frame = { getViewerPose: () => viewerValid ? {
-        emulatedPosition: false, transform: { position: { x: 0, y: 1.65, z: 0 } },
+        emulatedPosition: false, transform: { position: viewerPosition },
       } : null };
       const advance = seconds => {
         for (let remaining = seconds; remaining > 1e-8;) {
@@ -87,6 +95,7 @@ export async function runTestScenarioScenario(parentPage) {
       };
       const freshFit = () => {
         session.visibilityState = 'visible'; viewerValid = true;
+        viewerPosition = { x: 10, y: 1.65, z: 0 };
         experience.prepareForCalibration();
         experience.update(.01, frame);
         events.length = 0;
@@ -155,29 +164,40 @@ export async function runTestScenarioScenario(parentPage) {
       const secondPose = { base: state().secondBox.base, yaw: state().secondBox.yaw };
       ensure(events.at(-1).cue === 'scenarioBox' && events.at(-1).phase === 'box',
         'box narration did not accompany its successful reveal');
-      until(14.999);
-      ensure(state().phase === 'box' && state().yaw === 0, 'hallway turn started before fifteen seconds');
-      until(15.001);
+      until(30);
+      ensure(state().phase === 'box' && state().yaw === 0, 'old timer rotated without headset entry');
+      viewerPosition = { x: state().config.centerX + 1, y: 2, z: state().config.centerZ };
+      advance(.25);
+      ensure(state().phase === 'box', 'headset beside the box triggered a turn');
+      viewerPosition = { x: state().config.centerX, y: 2, z: state().config.centerZ };
+      advance(.25);
       ensure(state().phase === 'rotating' && events.at(-1).cue === 'scenarioTurn' && events.at(-1).phase === 'rotating',
         'turn narration did not start while the hallway was turning');
       ensure(state().config.rotationSeconds === 4,
         'timed scenario retained the custom eight-second manual turn and would miss its seat deadline');
-      until(19.1);
+      until(34.6);
       ensure(state().phase === 'reversed' && Math.abs(state().yaw - Math.PI) < 1e-9 && !state().secondBox.visible,
         'four-second turn did not finish before the still-hidden seat reveal');
-      until(19.999);
+      until(35.499);
       ensure(!state().secondBox.visible && events.length === 3, 'seat appeared before twenty seconds');
-      until(20.001);
+      until(35.501);
       ensure(!clock().running && clock().stage === 'complete' && state().secondBox.visible &&
-        scene.getObjectByName('installation-second-box').visible, 'twenty-second event did not reveal the actual second mesh');
-      ensure(same({ base: state().secondBox.base, yaw: state().secondBox.yaw }, secondPose),
-        'seat reveal recomputed or moved its frozen pre-turn pose');
+        scene.getObjectByName('installation-second-box').visible,
+        `twenty-second event did not reveal the actual second mesh: ${state().secondBox.alignmentError ?? clock().status}`);
+      ensure(wallEvents.at(-1).action === 'turnCompleted' && wallEvents.at(-1).phase === 'reversed' &&
+        wallEvents.some(event => event.action === 'arm'), 'wall was not armed and notified of the actual completed turn');
+      ensure(same(currentViewer, [viewerPosition.x, viewerPosition.y, viewerPosition.z]),
+        'wall proximity did not receive the current real viewer position');
+      ensure(Math.abs(state().secondBox.base[2] - secondPose.base[2]) < 1e-8 &&
+        Math.abs(state().secondBox.base[1] - secondPose.base[1]) < 1e-8 && !state().secondBox.alignmentError,
+        'seat lost its authored floor/Z station or current-wall alignment');
       scene.updateMatrixWorld(true);
       ensure(same(scene.getObjectByName('installation-box').matrixWorld.toArray(), primaryPose),
         'timed turn/reveal moved the first box');
       ensure(same(events.map(event => event.cue), ['scenarioWelcome', 'scenarioBox', 'scenarioTurn', 'scenarioSeat']),
         'narration order differs from the requested four lines');
       const completedEvents = events.map(event => ({ ...event, transcript: VOICE_CUES[event.cue].caption }));
+      const completedWallEvents = wallEvents.map(event => ({ ...event }));
       const finishedPose = state().secondBox;
       noLaterActions('completed sequence');
 
@@ -215,8 +235,11 @@ export async function runTestScenarioScenario(parentPage) {
         'disabled scenario automatically narrated or showed a box after a fit');
       document.querySelector('#experience-show-box').click();
       ensure(state().phase === 'box', 'disabled scenario prevented the existing manual Show box action');
-      document.querySelector('#experience-rotate').click();
-      ensure(state().phase === 'rotating', 'disabled scenario prevented manual rotation');
+      viewerPosition = { x: state().config.centerX, y: 2, z: state().config.centerZ };
+      advance(.25);
+      ensure(state().phase === 'box', 'headset triggered before the box finished rising');
+      advance(1.5);
+      ensure(state().phase === 'rotating', 'headset entry failed with narration disabled');
       advance(4.1);
       document.querySelector('#experience-show-second-box').click();
       ensure(state().secondBox.visible, 'disabled scenario prevented manual second-box reveal');
@@ -233,7 +256,10 @@ export async function runTestScenarioScenario(parentPage) {
       scan.viewer.splatMesh.splatDataTextures.baseData.centers = savedCenters;
 
       // Leave a finished production scene/control panel for visual inspection.
-      freshFit(); advance(20.1);
+      freshFit(); advance(10.1);
+      viewerPosition = { x: state().config.centerX, y: 2, z: state().config.centerZ };
+      advance(1.5); // the existing floor-rise must finish before headset entry can trigger the turn
+      advance(5.5);
       ensure(state().secondBox.visible && !clock().running, 'fresh calibration failed to restart after cancellation');
       ensure(camera.parent === scene && same(camera.position.toArray(), [0, 0, 0]) &&
         same(camera.quaternion.toArray(), [0, 0, 0, 1]) && same(camera.scale.toArray(), [1, 1, 1]),
@@ -249,7 +275,7 @@ export async function runTestScenarioScenario(parentPage) {
       heading.textContent = 'Post-calibration test scenario · synthetic desktop evidence';
       heading.style.fontSize = '20px';
       const text = document.createElement('p');
-      text.textContent = '0 s Welcome → 10 s First box → 15 s Four-second turn → 20 s Second box. Actual fixed-world box meshes; fabricated scan-wall samples. No headset or narrated-audio acceptance.';
+      text.textContent = 'Welcome at 0 s; first box at 10 s; four-second turn on headset entry; second box five seconds later. Fixed world boxes and fabricated scan walls. Synthetic poses only; no hardware or narrated-audio acceptance.';
       note.append(heading, text); document.body.append(note);
       window.__timedScenarioCleanup = () => { experience.dispose(); material.dispose(); render.dispose(); };
       return {
@@ -259,15 +285,15 @@ export async function runTestScenarioScenario(parentPage) {
           'desktop preview button starts the same guarded sequence',
           'delayed audio unlock cannot revive a cancelled preview',
           'legacy voice audition cannot replace active narration or play after a cancelled unlock',
-          'first box at 10 seconds, turn at 15 seconds, frozen second box at 20 seconds',
+          'first box at 10 seconds; no timer turn; headset entry at 30.5 seconds; fixed second box five seconds later',
           'timed turn uses four seconds even after a custom eight-second manual setting',
           'four-second rotation and turn narration occur before second-box reveal',
           'manual controls cannot advance an active timed sequence early',
           'completion and interruptions cannot replay delayed actions',
-          'scenario can be disabled while manual controls continue to work',
+          'headset box trigger also works with narration disabled',
           'weak wall fit cancels without false narration or rotation',
           'fresh calibration restarts the whole scenario', 'tracked camera rig stays at identity'],
-        events: completedEvents, cancellations, finalSecondBox: finishedPose,
+        events: completedEvents, wallEvents: completedWallEvents, cancellations, finalSecondBox: finishedPose,
         audioStopCalls: stoppedAudio, screenshot: 'test-scenario.png',
       };
     });

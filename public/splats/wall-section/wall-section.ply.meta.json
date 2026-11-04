@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 2,
+  "sourceScanId": "hallway3",
+  "sourceSha256": "89de216a1d9b7c274943b4bb68d100132a3fb91b46744ffc45c58535b5432451",
+  "sourceVertexCount": 2109500,
+  "sourceCropVertexCount": 33437,
+  "outputVertexCount": 66874,
+  "outputBytes": 4547916,
+  "sourceRawBottomCenter": [
+    0.9,
+    20.8,
+    -1.45
+  ],
+  "sourceRawYRange": [
+    19.75,
+    21.85
+  ],
+  "sourceRawZRange": [
+    -1.45,
+    1.1500000000000001
+  ],
+  "objectDimensions": {
+    "width": 2.1,
+    "height": 2.6,
+    "depth": 0.5
+  },
+  "faces": {
+    "count": 2,
+    "splatsPerFace": 33437,
+    "sourceDepth": 0.24,
+    "gap": 0.02,
+    "centerOffsets": [
+      0.13,
+      -0.13
+    ],
+    "backRotationXYZW": [
+      0,
+      1,
+      0,
+      0
+    ],
+    "sameSceneAndTransform": true
+  },
+  "objectCenterBounds": [
+    [
+      -1.0499451160430908,
+      0.0009111881372518837,
+      -0.2499990287423134
+    ],
+    [
+      1.0499451160430908,
+      2.5992190837860107,
+      0.2499990287423134
+    ]
+  ],
+  "objectTransform": "Crop (rawY-20.8, rawZ+1.45, rawX-0.9); front translated +faceOffset along Z; back is front rotated 180 degrees about Y. Positions, normals and full Gaussian orientations rotated; scales unchanged.",
+  "compressionLevel": 0,
+  "resampled": false,
+  "sphericalHarmonicsDegree": 0,
+  "sourceSelection": "Visually door-free continuous left wall; densest 2.10 m interval on a 0.10 m search grid inside rawY 16.25..22.75. Full original SH0 splats retained inside crop; graffiti preserved.",
+  "opaqueSplatCount": 26022,
+  "occupiedTenCentimetreCells": 546,
+  "totalTenCentimetreCells": 546,
+  "heightEvidence": "Source elevation inspected above the horizontal band at raw Z +0.95. Continuous wall ends at +1.15: opaque counts per 2.5 cm bin are 123/81/81/101/109/44 at Z +1.000/+1.025/+1.050/+1.075/+1.100/+1.125, then 5/1 at +1.150/+1.175. Retain wall from existing raw floor -1.45 to +1.15. Scan-derived height; physical metric dimensions remain unverified.",
+  "physicalValidation": "NOT TESTED"
+}

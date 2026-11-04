@@ -7,6 +7,9 @@ import { resolveLayerPath, withHiddenXrWebGlBinding } from '../xr/enterVR';
 import { parseRenderQuality } from './quality';
 import { ACTIVE_SCAN } from './scanAsset';
 import { scanOriginForStart } from './scanPlacement';
+import { WALL_SECTION } from './wallSectionConfig';
+import { BROOM } from './broomConfig';
+import { WOODEN_BOX } from './woodenBox';
 export type { ScanVariant } from './quality';
 
 /** Resolve the active original hallway3 PLY; no compressed derivative is used. */
@@ -88,7 +91,7 @@ export function createViewerRig(): ViewerRig {
     gpuAcceleratedSort: false,       // CPU sort — more compatible across browsers
     antialiased: quality.antialiased, // opt-in for compensation-trained exports
     dynamicScene: true,               // re-sort every frame
-    enableOptionalEffects: true,      // independently hide the extracted wall scene
+    enableOptionalEffects: true,      // independently hide the preloaded props
     sphericalHarmonicsDegree: quality.sphericalHarmonicsDegree,
     halfPrecisionCovariancesOnGPU: false,
     integerBasedSort: false,          // avoid large-scene integer overflow
@@ -113,7 +116,7 @@ export function createViewerRig(): ViewerRig {
 }
 
 /**
- * Load the hallway scan ONCE with an identity transform, then apply the
+ * Build the hallway and hidden props in one batch, then apply the
  * scan-root transform to the viewer group (the scan root). Keeping the
  * transform on the group (instead of baking it into the load) lets the
  * start point be repositioned live without reloading the scan.
@@ -131,7 +134,25 @@ export async function loadScene(
     scale: [1, 1, 1] as [number, number, number],
     splatAlphaRemovalThreshold: quality.alphaRemovalThreshold,
     onProgress: (percent: number) => onProgress?.(percent),
-  }]);
+  }, {
+    path: WALL_SECTION.modelUrl,
+    visible: false,
+    showLoadingUI: false,
+    scale: [1, 1, 1],
+    splatAlphaRemovalThreshold: 1,
+  }, {
+    path: BROOM.modelUrl,
+    visible: false,
+    showLoadingUI: false,
+    scale: [1, 1, 1],
+    splatAlphaRemovalThreshold: 1,
+  }, ...WOODEN_BOX.sceneIndices.map(() => ({
+    path: WOODEN_BOX.modelUrl,
+    visible: false,
+    showLoadingUI: false,
+    scale: [1, 1, 1] as [number, number, number],
+    splatAlphaRemovalThreshold: 1,
+  }))]);
   applyStartPoint(splats, START_POINT);
   const patched = patchSplatOpacity(splats, SCAN_OPACITY);
   if (!patched) console.warn('scan opacity patch failed (shader string not found)');

@@ -3,8 +3,9 @@
 // src/xr and src/ui.
 
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { Matrix4, Quaternion, Vector3 } from 'three';
 import {
-  createViewerRig, loadScene, applyStartPoint, createSpawnMarker, getScanUrl, setScanOpacity,
+  createViewerRig, loadScene, createSpawnMarker, getScanUrl, setScanOpacity, getSourceCenters,
 } from './viewer/splatViewer';
 import { setupEnterVr } from './xr/enterVR';
 import { setupCalibrationCapture } from './xr/calibrationCapture';
@@ -19,7 +20,16 @@ import { SCAN_LANDMARKS } from './calibration/landmarks';
 import { setupExperience } from './experience/setupExperience';
 import { setupDesktopBoundary } from './experience/setupDesktopBoundary';
 import { createWallBlocker } from './viewer/wallBlocker';
+import { calibratedWallRoute, createHallwayPlacementFrame } from './viewer/wallRouteFrame';
+import { scanOriginForStart } from './viewer/scanPlacement';
 import { bindWallControl } from './ui/wallControl';
+import { createBroom } from './viewer/broom';
+import { bindBroomControl } from './ui/broomControl';
+import { createHallwayLighting } from './viewer/hallwayLighting';
+import { createLightFlickerAudio } from './audio/lightFlicker';
+import { bindLightingControl } from './ui/lightingControl';
+import { createFloorHole } from './viewer/floorHole';
+import { bindFloorHoleControl } from './ui/floorHoleControl';
 
 logger.info('boot', 'app starting');
 
@@ -31,21 +41,72 @@ const operatorPanel = bindOperatorPanel();
 operatorPanel.setStatus(SCAN_LANDMARKS
   ? 'Configured A/B loaded. Match LEFT to physical A and RIGHT to physical B, then calibrate in VR.'
   : 'New scan: use EDIT A/B on the desktop to select both floor landmarks before calibration.');
-const wallBlockReason = (): string | null => {
+const propBlockReason = (prop: string): string | null => {
   if (!scanReady) return 'Wait for the hallway scan to finish loading.';
   const state = experience.installation.snapshot();
-  if (state.phase === 'stopped') return 'Reset baseline and recalibrate in VR before showing the wall.';
+  if (state.phase === 'stopped') return `Reset baseline and recalibrate in VR before showing the ${prop}.`;
   if (state.phase === 'rotating') return 'Wait for the hallway turn to finish.';
-  if (calibration.isCapturing()) return 'Finish calibration before showing the wall.';
+  if (calibration.isCapturing()) return `Finish calibration before showing the ${prop}.`;
   if (renderer.xr.isPresenting && (!state.calibrated || experience.calibrationBlockReason() !== null)) {
-    return 'Complete a fresh A/B calibration with visible headset tracking before showing the wall in VR.';
+    return `Complete a fresh A/B calibration with visible headset tracking before showing the ${prop} in VR.`;
   }
   return null;
 };
-const wallBlocker = createWallBlocker({ scanRoot: splats, canShow: wallBlockReason });
+const wallBlockReason = () => propBlockReason('wall');
+const broomBlockReason = () => propBlockReason('broom');
+const lightingBlockReason = (): string | null => {
+  if (!scanReady) return 'Wait for the hallway scan to finish loading.';
+  const state = experience.installation.snapshot();
+  if (state.phase === 'stopped') return 'Reset baseline and recalibrate in VR before turning the lights out.';
+  if (calibration.isCapturing()) return 'Finish calibration before turning the lights out.';
+  if (renderer.xr.isPresenting && (!state.calibrated || experience.calibrationBlockReason() !== null)) {
+    return 'Complete a fresh A/B calibration with visible headset tracking before turning the lights out in VR.';
+  }
+  return null;
+};
+const lightFlickerAudio = createLightFlickerAudio();
+const hallwayLighting = createHallwayLighting({ scanRoot: splats, blockReason: lightingBlockReason,
+  onFlickerStart: () => { lightFlickerAudio.play(); }, onFlickerStop: () => lightFlickerAudio.stop() });
+const lightAudioGestures = new AbortController();
+const primeLightAudio = () => { void lightFlickerAudio.unlock(); };
+document.addEventListener('pointerdown', primeLightAudio, { capture: true, signal: lightAudioGestures.signal });
+document.addEventListener('keydown', primeLightAudio, { capture: true, signal: lightAudioGestures.signal });
+window.addEventListener('pagehide', () => {
+  lightAudioGestures.abort(); hallwayLighting.reset(); lightFlickerAudio.dispose();
+}, { once: true });
+const floorHoleBlockReason = () => propBlockReason('floor opening');
+let wallPlayerPosition: readonly [number, number, number] | null = null;
+const getRotationState = () => {
+  const state = experience.installation.snapshot();
+  return { phase: state.phase, offsetWorld: state.rotationOffsetWorld };
+};
+const placementFrame = createHallwayPlacementFrame(splats);
+const wallBlocker = createWallBlocker({ scanRoot: splats, canShow: wallBlockReason, placementFrame,
+  getPlayerPosition: () => wallPlayerPosition });
+const authoredScanMatrix = new Matrix4().compose(
+  new Vector3(...scanOriginForStart(ACTIVE_SCAN.startPoint, ACTIVE_SCAN.rotation)),
+  new Quaternion(...ACTIVE_SCAN.rotation), new Vector3(1, 1, 1));
+const broom = createBroom({ scene, scanRoot: splats, blockReason: broomBlockReason, placementFrame,
+  getPivot: () => experience.installation.snapshot().config, getRotationState,
+  getSourceCenters: () => getSourceCenters(splats) });
+const floorHole = createFloorHole({ scanRoot: splats, getSourceCenters: () => getSourceCenters(splats),
+  blockReason: floorHoleBlockReason, getRotationState, placementFrame });
 const experience = setupExperience(renderer, scene, camera, splats, {
+  initialRotationOffsetMetres: 0.1,
   isScanReady: () => scanReady,
-  onDisarm: () => wallBlocker.hide(),
+  onDisarm: () => { wallBlocker.reset(); broom.reset(); floorHole.reset(); hallwayLighting.reset(); },
+  onCalibrationApplied: () => {
+    splats.updateWorldMatrix(true, false);
+    wallBlocker.setRouteFrame(renderer.xr.isPresenting
+      ? calibratedWallRoute(authoredScanMatrix, splats.matrixWorld) : undefined);
+  },
+  onGameplayStart: () => {
+    if (!renderer.xr.isPresenting) wallBlocker.setRouteFrame();
+    wallBlocker.startGameplay();
+  },
+  onTurnCompleted: () => wallBlocker.turnCompleted(),
+  onViewerPosition: position => { wallPlayerPosition = position; },
+  onScenarioCancelled: () => wallBlocker.cancelGameplay(),
 });
 const desktopBoundary = setupDesktopBoundary(renderer, scene, { getBox: () => {
   const state = experience.installation.snapshot();
@@ -69,7 +130,7 @@ controls.update();
 const spawnMarker = createSpawnMarker();
 scene.add(spawnMarker);
 
-hud.setStatus('loading hallway scan …');
+hud.setStatus('loading hallway and objects …');
 let lastLoggedPercent = 0;
 loadScene(splats, (percent) => {
   // Keep asset preparation/loading progress visible to the operator.
@@ -79,7 +140,13 @@ loadScene(splats, (percent) => {
     logger.info('load', `scan ${Math.round(percent)}%`);
   }
 })
-  .then((url) => {
+  .then(async (url) => {
+    wallBlocker.initialize();
+    broom.initialize();
+    floorHole.initialize();
+    experience.installation.initializeVisuals();
+    hallwayLighting.initialize();
+    await renderer.compileAsync(scene, camera);
     scanReady = true;
     experience.scanTransformChanged();
     // Entering XR before an asset finishes loading must keep the unregistered
@@ -88,15 +155,17 @@ loadScene(splats, (percent) => {
     logger.info('load', `scan loaded: ${url}`);
     hud.setStatus(`loaded ✓ (${url.split('/').pop()})`);
   })
-  .catch((err: unknown) => { logger.error('load', 'scan load FAILED:', err); hud.setStatus(`load error: ${String(err)}`); });
+  .catch((err: unknown) => {
+    wallBlocker.loadingFailed(err);
+    broom.loadingFailed(err);
+    floorHole.loadingFailed(err);
+    logger.error('load', 'scan load FAILED:', err);
+    hud.setStatus(`load error: ${String(err)}`);
+  });
 
-// Operator panel: shift the map around the player, live, before entering VR.
-// Fields use the supplied raw PLY floor-start coordinates.
-bindSpawnPanel((point) => {
-  experience.prepareForCalibration();
-  applyStartPoint(splats, point);
-  experience.scanTransformChanged();
-}, START_POINT);
+// Translate the current desktop view without resetting its turn or heading.
+const spawnPanel = bindSpawnPanel(point => { experience.inspectStartPoint(point); }, START_POINT);
+const inspectionOrigin = new Vector3();
 
 // Restored November 2 flow: enter VR first, then trigger/CALIBRATE starts
 // the seven-second placement countdown for both controller landmarks.
@@ -112,8 +181,6 @@ const calibration = setupCalibrationCapture(
       `calibrated ✓ yaw ${(solution.yaw * 180 / Math.PI).toFixed(2)}°, ` +
       `translation [${t}], fit error ${cm}`,
     );
-    const panel = document.getElementById('spawn-panel');
-    if (panel) panel.style.display = 'none';
   },
   (which, point) => {
     hud.appendStatus(
@@ -130,6 +197,9 @@ const calibration = setupCalibrationCapture(
 experience.bindCalibrationInvalidator(reason => calibration.invalidate(reason));
 experience.bindCalibrationCaptureState(() => calibration.isCapturing());
 const wallControl = bindWallControl(wallBlocker, wallBlockReason);
+const broomControl = bindBroomControl(broom, broomBlockReason);
+const lightingControl = bindLightingControl(hallwayLighting, lightingBlockReason);
+const floorHoleControl = bindFloorHoleControl(floorHole, floorHoleBlockReason);
 operatorPanel.onCalibrateClick(() => calibration.startCalibration());
 operatorPanel.onEditClick(() => {
   // toggle via the module (it owns the state and reports it back)
@@ -156,6 +226,9 @@ renderer.setAnimationLoop((_time, frame) => {
   if (!presenting) controls.update();
   spawnMarker.visible = !presenting;
   experience.update(dt, frame);
+  splats.updateWorldMatrix(true, false);
+  spawnPanel.refresh(scanReady ? splats.worldToLocal(inspectionOrigin.set(0, 0, 0)).toArray() : START_POINT,
+    experience.canInspectStartPoint(), !presenting);
   const boxState = experience.installation.snapshot();
   const marksBoxPivot = ['box', 'rotating', 'reversed'].includes(boxState.phase);
   spawnMarker.position.set(
@@ -165,12 +238,20 @@ renderer.setAnimationLoop((_time, frame) => {
   );
   spawnMarker.userData.reference = marksBoxPivot ? 'box-turn-pivot' : 'xr-origin';
   wallControl.refresh();
+  broomControl.refresh();
+  lightingControl.refresh();
+  floorHoleControl.refresh();
   desktopBoundary.update(frame);
   if (presenting) {
     enterVr.noteXrFrame(); // first-frame + watchdog accounting
     calibration.sample(dt, frame); // valid remote poses + post-fit reveal
   }
-  wallBlocker.update();
+  wallBlocker.update(dt);
+  broom.update();
+  floorHole.update();
+  hallwayLighting.observeSecondBox(scanReady && boxState.phase === 'reversed' &&
+    boxState.secondBox.visible && boxState.secondBox.reveal.motion === 'visible');
+  hallwayLighting.update(dt);
   splats.viewer.update(renderer, activeCamera);
   renderer.render(scene, camera);
   hud.tickFrame(presenting);
@@ -228,5 +309,5 @@ renderer.xr.addEventListener('sessionend', () => {
 
 // Debug hook for automated visual checks (readPixels etc.)
 Object.assign(window as unknown as Record<string, unknown>, {
-  __debug: { renderer, scene, camera, splats, controls, spawnMarker, experience, calibration, desktopBoundary, wallBlocker },
+  __debug: { renderer, scene, camera, splats, controls, spawnMarker, experience, calibration, desktopBoundary, wallBlocker, broom, floorHole, hallwayLighting, lightFlickerAudio },
 });

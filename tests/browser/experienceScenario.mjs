@@ -26,7 +26,13 @@ export async function runExperienceScenario(page) {
       scan.updateMatrixWorld(true);
       const baseline = scan.matrix.toArray();
       const material = new THREE.ShaderMaterial({ uniforms: { uGlobalOpacity: { value: 1 } } });
-      scan.viewer = { splatMesh: { material } };
+      // Current-wall seat placement needs real geometric support even in this
+      // detached lifecycle fixture. These are public fabricated straight walls.
+      const points = [], inverse = scan.matrixWorld.clone().invert();
+      for (const x of [-1.05, 1.05]) for (let z = -12; z <= 12.001; z += .1) {
+        for (let y = .6; y <= 1.901; y += .2) points.push(...new THREE.Vector3(x, y, z).applyMatrix4(inverse).toArray());
+      }
+      scan.viewer = { splatMesh: { material, splatDataTextures: { baseData: { centers: new Float32Array(points) } } } };
       const canvas = document.createElement('canvas');
       const reference = new THREE.EventDispatcher();
       const session = new THREE.EventDispatcher();
@@ -143,6 +149,12 @@ export async function runExperienceScenario(page) {
         }
         ensure(document.querySelector('#experience-floorY')?.readOnly,
           'local-floor display can still be edited as an arbitrary box height');
+        ensure(experience.canInspectStartPoint(), 'idle desktop coordinate inspection is blocked');
+        capturing = true;
+        ensure(!experience.canInspectStartPoint() && !experience.inspectStartPoint([1, 2, 3]),
+          'coordinate inspection can move a scan during capture');
+        scan.updateMatrix(); ensure(same(scan.matrix.toArray(), baseline), 'blocked capture edit moved the scan');
+        capturing = false;
         // A desktop artistic turn must be undone before a fresh XR registration.
         installation.configure({ ...state().config, centerX: 0, centerZ: -2, floorY: 0, hallwayWidth: 2.1 });
         ensure(installation.showBox(true), 'initial desktop box did not appear');
@@ -151,9 +163,15 @@ export async function runExperienceScenario(page) {
         prepareSyntheticSecond();
         ensure(installation.rotateHallway(), 'manual desktop rotation did not start');
         experience.update(1);
+        ensure(!experience.canInspectStartPoint() && !experience.inspectStartPoint([1, 2, 3]),
+          'coordinate inspection can interrupt an active hallway turn');
         ensure(!same(scan.matrix.toArray(), baseline), 'preview did not rotate the visual scan');
         xr.isPresenting = true;
         xr.dispatchEvent({ type: 'sessionstart' });
+        const beforeLiveEdit = scan.matrix.toArray();
+        ensure(!experience.canInspectStartPoint() && !experience.inspectStartPoint([1, 2, 3]),
+          'desktop coordinate inspection can change a live XR scan');
+        scan.updateMatrix(); ensure(same(scan.matrix.toArray(), beforeLiveEdit), 'blocked live inspection moved the scan');
         ensure(same(scan.matrix.toArray(), baseline), 'session start failed to restore the preview baseline');
         ensure(state().phase === 'idle' && !state().calibrated && !state().preview && state().yaw === 0,
           'session start retained preview or calibration authority');

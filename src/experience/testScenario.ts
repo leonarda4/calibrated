@@ -42,6 +42,8 @@ export function createTestScenario(options: TestScenarioOptions) {
   let startedAt = 0;
   let lastUpdatedAt = 0;
   let generation = 0;
+  let waitForHeadset = false;
+  let seatSeconds = 20;
   const running = () => waitingStages.includes(stage);
   const changed = () => options.onChange?.();
   const cancel = (reason = descriptions.cancelled): void => {
@@ -60,11 +62,13 @@ export function createTestScenario(options: TestScenarioOptions) {
   return {
     snapshot(): TestScenarioSnapshot {
       const next = stage === 'waitingBox' || stage === 'waitingTurn' || stage === 'waitingSeat'
-        ? steps[stage].seconds : null;
+        ? stage === 'waitingTurn' && waitForHeadset ? null : stage === 'waitingSeat' ? seatSeconds : steps[stage].seconds : null;
       return { stage, status, running: running(), elapsedSeconds, nextActionSeconds: next };
     },
-    start(nowSeconds: number): void {
+    start(nowSeconds: number, headsetTriggered = false): void {
       generation += 1;
+      waitForHeadset = headsetTriggered;
+      seatSeconds = 20;
       if (!Number.isFinite(nowSeconds) || nowSeconds < 0) {
         cancel('Test scenario cancelled: invalid start time.');
         return;
@@ -77,7 +81,7 @@ export function createTestScenario(options: TestScenarioOptions) {
       changed();
       if (token === generation) cue('scenarioWelcome', token);
     },
-    update(nowSeconds: number): void {
+    update(nowSeconds: number, headsetInsideBox = false): void {
       if (!running()) return;
       if (!Number.isFinite(nowSeconds) || nowSeconds < lastUpdatedAt) {
         cancel('Test scenario cancelled: invalid or reversed clock. Recalibrate to restart.');
@@ -92,12 +96,17 @@ export function createTestScenario(options: TestScenarioOptions) {
       elapsedSeconds = nowSeconds - startedAt;
       if (stage !== 'waitingBox' && stage !== 'waitingTurn' && stage !== 'waitingSeat') return;
       const step = steps[stage];
-      if (elapsedSeconds < step.seconds) return;
+      if (stage === 'waitingTurn' && waitForHeadset) {
+        if (!headsetInsideBox) return;
+      } else if (elapsedSeconds < (stage === 'waitingSeat' ? seatSeconds : step.seconds)) return;
+      if (stage === 'waitingTurn' && waitForHeadset) seatSeconds = elapsedSeconds + 5;
       const token = generation;
       // The action can publish installation state synchronously. Advance first
       // so reentrant callbacks cannot execute the same action twice.
       stage = step.next;
       status = descriptions[stage];
+      if (stage === 'waitingTurn' && waitForHeadset) status = 'Box ready: move the headset inside or above its footprint to turn the hallway.';
+      if (stage === 'waitingSeat' && waitForHeadset) status = 'Test scenario: second box five seconds after the headset-triggered turn.';
       let succeeded = false;
       try { succeeded = options.onAction(step.action); }
       catch { /* Guard failures cancel below without leaking an exception. */ }

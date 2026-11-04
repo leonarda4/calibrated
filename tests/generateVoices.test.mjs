@@ -34,6 +34,11 @@ test('key-only local config selects available voices and writes local audio; lat
       ] });
       assert.equal(options.method, 'POST');
       assert.equal(JSON.parse(options.body).model_id, 'eleven_v3');
+      const text = JSON.parse(options.body).text;
+      assert.ok(text.startsWith('[whispering] '));
+      if (!String(endpoint).includes('/alpha_voice?')) {
+        assert.ok(text.replace(/\[.*?\]/g, '').trim().split(/\s+/).length <= 2);
+      }
       return new Response(new Uint8Array(100), { headers: { 'content-type': 'audio/mpeg' } });
     };
     await generateVoices({ root, args: ['--cue', 'purpose'], environment: {}, fetcher, log: (text) => logs.push(text) });
@@ -45,6 +50,9 @@ test('key-only local config selects available voices and writes local audio; lat
     }
     assert.ok(!logs.join('\n').includes('fake_test_key'));
     assert.ok(!logs.join('\n').includes('alpha_voice'));
+    const [lead, ...support] = VOICE_CUES.purpose.layers;
+    assert.ok(lead.gain <= 0.40);
+    assert.ok(support.every(layer => layer.gain < lead.gain / 8));
     await generateVoices({
       root, args: ['--cue', 'purpose'], environment: {},
       fetcher: async () => { assert.fail('existing clips must not make a network request'); }, log() {},
@@ -52,7 +60,7 @@ test('key-only local config selects available voices and writes local audio; lat
   });
 });
 
-test('repeated cue filters generate only the four single-lead scenario lines once', async () => {
+test('repeated cue filters generate each scenario whisper layer once', async () => {
   await withDirectory(async (root) => {
     const requests = [];
     await generateVoices({
@@ -61,18 +69,21 @@ test('repeated cue filters generate only the four single-lead scenario lines onc
       environment: {
         ELEVENLABS_API_KEY: 'fake_test_key',
         ELEVENLABS_VOICE_LEAD: 'explicit_lead',
+        ELEVENLABS_VOICE_LEFT: 'explicit_left',
+        ELEVENLABS_VOICE_RIGHT: 'explicit_right',
       },
       fetcher: async (endpoint, options) => {
         assert.equal(options.method, 'POST');
-        assert.ok(String(endpoint).includes('/explicit_lead?'));
+        assert.match(String(endpoint), /\/explicit_(lead|left|right)\?/);
+        assert.equal(JSON.parse(options.body).voice_settings.stability, 0);
         requests.push(JSON.parse(options.body).text);
         return new Response(new Uint8Array(100), { headers: { 'content-type': 'audio/mpeg' } });
       },
       log() {},
     });
-    assert.deepEqual(requests, SCENARIO_VOICE_CUES.map((cue) => VOICE_CUES[cue].caption));
+    assert.deepEqual(requests, SCENARIO_VOICE_CUES.flatMap((cue) => VOICE_CUES[cue].layers.map(layer => layer.text)));
     assert.deepEqual((await fs.readdir(path.join(root, 'public/audio/generated'))).sort(),
-      SCENARIO_VOICE_CUES.map((cue) => `${cue}-lead.mp3`).sort());
+      SCENARIO_VOICE_CUES.flatMap((cue) => ['lead', 'left', 'right'].map(role => `${cue}-${role}.mp3`)).sort());
   });
 });
 

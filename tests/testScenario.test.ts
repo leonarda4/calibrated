@@ -19,6 +19,21 @@ function fixture() {
   return { scenario, events, advanceTo };
 }
 
+test('live scenario waits beyond old deadlines for headset entry and reveals five seconds after turn', () => {
+  const actions: string[] = [];
+  const scenario = createTestScenario({ onCue() {}, onAction(action) { actions.push(action); return true; } });
+  scenario.start(0, true);
+  for (let now = .25; now <= 30; now += .25) scenario.update(now, false);
+  assert.deepEqual(actions, ['showBox']);
+  assert.equal(scenario.snapshot().nextActionSeconds, null);
+  scenario.update(30.25, true);
+  assert.deepEqual(actions, ['showBox', 'rotate']);
+  for (let now = 30.5; now < 35.25; now += .25) scenario.update(now, true);
+  assert.deepEqual(actions, ['showBox', 'rotate']);
+  scenario.update(35.25, true);
+  assert.deepEqual(actions, ['showBox', 'rotate', 'showSecondBox']);
+});
+
 test('fresh calibration narrates immediately and runs guarded actions exactly at 10, 15 and 20 seconds', () => {
   const { scenario, events, advanceTo } = fixture();
   scenario.update(100);

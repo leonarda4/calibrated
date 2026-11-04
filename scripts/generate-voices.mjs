@@ -86,7 +86,7 @@ export async function generateVoices({
       response = await fetcher(endpoint, {
         method: 'POST',
         headers: { 'xi-api-key': settings.ELEVENLABS_API_KEY, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: job.text, model_id: model, voice_settings: { stability: 0.5, similarity_boost: 0.75 } }),
+        body: JSON.stringify({ text: job.text, model_id: model, voice_settings: { stability: model === 'eleven_v3' ? 0 : 0.5, similarity_boost: 0.75 } }),
         signal: AbortSignal.timeout(90_000),
       });
     } catch {

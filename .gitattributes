@@ -1,0 +1,5 @@
+# Original runtime splats are stored without compression in Git LFS.
+public/splats/hallway3/hallway3_0.ply filter=lfs diff=lfs merge=lfs -text
+public/splats/wall-section/wall-section.ply filter=lfs diff=lfs merge=lfs -text
+public/splats/WoodenBox.ply filter=lfs diff=lfs merge=lfs -text
+public/splats/broooooommm.ply filter=lfs diff=lfs merge=lfs -text
