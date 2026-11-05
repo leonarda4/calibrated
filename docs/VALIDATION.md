@@ -4,6 +4,8 @@ Atmosphere regressions validate both unchanged supplied density packages and met
 
 All gates are **pending**. Thresholds below are proposed engineering targets, not measured performance or a guarantee of wall-contact accuracy.
 
+For broom readability, the existing native encounter must render fog, mist and their combination behind the original Gaussian silhouette during reveal/removal. Compare its opaque core to isolated black/white source renders (three display values of tolerance), and check that background haze remains visible. The broom's 1.35 RGB gain must retain its original alpha, shared dimming/glitch/calibration/ending fade and placement; use `CHECK_REAL_BROOM=1` for actual-source evidence. The additional foreground pass reuses sorted broom indices and live textures rather than a solid mesh or a second asset load. Headset performance and readability remain separate checks.
+
 ## M0: prove the actual wireless runtime
 
 Record date, Windows version, GPU/driver/RAM, Chrome version, Quest firmware, Link/SteamVR version, active OpenXR runtime, streaming client, refresh rate/resolution, router/access point, wireless band, PC network connection, and test location.
@@ -79,7 +81,7 @@ The existing raw start panel must show the raw PLY point at world origin before 
 
 Flipped-hallway offset checks verify the production default is 0 cm and the turn adds no lateral correction. Pure-pivot checks use this actual default; manual nonzero checks cover the optional adjustment. With a nonzero value, verify the scan receives the frozen original-hallway right vector times the offset and existing eased yaw fraction, while the first box, floor height and tracked camera stay fixed. The broom and second box follow current fitted hallway sections at their explicit stations. A revealed wall must retain its frozen world trajectory, width and orientation through later offset edits, with no further alignment queries; its next reveal fits again. Verify that the opening initially meets both current walls at its actual interval in the shared calibrated frame, then retains its captured near/far bounds, world corners and clipping uniforms through later offset edits. PC Apply, ±1 cm and Zero must recompute from the original baseline without accumulating; invalid values, active turns, narration or interrupted tracking must not move content. Explicit Reset restores the exact baseline while retaining only the draft amount. Inspect `rotation-offset.png` and the generated report. The source-only fits at the second-box station differ in width by about 2.4 cm and heading by about 1.4 degrees with roughly 4 cm residuals; these appearance estimates explain why a translation may only help locally and cannot determine a physical correction. Hardware wall alignment remains a separate measurement.
 
-Wooden-box checks distinguish the invisible metric interaction volumes from the actual splat appearance. Verify that both hidden instances load before startup readiness and remain excluded from source landmark queries. Check source -Z upward, removal of the source's 19-degree heading, zero added lift at the standing floor base, exact hidden endpoints, eased ascent/descent, and cancellation on every disarm path. Show/Hide must reuse the same renderer resources. The first box's complete world pose stays fixed through the turn; the second box retains its prepared Z station in the shared calibrated hallway frame and physical wall side while refitting one whole footprint edge to the current selected wall plane. `CHECK_REAL_BOX=1` uses the shared supplied PLY in the desktop checks; inspect `wooden-box-upright.png`, `wooden-box-floor-in.png` and `wooden-box-floor-out.png` in the selected report folder. Synthetic fixture results verify integration; actual-Ply screenshots verify appearance only, with physical alignment and headset motion comfort still separate.
+Wooden-box checks distinguish the invisible metric interaction volumes from the actual splat appearance. Verify that both hidden instances load before startup readiness and remain excluded from source landmark queries. Check source -Z upward, removal of the source's 19-degree heading, zero added lift at the standing floor base, exact hidden endpoints, eased ascent/descent, and cancellation on every disarm path. Show/Hide must reuse the same renderer resources. The first box's complete world pose stays fixed through the turn; the second box retains its prepared Z station in the shared calibrated hallway frame and physical wall side while refitting one whole footprint edge 10 cm inward from the current selected wall plane. `CHECK_REAL_BOX=1` uses the shared supplied PLY in the desktop checks; inspect `wooden-box-upright.png`, `wooden-box-floor-in.png` and `wooden-box-floor-out.png` in the selected report folder. Synthetic fixture results verify integration; actual-Ply screenshots verify appearance only, with physical alignment and headset motion comfort still separate.
 
 Disable **Gameplay after calibration** after the live fit for the manual-only checks below. Each fresh live calibration reenables the full game, so manual mode applies only to the current diagnostic run.
 
@@ -89,7 +91,7 @@ The current sequence uses Chrome **Show box** and **Rotate hallway 180°** butto
 
 ## Gameplay checks
 
-Every successful live calibration must reenable gameplay and start Ambience 1 from zero, even after completion, interruption or disabling the option during the previous run. Verify welcome at +1 s, first box/step-on prompt at +8 s, Transition 1 at +20 s in autoplay and the visual turn 2 s later. Live entry waits for the fully raised box, five seconds since its prompt and actual scheduled/playing first-box speech; test already-present and late headsets. Verify second-box reveal five seconds after actual turn onset, turn commentary after completion, the sit instruction after the completed second-box rise, and classroom speech requested five seconds after actual wall appearance without cutting off earlier speech. Check exact deadlines, four-second rotation, fixed first box, wall-contact station and cue order. Both placements must succeed before revealing/narrating the first box; failure must stop/disarm with no dead visible box. A long desktop render frame must freeze visual progress without cancelling or advancing the soundtrack/story clock. Reset, STOP, new calibration, session/focus/tracking change or disabled gameplay still cancels pending actions/audio; native tracking/session recovery guards remain authoritative. Desktop preview grants no physical alignment. Inspect the scenario screenshot and generated report. See [gameplay flow](GAMEPLAY_FLOW.md).
+Every successful live calibration must reenable gameplay and start Ambience 1 from zero, even after completion, interruption or disabling the option during the previous run. Verify welcome at +1 s, first box/step-on prompt at +8 s, Transition 1 at +20 s in autoplay and the visual turn 2 s later. Live entry waits for the fully raised box, five seconds since its prompt and actual scheduled/playing first-box speech; test already-present and late headsets. Verify second-box reveal five seconds after actual turn onset, turn commentary after completion, the sit instruction after the completed second-box rise, and classroom speech requested five seconds after actual wall appearance without cutting off earlier speech. Check exact deadlines, four-second rotation, fixed first box, station, 10 cm wall gap and cue order. Both placements must succeed before revealing/narrating the first box; failure must stop/disarm with no dead visible box. A long desktop render frame must freeze visual progress without cancelling or advancing the soundtrack/story clock. Reset, STOP, new calibration, session/focus/tracking change or disabled gameplay still cancels pending actions/audio; native tracking/session recovery guards remain authoritative. Desktop preview grants no physical alignment. Inspect the scenario screenshot and generated report. See [gameplay flow](GAMEPLAY_FLOW.md).
 
 Repeat calibration while waiting for the first box, after its reveal, during rotation, with the seat visible and after completion. Verify old audio, box effects, lighting, wall movement and floor opening cannot revive, then run the same welcome/box/turn/seat order from zero. Repeat with translated tracking yaw of 90 degrees, 180 degrees and -0.63 radians, checking the second box in hallway-route coordinates and its rendered XYZ/yaw in world coordinates. This synthetic lifecycle coverage does not grant headset or physical acceptance.
 
@@ -110,7 +112,7 @@ balance and stereo impression still need a headset listening pass.
 
 ## Installation extension: physical checks still pending
 
-The second box has independent fixed dimensions 0.36 x 0.36 x 0.43 m; geometry-edge tests also verify the first box's default dimensions. Its approximate centre guide is raw [2.8,23.3,-1.45]. A dark transverse band near raw Y=22.99 supplies a draft floor-line guide; it remains an appearance estimate, with a desktop floor-plane picker for refinement. Preparation chooses the longitudinal station and physical wall side. Keep the box hidden throughout rotation, then refit and reveal it after the final phase. At initial preparation, completed turn, reveal and subsequent alignment edits, independently measure both endpoints of the entire selected footprint edge against the current actual wall plane, including accepted slightly nonparallel walls. The box's hallway-route Z station, dimensions and floor base must remain unchanged; its lateral position and tangent heading may change to maintain wall contact. Repeat under translated 90-degree, 180-degree and -0.63-radian calibration yaw; absolute XR world Z must not be used as its station. Unsupported refits must hide an already visible seat. Do not reproject its old raw guide through the rotated root. The first box/pivot and identity tracked rig must never move. Reset, new fit, session change, stop or tracking interruption must clear old placement and visibility. Browser checks cover actual reveal, floor-line selection, both rendered boxes and lifecycle cleanup. Private original-PLY evidence remains an appearance check, not physical chair alignment or surveyed-seam acceptance.
+The second box has independent fixed dimensions 0.36 x 0.36 x 0.43 m; geometry-edge tests also verify the first box's default dimensions. Its approximate centre guide is raw [2.8,23.3,-1.45]. A dark transverse band near raw Y=22.99 supplies a draft floor-line guide; it remains an appearance estimate, with a desktop floor-plane picker for refinement. Preparation chooses the longitudinal station and physical wall side. Keep the box hidden throughout rotation, then refit and reveal it after the final phase. At initial preparation, completed turn, reveal and subsequent alignment edits, independently measure both endpoints of the entire selected footprint edge at 10 cm perpendicular clearance from the current actual wall plane, including accepted slightly nonparallel walls. The box's hallway-route Z station, dimensions and floor base must remain unchanged; its lateral position and tangent heading may change to maintain the 10 cm wall gap. Repeat under translated 90-degree, 180-degree and -0.63-radian calibration yaw; absolute XR world Z must not be used as its station. Unsupported refits must hide an already visible seat. Do not reproject its old raw guide through the rotated root. The first box/pivot and identity tracked rig must never move. Reset, new fit, session change, stop or tracking interruption must clear old placement and visibility. Browser checks cover actual reveal, floor-line selection, both rendered boxes and lifecycle cleanup. Private original-PLY evidence remains an appearance check, not physical chair alignment or surveyed-seam acceptance.
 
 Use [INTERACTION_PLAN.md](INTERACTION_PLAN.md) and [RENDER_QUALITY.md](RENDER_QUALITY.md). Compare the fitted scan wall separation and centre with physical measurements; do not force the fit to the approximate2.10 m width. Check the supplied36 x36 cm,43 cm high real box, floor/base height and side clearance at the chosen station against independent landmarks before starting. Manual buttons and fitted distances do not certify registration.
 
@@ -118,11 +120,11 @@ On the active Steam Link route, check that the participant is supported at the f
 
 ## Scripted wall approach checks
 
-Verify `SitDownOnTheBox.wav` is requested once after the second box finishes its rise, including manual Show. The classroom recording must not play just because the box appears or its footprint arms the hidden wall. Keep watching/blocking it to prove no deadline starts. Successful unseen appearance starts exactly five seconds; request `GoBackToTheClassRoom.wav` once at that boundary, regardless of later gaze/motion pauses. Endpoint inspections remain silent. Stop/reset, wall cancellation and calibration/tracking/session recovery cancel pending deadlines. Verify complete sit/classroom WAV takes queue without altering the music. These silent scheduling/native-node checks do not establish audible headset playback.
+Verify `SitDownOnTheBox.wav` is requested once after the second box finishes its rise, including manual Show. The classroom recording must not play just because the box appears or hallway-section entry arms the hidden wall. Before the five-second watched-reveal timeout, or while blocking entry, verify no classroom deadline starts. Successful appearance starts exactly five seconds; request `GoBackToTheClassRoom.wav` once at that boundary, regardless of later gaze/motion pauses. Endpoint inspections remain silent. Stop/reset, wall cancellation and calibration/tracking/session recovery cancel pending deadlines. Verify complete sit/classroom WAV takes queue without altering the music. These silent scheduling/native-node checks do not establish audible headset playback.
 
 Synthetic main.ts calibration checks rotate the tracking frame by 180 degrees, 90 degrees and -0.63 radians with a translated origin. Verify the same route from hallway Z=-8 to the captured first-box station, occupied-appearance blocking, physical-player pause, rendered-world diagnostics and floor Y=0. After Hide, click the actual wall button and compare its unseen reveal, restart station, width and gaze-controlled motion with Run/gameplay; Hide must not create an override. Honour deliberate XYZ edits through both paths. Compare actual broom/floor buttons with callable actions: broom base at hallway Z6, hole corners at the captured wall-relative prepared stations and clipping inverse in the shared frame. Temporarily hide the cutout for strict white-void floor removal/restoration probes; separate rendered checks verify the downward hallway. Preview and mapped VR use the same second-box trigger, instant appearance and gaze phases. These adapters create no XR session; repeat approach-side, gaze, registration and placement checks after fresh real SteamVR calibration.
 
-Verify no wall at calibration, first-box reveal, rotation or second-box appearance alone. Only a current valid headset above the fully raised second-box footprint arms it; test an already-present headset, late entry, an adjacent miss and incomplete rise. Arming latches while the player looks toward the hallway wall direction. Reveal instantly at hallway Z=-8 on the first valid look-away with a clear standing footprint; no side slide, renderer rebuild or post-turn timer may reveal it. Unknown gaze or occupied placement retains the hidden state. Manual Show/Run arm the same wait. Fit five supported sections to freeze one line from -8 to the first box's captured route station, approximately 2.5, at 1 m/s. Independently verify final normalized wall-distance equality, hard bounds, full-slab coverage and unchanged heading/width with no further section queries during movement or waits, including after later scan corrections. Include angled/tapered corridors, exact endpoint continuity and mutated fit data. The second box must not move or force arrival.
+Verify no wall at calibration, first-box reveal or rotation. Once the second box has fully risen, current headset entry anywhere in its 2 m-long, wall-to-wall and floor-to-ceiling hallway section arms immediately, including an already-present viewer. Test both wall sides, taper, ceiling/floor and length limits, calibrated yaw, incomplete rise and invalid poses. Arming latches after leaving. Reveal instantly at hallway Z=-8 on look-away or after exactly 5 continuous seconds watching its spawn direction; unknown/stalled gaze resets that timeout, and occupied entry still blocks appearance. The watched reveal must start actual movement and retain the existing 0.7 s stopping allowance. Manual Show/Run share this gate; Stop/recovery cancel it. Fit five supported sections to freeze one line from -8 to the first box's captured route station, approximately 2.5, at 1 m/s. Independently verify final normalized wall-distance equality, hard bounds, full-slab coverage and unchanged heading/width with no further section queries during movement or waits, including after later scan corrections. Include angled/tapered corridors, exact endpoint continuity and mutated fit data. The second box must not move or force arrival.
 
 Exercise Show, Run, preview and mapped VR with the same gaze model: immediate unseen movement after reveal, no watched introductory distance, and a look-back allowance of exactly **0.7 s**, splitting a frame across its deadline. Looking away rearms movement without catching up. Check the 3D wall-centre cone at 45-degree entry/50-degree retention, including pitch and calibrated yaw/translation. XR must use current native position/forward from the same valid pose, with desktop camera fallback only outside XR. Unknown gaze blocks movement and cannot count as look-away. Invalid or paused frames above 0.5 s accrue neither movement nor endpoint gaze dwell and cannot grant fresh stop grace on reacquisition.
 
@@ -228,7 +230,7 @@ hole turn, then wait two seconds before a 0.55-second glitch in. Verify its
 base is centred four metric metres inside the captured entrance, with the
 original source bristles on the level floor and unchanged scale. Cover either
 floor edge, taper and translated/yawed calibration. A current finite headset
-above the invisible 36 x 36 cm footprint may trigger only in the stable upright
+above the invisible 2 m x 2 m footprint may trigger only in the stable upright
 hallway; lateral/below-floor misses and mid-turn poses cannot qualify. Entry
 latches a full two-second delay before the 0.55-second glitch out, even after
 leaving. Return/re-entry must preserve the pending/present/finished encounter
@@ -286,8 +288,13 @@ that patch's damage; unrelated sites outside the local field must stay intact.
 Check stable seeded value-noise lobes and clumped per-Gaussian thresholds;
 there is no time-varying noise or fractional-Brownian-motion requirement.
 Before the ending return, original and near-area comparisons remain exact
-controls. Inspect several seeded stages and the final organic distribution instead of requiring the
-entire far cross-section to become uniform white.
+controls. Inspect the mature organic distribution, the halfway island fade and
+the final cleared distant corridor. After the last patch matures, require eight
+seconds of progressive uneven residual removal, with fully missing distant
+rows at completion and a ragged transition to the unchanged protected prefix.
+Blast completion and residual completion must leave the turn and XR session
+intact. Blast completion starts the separate five-second fallback countdown;
+an earlier actual return arrival retains its own ending timer.
 Verify that the supplied fracture source is converted locally and its recorded
 animation frames drive the actors; a placeholder explosion is insufficient.
 Compare `fracture_nowall.abc` and converted-GLB hashes with
@@ -303,7 +310,7 @@ it must not reload assets, replace render resources or alter source scans.
 Each actual blast ID starts one supporting `RumblingSound01.wav` excerpt from
 0.75 s for 1.8 s, using the existing shared gameplay audio context/cache/master.
 Check the 30 ms attack, 250 ms release, source-peak normalization and bounded
-overlap at nominal gain 0.22 before normalization/shared master, without music
+overlap at nominal gain 0.36 before normalization/shared master, without music
 ducking. Muted, paused, late-unloaded or cancelled starts
 must not play later, and a repeated visible frame/return cannot replay an ID.
 Reset/new game clears cue IDs while retaining the decoded cache. Native silent
@@ -320,11 +327,39 @@ tracking/session interruption; invalid/nonfinite or >0.5 s frames must also
 cancel. Require cleared FX/mask, restored crop and no delayed revival, with
 Reset or a fresh game rearming the cue. Inspect `hallway-collapse-before.png`,
 `hallway-collapse-first-patch.png`, `hallway-collapse-blasts.png`, `hallway-collapse-mid.png`,
+`hallway-collapse-islands.png`, `hallway-collapse-islands-fading.png`,
 the final white-void/return captures and optional `private-` original-crop
 variants listed in the generated report. These checks do not
 certify physical clearance, headset stereo, streamed frame time or comfort.
 
+Explosion completion must never call session end or reset the world. The
+development client defers source updates, full reloads and server-reconnect
+reloads until the active XR session ends naturally. Verify the pinned Vite
+client holds a reload through a synthetic session without calling its end
+method, then resumes afterward. This is a desktop regression, not proof that
+a SteamVR transport failure is fixed. Recent SteamVR stream synchronization
+timeouts and unrecoverable vrlink errors require a separate hardware retest;
+retain tracking-gap invalidation and calibration recovery.
+
 ## Reality ending checks
+
+In the added hallway, observe the last actual explosion animation ending and
+require zero fallback time on that frame, an intact scene at+4.999s and the
+global glitch at+5s, reaching white and one complete final narration at+6s.
+This deadline must precede residual clearing completion and keep the current
+world orientation/viewpoint. A slow return cannot postpone it; an original
+arrival before it keeps the relight/five-second branch below. Independently,
+after automatic collapse starts, require immediate glitch entry within the
+inside one-metre strip of the live forward headset end, even during blasts.
+Test yaw/translation/both polygon windings, exact threshold, nearby side and
+return edges, outside poses, absent/stale/manual bounds, invalid clocks and
+recovery. First ending wins, blocks portal changes and requests the light sound
+once and solo final voice once. Later blast IDs cannot resume rumble over the
+voice. Use actual main-loop opacity/pixels/audio calls; native XR stays disabled
+in desktop checks with any boundary fixture explicitly synthetic. Inspect
+`reality-ending-timeout-glitch.png`, `reality-ending-timeout-white.png` and the
+equivalent `boundary` captures. Hardware boundary alignment/voice/stability
+remain separate checks.
 
 Arm only after the actual automatic broom-completion collapse starts. Manual
 Hide, a cancelled encounter, an unarmed return and repeated completed snapshots
@@ -353,7 +388,7 @@ At the white endpoint, require one `finishReality` call and the complete
 voices and queued speech must stop, leaving this recording alone. Pending
 fetch/decode/resume operations and later ordinary cue requests must not revive
 prior audio; test mute and cancellation before/during the final line. Reentry
-is blocked only once the ending return starts. Close, STOP, reset, fresh
+is blocked once the ending return or either fallback starts. Close, STOP, reset, fresh
 calibration, tracking/reference/session interruption and invalid/stalled frames
 must cancel visual/audio state without late revival; a fresh game rearms once.
 Require unchanged source hashes, metric geometry, tracked-rig identity and
@@ -389,12 +424,20 @@ These spatial targets establish early feasibility only. The longer-term experien
 
 ## Headset-boundary voice checks
 
-Check signed distance to the real polygon perimeter (concave corners, either
-winding, yaw and translation), actual outward translation, the inclusive 0.5 m
-threshold, 0.75 m retreat and eight-second cooldown. Stationary starts, head
-bob, looking/turning in place, tangent travel and cooldown expiry alone must
-not speak. Reject stale/emulated/missing poses, geometry changes, paused frames
-and implausible pose jumps; recovery starts from a fresh motion baseline.
+Check signed distance to finite real polygon segments (concave corners, either
+winding, yaw and translation), selecting only normals within 45 degrees of
+either calibrated hallway end. Both inside 0–0.5 m end strips must work; nearby
+lateral edges, narrow-area central positions and all outside positions must
+stay silent. Explicitly test a negative distance far outside: an upper-bound
+comparison alone must never qualify it. Missing/changed hallway direction
+discards movement instead of guessing XR axes; artistic scan yaw/pitch leaves
+the calibrated physical direction unchanged. Check actual outward translation,
+the inclusive 0.5 m threshold, 0.75 m retreat and eight-second cooldown. Leaving
+the strip at 0.51 m or crossing outside cancels active/pending speech immediately
+without bypassing rearm hysteresis. Stationary starts, head bob, looking/turning
+in place, tangent travel and cooldown expiry alone must not speak. Reject
+stale/emulated/missing poses, geometry changes, paused frames and implausible
+pose jumps; recovery starts from a fresh motion baseline.
 
 Use synthetic bounded-floor frames with real muted native Web Audio to decode
 all four supplied DangerZone recordings, verify prompt priority over a story

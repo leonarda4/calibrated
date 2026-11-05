@@ -1,9 +1,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Group, Matrix4, MeshBasicMaterial, Quaternion, Scene, ShaderMaterial, Vector3 } from 'three';
+import { Group, Matrix4, MeshBasicMaterial, Quaternion, Scene, ShaderMaterial, Vector3, Mesh, InstancedBufferGeometry, InstancedBufferAttribute, Float32BufferAttribute } from 'three';
 import type { DropInViewer } from '@mkkellogg/gaussian-splats-3d';
 import { createBroom } from '../src/viewer/broom.ts';
 import { BROOM } from '../src/viewer/broomConfig.ts';
+import { createBroomAtmosphere } from '../src/viewer/broomAtmosphere.ts';
+
+test('foreground broom reuses only sorted broom indices, preserves shared state and rearms without rebuilding',()=>{
+  const scene=new Scene(),scan=new Group(),object=new Group();Object.assign(object,{splatBuffer:{getSplatCount:()=>3}});scene.add(scan);
+  const geometry=new InstancedBufferGeometry();geometry.setAttribute('position',new Float32BufferAttribute([0,0,0],3));
+  const sorted=new InstancedBufferAttribute(new Uint32Array([4,1,5,0,3,2]),1);geometry.setAttribute('splatIndex',sorted);geometry.instanceCount=6;
+  const material=new ShaderMaterial({vertexShader:'float splatOpacityFromScene = sceneOpacity[sceneIndex];',uniforms:{uGlobalOpacity:{value:.4}}});
+  const mesh=new Mesh(geometry,material);Object.assign(mesh,{getSceneIndexForSplat:(index:number)=>index>=3?BROOM.sceneIndex:0});scan.add(mesh);
+  Object.assign(scan,{viewer:{splatMesh:mesh},getSplatScene:()=>object});
+  let atmosphere=true;const previousScene=scene.onBeforeRender,previousMesh=mesh.onBeforeRender;
+  const effect=createBroomAtmosphere(scene,scan as unknown as DropInViewer,()=>atmosphere);
+  const prepare=()=>{(scene.onBeforeRender as ()=>void)();(mesh.onBeforeRender as ()=>void)();};
+  try{
+    prepare();const layer=effect.layer,indices=layer.geometry.getAttribute('splatIndex');
+    assert.deepEqual(Array.from(indices.array),[4,5,3]);assert.equal(layer.geometry.instanceCount,3);
+    assert.equal(layer.material.uniforms.uGlobalOpacity,material.uniforms.uGlobalOpacity);
+    assert.equal(material.uniforms.uBroomForeground.value,1);assert.equal(layer.material.uniforms.uBroomForeground.value,0);
+    assert.notEqual(layer.geometry.getAttribute('position'),geometry.getAttribute('position'));
+    atmosphere=false;prepare();assert.equal(layer.geometry.instanceCount,0);assert.equal(material.uniforms.uBroomForeground.value,0);
+    atmosphere=true;prepare();assert.equal(layer.geometry.instanceCount,3);assert.equal(layer.geometry.getAttribute('splatIndex'),indices);
+    sorted.set([5,2,4,1,3,0]);sorted.needsUpdate=true;prepare();assert.deepEqual(Array.from(indices.array),[5,4,3]);
+    object.visible=false;prepare();assert.equal(layer.geometry.instanceCount,0);
+    assert.equal(mesh.geometry,geometry);assert.equal(mesh.material,material);
+  }finally{effect.dispose();effect.dispose();geometry.dispose();material.dispose();}
+  assert.equal(scene.onBeforeRender,previousScene);assert.equal(mesh.onBeforeRender,previousMesh);assert.equal(material.uniforms.uBroomForeground.value,0);
+});
 
 function fixture() {
   const scene = new Scene(), scan = new Group(), rawObject = new Group();

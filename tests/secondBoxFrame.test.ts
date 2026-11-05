@@ -68,7 +68,7 @@ function verifySeat(f: ReturnType<typeof fixture>) {
   // Select the same physical +X side independently of estimator left/right labels.
   const side = fit.wallPlanes.left.normal[0] < 0 ? 'left' : 'right';
   const wall = fit.wallPlanes[side], n = wall.normal, p = wall.point;
-  const expectedX = (.18 + n[0] * p[0] + n[2] * (p[2] - station)) / n[0];
+  const expectedX = (.28 + n[0] * p[0] + n[2] * (p[2] - station)) / n[0];
   const expectedBase = new Vector3(expectedX, 0, station).applyMatrix4(f.transform);
   nearVector(new Vector3(...state.base!), expectedBase);
   near(state.base![1], 0);
@@ -79,8 +79,8 @@ function verifySeat(f: ReturnType<typeof fixture>) {
   const footprint = [-.5, .5].flatMap(x => [-.5, .5].map(z =>
     f.placementFrame.routePoint(new Vector3(x, -.5, z).applyMatrix4(f.seat.matrixWorld))));
   const distances = footprint.map(point => measureWallDistances(fit.wallPlanes, point.toArray())[side]);
-  assert.equal(distances.filter(distance => Math.abs(distance) < 1e-9).length, 2, 'the full wall-side edge contacts the fitted plane');
-  near(Math.max(...distances), .36);
+  assert.equal(distances.filter(distance => Math.abs(distance - .1) < 1e-9).length, 2, 'the full wall-side edge stays 10 cm from the fitted plane');
+  near(Math.max(...distances), .46);
   for (const point of footprint) near(point.y, 0);
   near(footprint[0].distanceTo(footprint[1]), .36);
   near(footprint[0].distanceTo(footprint[2]), .36);
@@ -104,15 +104,23 @@ for (const yaw of [Math.PI / 2, Math.PI, -.63]) {
       assert.ok(f.installation.rotateHallway()); f.installation.update(4);
       assert.equal(f.installation.snapshot().secondBox.visible, false, 'seat stays hidden during the turn');
       const hiddenBase = f.installation.snapshot().secondBox.base!;
-      assert.equal(f.installation.headsetAboveSecondBox([hiddenBase[0], 1.7, hiddenBase[2]]), false);
+      assert.equal(f.installation.headsetInSecondBoxHallway([hiddenBase[0], 1.7, hiddenBase[2]]), false);
       assert.ok(f.installation.showSecondBox()); f.installation.update(1.5);
       const before = verifySeat(f);
       assert.ok(f.installation.snapshot().secondBox.visible); assert.ok(f.seat.visible);
       const revealedBase = f.installation.snapshot().secondBox.base!;
-      assert.ok(f.installation.headsetAboveSecondBox([revealedBase[0], 1.7, revealedBase[2]]));
-      const outside = new Vector3(.19, 1.7, 0).applyAxisAngle(new Vector3(0, 1, 0), f.installation.snapshot().secondBox.yaw);
+      assert.ok(f.installation.headsetInSecondBoxHallway([revealedBase[0], 1.7, revealedBase[2]]));
+      const centre = successful(f.sections.at(station)).centerWorld;
+      for (const delta of [-.8, .8]) {
+        const within = new Vector3(centre[0], 1.7, station + delta).applyMatrix4(f.transform);
+        assert.ok(f.installation.headsetInSecondBoxHallway(within.toArray()), 'section entry away from the box must trigger');
+      }
+      for (const [y, z] of [[2.601, station], [1.7, station - 1.001], [1.7, station + 1.001]]) {
+        assert.equal(f.installation.headsetInSecondBoxHallway(new Vector3(centre[0], y, z).applyMatrix4(f.transform).toArray()), false);
+      }
+      const outside = new Vector3(3, 1.7, 0).applyAxisAngle(new Vector3(0, 1, 0), f.installation.snapshot().secondBox.yaw);
       outside.x += revealedBase[0]; outside.z += revealedBase[2];
-      assert.equal(f.installation.headsetAboveSecondBox(outside.toArray()), false);
+      assert.equal(f.installation.headsetInSecondBoxHallway(outside.toArray()), false);
       assert.ok(f.installation.setRotationOffset(.1));
       const shifted = verifySeat(f);
       near(shifted.x - before.x, -.1, 2e-6);

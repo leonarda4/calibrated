@@ -105,12 +105,14 @@ test('damage is a growing three-dimensional patch union, never an entire clippin
     previous = state; weights = next;
   }
   near(previous.elapsedSeconds, previous.durationSeconds); near(previous.progress, 1);
-  assert.ok(previous.durationSeconds >= 8.4 && previous.durationSeconds <= 12.9);
+  assert.ok(previous.patchMatureSeconds >= 8.4 && previous.patchMatureSeconds <= 12.9);
+  near(previous.durationSeconds,previous.patchMatureSeconds+HALLWAY_COLLAPSE.residualSeconds);
   assert.ok(previous.patches.every(patch => patch.fadeProgress === 1 && patch.active));
   const middleDepth = previous.patches[0].centerOpening[2];
   assert.ok(f.collapse.removalAtOpening(previous.patches[0].centerOpening) > .9);
   assert.equal(f.collapse.removalAtOpening([4, 1.3, middleDepth]), 0);
-  assert.ok(points.some(point => f.collapse.removalAtOpening(point) < .4), 'far detail remains between local cavities');
+  assert.equal(previous.residualProgress,1);
+  assert.equal(f.collapse.removalAtOpening([0,1.3,11.5]),1,'distant residual islands eventually disappear');
   const ended = f.collapse.snapshot(); f.step(10);
   near(f.collapse.snapshot().elapsedSeconds, ended.elapsedSeconds);
   assert.deepEqual(f.collapse.snapshot().patches, ended.patches);
@@ -186,6 +188,7 @@ test('spots and depth radii adapt to crop length; insufficient distant space sup
   for (const far of [6.5, 8, 9]) {
     const f = fixture('end', 0, 0, far); f.step(10);
     assert.equal(f.collapse.snapshot().phase, 'suppressed'); assert.equal(f.collapse.snapshot().active, false);
+    assert.equal(f.collapse.snapshot().explosionsFinished, true, 'A fully protected crop cannot leave the finale waiting for nonexistent blasts.');
     assert.deepEqual(f.collapse.snapshot().patches, []);
   }
 });
@@ -194,7 +197,30 @@ test('long source clips retain their full durations while damage remains local a
   const f = fixture('end', .7, 0, 12, 5); f.step(3.2);
   assert.ok(f.collapse.snapshot().maskActive); assert.ok(f.collapse.snapshot().blasts[0].active);
   near(f.collapse.snapshot().patches[0].fadeProgress, 1);
-  near(f.collapse.snapshot().durationSeconds, f.collapse.snapshot().blasts.at(-1)!.start + 5);
+  near(f.collapse.snapshot().durationSeconds, f.collapse.snapshot().blasts.at(-1)!.start + 5 + HALLWAY_COLLAPSE.residualSeconds);
+});
+
+test('blast completion preserves the world and organic islands fade gradually afterward, pausing for return',()=>{
+  const f=fixture(),plan=f.collapse.snapshot(),pose=f.final.toArray();
+  const lastBlast=plan.blasts.at(-1)!;
+  f.step(lastBlast.start+lastBlast.duration);
+  assert.equal(f.collapse.snapshot().blasts.some(b=>b.active),false);
+  assert.equal(f.collapse.snapshot().explosionsFinished,true);
+  near(f.collapse.snapshot().blastEndSeconds,lastBlast.start+lastBlast.duration);
+  assert.equal(f.collapse.snapshot().active,true);assert.equal(f.collapse.snapshot().phase,'disintegrating');
+  matrixNear(f.collapse.snapshot().worldToOpening!,new Matrix4().fromArray(plan.canonicalToOpening!).multiply(f.final.clone().invert()).toArray());
+  matrixNear(f.final.toArray(),pose);
+  f.step(plan.patchMatureSeconds-f.collapse.snapshot().elapsedSeconds);
+  assert.equal(f.collapse.snapshot().residualProgress,0);
+  const point:Point3=[0,2.6,11.5],initial=f.collapse.removalAtOpening(point);
+  f.step(4);near(f.collapse.snapshot().residualProgress,.5);
+  assert.ok(f.collapse.removalAtOpening(point)>initial);
+  const paused=f.collapse.snapshot();f.step(2,{upright:false});
+  near(f.collapse.snapshot().elapsedSeconds,paused.elapsedSeconds);
+  near(f.collapse.snapshot().residualProgress,.5);
+  f.step(4);assert.equal(f.collapse.snapshot().phase,'complete');
+  assert.equal(f.collapse.removalAtOpening(point),1);
+  for(const depth of [0,2,4,6])assert.equal(f.collapse.removalAtOpening([0,1.3,depth]),0);
 });
 
 test('invalid/stale frames and eligibility loss cancel every live stage without burst or damage replay', () => {

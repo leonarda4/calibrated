@@ -1,5 +1,6 @@
 export const REALITY_ENDING = Object.freeze({
-  relightSeconds: 1, dimensionSeconds: 5, glitchSeconds: 1, defaultSeed: 0x35ead026,
+  relightSeconds: 1, dimensionSeconds: 5, glitchSeconds: 1, afterExplosionsSeconds: 5,
+  boundaryMetres: 1, defaultSeed: 0x35ead026,
 });
 
 export type RealityWorldPhase = 'idle' | 'turning' | 'complete' | 'returning' | 'original' | 'cancelled';
@@ -11,6 +12,10 @@ export interface RealityEndingSample {
   /** Actual automatic collapse onset, never manual broom Hide or an open hole. */
   collapseStarted: boolean;
   brightness: number;
+  /** Last actual burst has ended; residual Gaussian clearing may still be running. */
+  explosionsFinished?: boolean;
+  /** Signed distance to the live far-end headset boundary; null when unavailable. */
+  farBoundaryMetres?: number | null;
 }
 type Keyframe = readonly [number, number];
 const worldPhases: readonly string[] = ['idle', 'turning', 'complete', 'returning', 'original', 'cancelled'];
@@ -43,7 +48,7 @@ function sampleCurve(curve: readonly Keyframe[], time: number): number {
   return curve.at(-1)![1];
 }
 
-/** One observed return after automatic collapse ends the authored environment.
+/** Automatic collapse ends on return, a post-blast deadline or the far boundary.
  * No rendering, audio, timer, calibration authority or tracked-pose ownership.
  */
 export class RealityEnding {
@@ -55,6 +60,9 @@ export class RealityEnding {
   private returnedCount = 0;
   private narrationCount = 0;
   private paused = false;
+  private trigger: 'return' | 'timeout' | 'boundary' | null = null;
+  private afterExplosions: number | null = null;
+  private glitchStart: number = REALITY_ENDING.dimensionSeconds;
   private seed: number;
   private relightCurve: Keyframe[];
   private glitchCurve: Keyframe[];
@@ -75,43 +83,59 @@ export class RealityEnding {
     this.glitchCurve = seededCurve(glitch, seed ^ 0x71d8a3c5);
     this.phase = 'idle'; this.previousWorld = null; this.originalDamage = false; this.seconds = 0;
     this.capturedBrightness = null; this.returnedCount = 0; this.narrationCount = 0; this.paused = false;
+    this.trigger = null; this.afterExplosions = null; this.glitchStart = REALITY_ENDING.dimensionSeconds;
   }
 
   /** Past event counts remain historical; only an explicit new game clears them. */
   cancel(): void {
     this.phase = 'cancelled'; this.previousWorld = null; this.originalDamage = false;
     this.seconds = 0; this.capturedBrightness = null; this.paused = false;
+    this.trigger = null; this.afterExplosions = null; this.glitchStart = REALITY_ENDING.dimensionSeconds;
   }
 
   update(sample: RealityEndingSample): void {
     if (this.phase === 'cancelled') return;
     const valid = Number.isFinite(sample.dt) && sample.dt >= 0 && sample.dt <= .5 &&
-      Number.isFinite(sample.brightness) && sample.brightness >= 0 && sample.brightness <= 1 && worldPhases.includes(sample.worldPhase);
+      Number.isFinite(sample.brightness) && sample.brightness >= 0 && sample.brightness <= 1 && worldPhases.includes(sample.worldPhase) &&
+      (sample.explosionsFinished === undefined || typeof sample.explosionsFinished === 'boolean') &&
+      (sample.farBoundaryMetres == null || Number.isFinite(sample.farBoundaryMetres));
     if (this.phase === 'idle') {
       // Unaccepted idle samples cannot synthesize an earlier return edge.
       if (!sample.eligible || !valid || !sample.collapseStarted || ['idle', 'cancelled'].includes(sample.worldPhase)) return;
       this.phase = 'armed';
-      if (sample.worldPhase === 'returning') { this.phase = 'returning'; this.originalDamage = true; }
       this.previousWorld = sample.worldPhase;
-      return;
     }
     if (!sample.eligible || !valid || ['idle', 'cancelled'].includes(sample.worldPhase)) { this.cancel(); return; }
-    if (this.returnedCount === 0) {
+    if (this.trigger === null) {
+      if (sample.worldPhase === 'complete' && sample.farBoundaryMetres != null &&
+          sample.farBoundaryMetres >= 0 && sample.farBoundaryMetres <= REALITY_ENDING.boundaryMetres + 1e-9) {
+        this.trigger = 'boundary'; this.glitchStart = 0; this.seconds = 0; this.phase = 'glitching';
+        return;
+      }
       if (sample.worldPhase === 'returning') { this.phase = 'returning'; this.originalDamage = true; }
       if (this.originalDamage && this.previousWorld === 'returning' && sample.worldPhase === 'original') {
         this.returnedCount = 1; this.seconds = 0; this.capturedBrightness = sample.brightness; this.phase = 'relighting';
+        this.trigger = 'return'; this.previousWorld = sample.worldPhase;
+        return; // Actual return wins if it arrives before a fallback fires.
+      }
+      if (this.afterExplosions !== null) this.afterExplosions += sample.dt;
+      else if (sample.explosionsFinished) this.afterExplosions = 0;
+      if (this.afterExplosions !== null && this.afterExplosions + 1e-9 >= REALITY_ENDING.afterExplosionsSeconds) {
+        this.trigger = 'timeout'; this.glitchStart = 0;
+        this.seconds = Math.max(0, this.afterExplosions - REALITY_ENDING.afterExplosionsSeconds);
+        this.phase = 'glitching';
       }
       this.previousWorld = sample.worldPhase;
       return; // The observed endpoint frame starts the dimension clock at zero.
     }
     this.previousWorld = sample.worldPhase;
-    this.paused = sample.worldPhase !== 'original';
+    this.paused = this.trigger === 'return' && sample.worldPhase !== 'original';
     if (this.paused || sample.dt === 0 || this.phase === 'white') return;
-    const end = REALITY_ENDING.dimensionSeconds + REALITY_ENDING.glitchSeconds;
+    const end = this.glitchStart + REALITY_ENDING.glitchSeconds;
     this.seconds = Math.min(end, this.seconds + sample.dt);
     if (this.seconds + 1e-9 >= end) {
       this.seconds = end; this.phase = 'white'; this.narrationCount = 1;
-    } else if (this.seconds + 1e-9 >= REALITY_ENDING.dimensionSeconds) {
+    } else if (this.seconds + 1e-9 >= this.glitchStart) {
       this.phase = 'glitching';
     } else if (this.seconds + 1e-9 >= REALITY_ENDING.relightSeconds) {
       this.phase = 'holding';
@@ -120,17 +144,18 @@ export class RealityEnding {
 
   snapshot() {
     const active = this.phase !== 'idle' && this.phase !== 'cancelled';
-    const arrived = active && this.returnedCount > 0;
+    const arrived = active && this.trigger === 'return';
     const brightness = !arrived || this.capturedBrightness === null ? null
       : this.seconds + 1e-9 >= REALITY_ENDING.relightSeconds ? 1
       : this.capturedBrightness + (1 - this.capturedBrightness) * sampleCurve(this.relightCurve, this.seconds / REALITY_ENDING.relightSeconds);
-    const glitchProgress = !arrived || this.seconds < REALITY_ENDING.dimensionSeconds ? 0
-      : clamp((this.seconds - REALITY_ENDING.dimensionSeconds) / REALITY_ENDING.glitchSeconds);
+    const glitchProgress = !active || this.trigger === null || this.seconds < this.glitchStart ? 0
+      : clamp((this.seconds - this.glitchStart) / REALITY_ENDING.glitchSeconds);
     const environmentOpacity = this.phase === 'white' ? 0 : this.phase === 'glitching'
       ? sampleCurve(this.glitchCurve, glitchProgress) : 1;
     return { phase: this.phase, active, originalDamage: this.originalDamage,
       dimensionSeconds: this.seconds, brightness, capturedBrightness: this.capturedBrightness,
       glitchProgress, environmentOpacity, returnedCount: this.returnedCount, narrationCount: this.narrationCount,
-      paused: this.paused, seed: this.seed };
+      trigger: this.trigger, afterExplosionsSeconds: this.afterExplosions,
+      blocksPortal: active && (this.originalDamage || this.trigger !== null), paused: this.paused, seed: this.seed };
   }
 }

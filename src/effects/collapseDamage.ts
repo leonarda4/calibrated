@@ -7,6 +7,7 @@ export interface CutoutDestructionMask {
   protectedDepth: number;
   feather: number;
   patches?: readonly CollapseDamagePatch[];
+  residualProgress?: number;
 }
 
 export const COLLAPSE_PATCH_LIMIT = 10;
@@ -16,6 +17,7 @@ export function destructionUniforms(): Record<string, IUniform> {
     // y/z retain diagnostic compatibility; damage comes only from local patches.
     uCutoutDestruction: { value: new Vector4(0, 0, .75, 6) },
     uCollapsePatchCount: { value: 0 },
+    uCollapseResidual: { value: 0 },
     uCollapsePatchCenters: { value: Array.from({ length: COLLAPSE_PATCH_LIMIT }, () => new Vector4()) },
     uCollapsePatchShapes: { value: Array.from({ length: COLLAPSE_PATCH_LIMIT }, () => new Vector4()) },
   };
@@ -25,6 +27,7 @@ export function writeDestructionUniforms(uniforms: Record<string, IUniform>, mas
   if (![mask.frontDepth, mask.protectedDepth, mask.feather].every(Number.isFinite) ||
     mask.feather <= 0 || mask.protectedDepth < 0) throw new Error('Corridor destruction needs finite protected depths.');
   uniforms.uCutoutDestruction.value.set(mask.active ? 1 : 0, mask.frontDepth, mask.feather, mask.protectedDepth);
+  uniforms.uCollapseResidual.value=mask.active?Math.max(0,Math.min(1,mask.residualProgress??0)):0;
   const patches = (mask.patches ?? []).filter(patch => patch.active).slice(0, COLLAPSE_PATCH_LIMIT);
   uniforms.uCollapsePatchCount.value = patches.length;
   for (let i = 0; i < COLLAPSE_PATCH_LIMIT; i++) {
@@ -55,11 +58,14 @@ export const collapseNoiseGLSL = `
 export const collapseDamageGLSL = `
   uniform vec4 uCutoutDestruction;
   uniform int uCollapsePatchCount;
+  uniform float uCollapseResidual;
   uniform vec4 uCollapsePatchCenters[${COLLAPSE_PATCH_LIMIT}];
   uniform vec4 uCollapsePatchShapes[${COLLAPSE_PATCH_LIMIT}];
   ${collapseNoiseGLSL}
   float collapseDamage(vec3 p) {
     if(uCutoutDestruction.x < 0.5 || p.z <= uCutoutDestruction.w) return 0.0;
+    // Finished distant regions need no patch loops or procedural noise per splat.
+    if(uCollapseResidual>=1.0 && p.z>uCutoutDestruction.w+4.0) return 1.0;
     float survival = 1.0, coarse = -1.0, fine = 0.0;
     for(int i=0; i<${COLLAPSE_PATCH_LIMIT}; i++) {
       if(i >= uCollapsePatchCount) break;
@@ -68,8 +74,9 @@ export const collapseDamageGLSL = `
       float dissolution = sqrt(max(0.0,shape.z));
       float growth = 0.3 + 0.95*dissolution;
       vec3 delta = (p-center.xyz)/(vec3(shape.xy,center.w)*growth);
-      float distanceToBlast = length(delta);
-      if(distanceToBlast > 1.35 || shape.z <= 0.0) continue;
+      float distanceSquared = dot(delta,delta);
+      if(distanceSquared > 1.8225 || shape.z <= 0.0) continue;
+      float distanceToBlast = sqrt(distanceSquared);
       if(coarse < 0.0) {
         float seed = uCollapsePatchShapes[0].w;
         coarse = collapseNoise(p*vec3(1.7,2.2,0.65)+seed);
@@ -81,6 +88,18 @@ export const collapseDamageGLSL = `
       float loss = envelope*dissolution*mix(0.72,1.0,fine);
       survival *= 1.0-loss;
     }
-    return (1.0-survival)*smoothstep(uCutoutDestruction.w,uCutoutDestruction.w+1.5,p.z);
+    float loss=(1.0-survival)*smoothstep(uCutoutDestruction.w,uCutoutDestruction.w+1.5,p.z);
+    if(uCollapseResidual>0.0){
+      if(coarse<0.0){
+        float seed=uCollapsePatchShapes[0].w;
+        coarse=collapseNoise(p*vec3(1.7,2.2,0.65)+seed);
+        fine=collapseNoise(p*vec3(8.0,8.0,5.0)+17.2+seed);
+      }
+      // Clumps fade at different times; the protected join keeps its soft edge.
+      float clearing=smoothstep(0.15+0.25*fine,1.0,uCollapseResidual);
+      clearing*=smoothstep(0.0,1.5+1.5*coarse,p.z-uCutoutDestruction.w);
+      loss=1.0-(1.0-loss)*(1.0-clearing);
+    }
+    return loss;
   }
 `;

@@ -6,7 +6,7 @@ import { HoleWorldRotation, easeHoleTurn, type HoleTurnGeometry } from './holeWo
 export const HALLWAY_COLLAPSE = Object.freeze({
   minProtectedDepth: 6, userClearance: 2, boundaryClearance: 1,
   blastCount: 10, spotsPerSide: 5, minStaggerSeconds: .6, maxStaggerSeconds: 1.1,
-  blastSeconds: 1.8, blastRadius: .9, blastClearance: 2, patchSeconds: 3,
+  blastSeconds: 1.8, blastRadius: .9, blastClearance: 2, patchSeconds: 3, residualSeconds: 8,
   edgeWidth: .75, defaultSeed: 0x51ce2026,
 });
 
@@ -89,6 +89,7 @@ export class HallwayCollapse {
   private sourceHeight = 0;
   private seed: number = HALLWAY_COLLAPSE.defaultSeed;
   private durationSeconds = 0;
+  private patchMatureSeconds = 0;
   private placement: ReturnType<typeof cutoutPlacement> | null = null;
   private openingToCanonical: Matrix4 | null = null;
   private canonicalToOpening: Matrix4 | null = null;
@@ -146,7 +147,8 @@ export class HallwayCollapse {
         radiusDepth: Math.max(.65, (farDepth - minBlastDepth) / HALLWAY_COLLAPSE.spotsPerSide * 1.3 * (.85 + .3 * random())),
         seed: random() * 997 };
     });
-    this.durationSeconds = this.blasts.at(-1)!.start + Math.max(duration, HALLWAY_COLLAPSE.patchSeconds);
+    this.patchMatureSeconds = this.blasts.at(-1)!.start + Math.max(duration, HALLWAY_COLLAPSE.patchSeconds);
+    this.durationSeconds = this.patchMatureSeconds + HALLWAY_COLLAPSE.residualSeconds;
     this.phase = 'fracturing';
     return true;
   }
@@ -154,7 +156,7 @@ export class HallwayCollapse {
   reset(): void {
     this.phase = 'idle'; this.elapsed = 0; this.paused = false; this.farDepth = 0;
     this.protectedDepth = HALLWAY_COLLAPSE.minProtectedDepth; this.userDepth = null; this.sourceWidth = 0; this.sourceHeight = 0;
-    this.seed = HALLWAY_COLLAPSE.defaultSeed; this.durationSeconds = 0;
+    this.seed = HALLWAY_COLLAPSE.defaultSeed; this.durationSeconds = 0; this.patchMatureSeconds = 0;
     this.placement = null; this.openingToCanonical = null; this.canonicalToOpening = null; this.worldToOpening = null; this.blasts = [];
   }
   cancel(): void { this.phase = 'cancelled'; this.elapsed = 0; this.paused = false; }
@@ -211,10 +213,13 @@ export class HallwayCollapse {
       const t = Math.max(0, Math.min(1, 1 - distance));
       loss = Math.max(loss, patch.fadeProgress * t * t * (3 - 2 * t));
     }
-    return loss;
+    if(Math.abs(point[0])>this.sourceWidth/2+.3||point[1]<-.3||point[1]>this.sourceHeight+.3)return loss;
+    const clearing=state.residualProgress*easeHoleTurn((point[2]-state.protectedDepth)/3);
+    return 1-(1-loss)*(1-clearing);
   }
   snapshot() {
     const progress = this.progress(), enabled = !['idle', 'cancelled', 'suppressed'].includes(this.phase);
+    const residualProgress = enabled ? Math.max(0,Math.min(1,(this.elapsed-this.patchMatureSeconds)/HALLWAY_COLLAPSE.residualSeconds)) : 0;
     const patches: CollapseDamagePatch[] = this.blasts.map(blast => {
       const age = this.elapsed - blast.start, suppressed = blast.depth - HALLWAY_COLLAPSE.blastRadius <= this.protectedDepth;
       return { id: blast.id, centerOpening: [blast.across, blast.height, blast.depth], age,
@@ -228,13 +233,17 @@ export class HallwayCollapse {
       .map(patch => patch.centerOpening[2] - patch.radiusDepth * easeHoleTurn(patch.fadeProgress)));
     const frontDepth = Math.max(this.protectedDepth, authoredFrontDepth);
     const maskActive = enabled && patches.some(patch => patch.active && patch.fadeProgress > 0) && this.protectedDepth < this.farDepth;
+    const blastEndSeconds = Math.max(0, ...this.blasts.filter(blast =>
+      blast.depth - HALLWAY_COLLAPSE.blastRadius > this.protectedDepth).map(blast => blast.start + blast.duration));
+    const explosionsFinished = this.phase === 'suppressed' || (enabled && this.elapsed + 1e-9 >= blastEndSeconds);
     return { phase: this.phase, active: enabled, paused: this.paused, elapsedSeconds: this.elapsed,
-      progress, durationSeconds: this.durationSeconds, seed: this.seed,
+      blastEndSeconds, explosionsFinished,
+      progress, durationSeconds: this.durationSeconds, patchMatureSeconds:this.patchMatureSeconds, residualProgress, seed: this.seed,
       farDepth: this.farDepth, protectedDepth: this.protectedDepth, userDepth: this.userDepth,
       authoredFrontDepth, frontDepth, edgeWidth: HALLWAY_COLLAPSE.edgeWidth, feather: HALLWAY_COLLAPSE.edgeWidth,
       openingWidth: this.sourceWidth, openingHeight: this.sourceHeight, maskActive,
       patches,
-      mask: { active: maskActive, frontDepth, protectedDepth: this.protectedDepth, feather: HALLWAY_COLLAPSE.edgeWidth, patches },
+      mask: { active: maskActive, frontDepth, protectedDepth: this.protectedDepth, feather: HALLWAY_COLLAPSE.edgeWidth, patches, residualProgress },
       rawToOpening: this.placement?.rawToOpening.toArray() ?? null,
       openingToCanonical: this.openingToCanonical?.toArray() ?? null,
       canonicalToOpening: this.canonicalToOpening?.toArray() ?? null,

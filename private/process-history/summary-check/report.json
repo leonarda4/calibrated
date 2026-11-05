@@ -1,0 +1,14 @@
+{
+  "checkedAt": "2026-11-05T11:39:26.956Z",
+  "file": "summary.html",
+  "bytes": 2602837,
+  "checks": [
+    "Isolated HTML loads offline with nine original-byte images, valid timestamps/internal anchors and no linked resources",
+    "Picture enlargement, Escape dismissal and original-message disclosure work",
+    "390px mobile layout and enlarged screenshot fit without horizontal overflow",
+    "Print stylesheet available",
+    "Zero JavaScript errors and zero external network requests"
+  ],
+  "errors": [],
+  "externalRequests": []
+}

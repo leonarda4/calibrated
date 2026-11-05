@@ -31,7 +31,7 @@ export function bindBoundaryPanel(initial: ManualRectangleConfig, callbacks: {
       <div id="movement-manual-fields"></div>
       <button id="movement-manual-apply" type="button">Apply manual area</button>
     </details>
-    <p style="color:#9daebb;margin-bottom:0">Map is an operator reference. Voice uses live headset bounds only. System boundaries stay enabled.</p>
+    <p style="color:#9daebb;margin-bottom:0">Map is an operator reference. Voice uses live headset bounds at hallway ends only. System boundaries stay enabled.</p>
     <p id="movement-boundary-error" role="alert" style="color:#ffaab2;margin-bottom:0"></p>`;
   document.body.appendChild(panel);
   const find = <T extends HTMLElement>(id: string) => panel.querySelector<T>(`#${id}`)!;

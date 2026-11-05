@@ -2,7 +2,7 @@
 
 Gameplay now uses the supplied local music, speech and sound effects under `public/audio/BackgroundSounds/` and `public/audio/SoundFX/`. It does not need an ElevenLabs account, API key, generation command or runtime synthesis service. The earlier generated narration is retired from the gameplay path. Existing generated files are retained as historical assets; they are not the soundtrack for this flow.
 
-The second box's completed rise requests `SoundFX/SitDownOnTheBox.wav` once. The current headset above that box still arms the wall's unseen appearance. Five seconds after its actual reveal, request `SoundFX/GoBackToTheClassRoom.wav`; arming and waiting for look-away/clearance do not start that deadline. Both use complete recordings and the existing speech queue without ducking the background. Earlier speech finishes before a queued line starts. Stop/reset, wall cancellation and calibration/tracking/session recovery cancel pending requests.
+The second box's completed rise requests `SoundFX/SitDownOnTheBox.wav` once. Current headset entry into the full-width/full-height 2 m hallway section centred on that box arms the wall; look-away or five continuous seconds watching its spawn direction permits appearance, subject to player clearance. Five seconds after its actual reveal, request `SoundFX/GoBackToTheClassRoom.wav`; arming and waiting for look-away/clearance do not start that deadline. Both use complete recordings and the existing speech queue without ducking the background. Earlier speech finishes before a queued line starts. Stop/reset, wall cancellation and calibration/tracking/session recovery cancel pending requests.
 
 See [gameplay flow](GAMEPLAY_FLOW.md) for the phase table, automatic and user triggers, estimated durations and the audio-file mapping. The draft starts Ambience 1 after successful calibration, welcomes the participant one second later and plays the step-on instruction when the first box appears at +8 s. Desktop autoplay uses about 20 seconds of exploration. The three music transitions accompany the room turn, light flicker and headset-above-hole trigger; each begins before its visual cue. Ambience 4 follows the third transition and continues through repeated four-second turns into and back from the added hallway.
 
@@ -18,8 +18,11 @@ cannot revive an old pass. Tune `GAMEPLAY_AUDIO.explorationFootsteps` in
 its existing level, and these cues are independent of the wearer's own steps.
 
 The supplied `DangerZone01.wav` through `DangerZone04.wav` cycle as priority
-boundary prompts: actual outward head motion within 0.5 m of the live headset
-outline, 0.75 m retreat to rearm and an eight-second cooldown. They use the
+boundary prompts: actual outward head motion in the inside 0–0.5 m strip of
+live headset edges facing either calibrated hallway end, 0.75 m retreat to
+rearm and an eight-second cooldown. Side edges, central space and positions
+outside the polygon stay silent; leaving the strip cancels speech immediately.
+The calibrated physical axis stays fixed through visual turns/pitch. They use the
 normalized speech gain and replace the current story line promptly, preserving
 queued future lines and the music level. Missing runtime bounds, old session
 snapshots and the manual rectangle cannot trigger them. The movement panel

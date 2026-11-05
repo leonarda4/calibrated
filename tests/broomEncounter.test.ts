@@ -60,13 +60,13 @@ test('first completion waits two full seconds before a bounded glitch-in; duplic
   assert.equal(encounter.arm(f.hole, f.final), false);
 });
 
-test('the invisible box uses the same upward headset footprint, then latches a two-second exit even after leaving', () => {
+test('the invisible two-metre square accepts a distant approach, then latches a two-second exit even after leaving', () => {
   const f = fixture('start', -1.4), { encounter, head } = f; reveal(f);
-  for (const p of [head(.181), head(0, -.181), head(0, 0, -.001)]) {
+  for (const p of [head(1.001), head(-1.001), head(0, -1.001), head(0, 1.001), head(0, 0, -.001)]) {
     encounter.update(.1, true, p, true); assert.equal(encounter.snapshot().phase, 'visible');
   }
   encounter.update(.1, true, head(), false); assert.equal(encounter.snapshot().phase, 'visible');
-  encounter.update(.1, true, head(.18, -.18, 100), true);
+  encounter.update(.1, true, head(1, -1, 100), true);
   assert.equal(encounter.snapshot().phase, 'waitingExit'); near(encounter.snapshot().elapsedSeconds, 0);
   step(encounter, 1.999, head(3)); assert.equal(encounter.snapshot().phase, 'waitingExit');
   encounter.update(.001, true, head(3), true); assert.equal(encounter.snapshot().phase, 'glitchingOut');
@@ -114,5 +114,5 @@ test('captured poses are immutable and invalid or incomplete rotations fail hidd
   assert.throws(() => broomCutoutPlacement(valid.hole, new Matrix4()), /completed upright/);
   const failed = new BroomEncounter(); assert.equal(failed.arm({ ...valid.hole, open: false }, valid.final), false);
   assert.equal(failed.snapshot().visible, false); assert.equal(failed.snapshot().phase, 'cancelled');
-  assert.deepEqual(before.triggerSize, [.36, .43, .36]); assert.equal(BROOM_ENCOUNTER.depth, 4);
+  assert.deepEqual(before.triggerSize, [2, .43, 2]); assert.equal(BROOM_ENCOUNTER.depth, 4);
 });

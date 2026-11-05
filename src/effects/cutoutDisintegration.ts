@@ -46,6 +46,8 @@ export function prepareCutoutDisintegration(material: ShaderMaterial): void {
         if (cutoutDestructionPoint.z - 4.0 * alongSigma > uCutoutDestruction.w + 0.15) {
           float safeClearance = cutoutDestructionPoint.z - 4.0 * alongSigma - uCutoutDestruction.w - 0.15;
           float lost = collapseDamage(cutoutDestructionPoint)*smoothstep(0.0,1.0,safeClearance);
+          if(lost>=0.99999){gl_Position=vec4(0.0,0.0,2.0,1.0);return;}
+          if(lost>0.0){
           // Neighbouring splats disappear in small clumps, with individual specks
           // at their edges. Independent thinning alone hides behind dense layers.
           float cluster = collapseNoise(cutoutDestructionPoint*vec3(3.5,3.5,2.5)+0.37*uCollapsePatchShapes[0].w);
@@ -53,6 +55,7 @@ export function prepareCutoutDisintegration(material: ShaderMaterial): void {
           float survival = 1.0-smoothstep(grain-0.07,grain+0.09,lost);
           vColor.a *= survival;
           if (survival < 0.001) { gl_Position = vec4(0.0,0.0,2.0,1.0); return; }
+          }
         }
       }
       ${covariance}

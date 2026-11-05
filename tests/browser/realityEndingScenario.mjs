@@ -96,6 +96,107 @@ async function originalEnds(page) {
   });
 }
 
+/** Real main-loop fallbacks; synthetic live boundary data never requests XR. */
+async function fallbacks(page,output,prefix) {
+  const results=[];
+  const advance=async seconds=>{
+    await nativeFrame(page);
+    await page.evaluate(seconds=>{const s=window.__collapseCheck;s.endingStopAt=seconds;s.paused=false;},seconds);
+    await page.waitForFunction(seconds=>{
+      const e=window.__debug.realityEnding.snapshot();
+      const clock=e.trigger==='timeout'?5+e.dimensionSeconds:e.trigger==='boundary'?e.dimensionSeconds:e.afterExplosionsSeconds??0;
+      return clock>=seconds-1e-8;
+    },seconds,{timeout:10000});
+  };
+  for(const branch of ['timeout','boundary']) {
+    await page.evaluate(branch=>{
+      const s=window.__collapseCheck,d=window.__debug,e=window.__endingCheck;
+      document.getElementById('experience-reset').click();
+      s.paused=true;s.holdFallback=false;s.fallbackClock=true;s.collapseSpeed=1;s.stopAt=null;s.endingStopAt=undefined;
+      if(!d.floorHole.show()||!d.holeWorldRotation.start(s.geometry))throw Error('Fallback needs the captured opening.');
+      for(let i=0;i<8;i++)s.turnUpdate.call(d.holeWorldRotation,.5,true);
+      d.camera.position.fromArray(s.positions.view);d.controls.target.fromArray(s.positions.forwardTarget);d.controls.update();
+      if(!s.collapseArm.call(d.hallwayCollapse,s.geometry,d.holeWorldRotation.matrix(),s.source,d.hallwayCollapseEffects.snapshot().farDepth,d.camera.position.toArray()))
+        throw Error('Fallback must rearm the same actual collapse path.');
+      if(branch==='timeout'){
+        const end=Math.max(...d.hallwayCollapse.snapshot().blasts.map(b=>b.start+b.duration));
+        let remaining=end;
+        while(remaining>1e-9){const dt=Math.min(.25,remaining);s.collapseUpdate.call(d.hallwayCollapse,{dt,eligible:true,upright:true,
+          positionWorld:d.camera.position.toArray(),presentation:d.holeWorldRotation.matrix()});remaining-=dt;}
+      }
+      e.branchCounts={lights:e.lights.length,narrations:e.narrations.length};
+      e.boundarySnapshot=d.desktopBoundary.snapshot;
+      if(branch==='boundary'){
+        const {THREE}=s,openingToWorld=new THREE.Matrix4().fromArray(d.hallwayCollapse.snapshot().worldToOpening).invert();
+        const head=d.camera.position.clone(),forward=new THREE.Vector3(0,0,1).transformDirection(openingToWorld);
+        forward.y=0;forward.normalize();const right=new THREE.Vector3(forward.z,0,-forward.x);
+        // Head starts near a side edge but five metres from the far edge.
+        const rectangle=(far)=>[[-.05,-3],[2,-3],[2,far],[-.05,far]].map(([x,z])=>head.clone().addScaledVector(right,x).addScaledVector(forward,z).toArray());
+        e.boundaryFar=5;
+        d.desktopBoundary.snapshot=()=>{const state=e.boundarySnapshot();return {...state,runtime:{...state.runtime,live:true,head:head.toArray(),points:rectangle(e.boundaryFar)}};};
+      }
+      s.endingStopAt=branch==='timeout'?0:undefined;s.paused=false;
+    },branch);
+    try {
+      if(branch==='timeout'){
+        await page.waitForFunction(()=>window.__debug.realityEnding.snapshot().afterExplosionsSeconds===0);
+        await advance(4.9);
+      } else {
+        await nativeFrame(page);await nativeFrame(page);
+        assert.equal(await page.evaluate(()=>window.__debug.realityEnding.snapshot().trigger),null,'A nearby lateral edge cannot end the world.');
+        await page.evaluate(()=>{window.__endingCheck.boundaryFar=1;window.__collapseCheck.endingStopAt=0;});
+        await page.waitForFunction(()=>window.__debug.realityEnding.snapshot().trigger==='boundary');
+      }
+      const before=await capture(page,output,`${prefix}reality-ending-${branch}-before.png`);
+      assert.equal(before.state.returnedCount,0);assert.equal(before.state.originalDamage,false);
+      if(branch==='timeout')assert.equal(before.state.trigger,null);
+      else assert.equal(before.state.phase,'glitching');
+      await advance(branch==='timeout'?5.42:.42);
+      const glitch=await capture(page,output,`${prefix}reality-ending-${branch}-glitch.png`);
+      assert.equal(glitch.state.trigger,branch);assert.equal(glitch.state.phase,'glitching');
+      assert.ok(glitch.opacity>0&&glitch.opacity<1);assert.ok(glitch.nonWhite<before.nonWhite);
+      await advance(branch==='timeout'?6:1);
+      const white=await capture(page,output,`${prefix}reality-ending-${branch}-white.png`);
+      assert.equal(white.state.phase,'white');assert.equal(white.state.returnedCount,0);
+      assert.equal(white.nonWhite,0);assert.equal(white.minAlpha,255);assert.equal(white.opacity,0);
+      assert.equal(white.authoredVisible,false);assert.equal(white.audio.realityFinished,true);
+      const endpoint=await page.evaluate(()=>{
+        const d=window.__debug,e=window.__endingCheck;
+        return {world:d.holeWorldRotation.snapshot().phase,collapse:d.hallwayCollapse.snapshot().phase,
+          lights:e.lights.length-e.branchCounts.lights,narrations:e.narrations.length-e.branchCounts.narrations,
+          rumble:d.fractureRumble.snapshot().playing,lifecycle:window.__collapseCheck.lifecycle};
+      });
+      assert.equal(endpoint.world,'complete');assert.equal(endpoint.lights,1);assert.equal(endpoint.narrations,1);
+      assert.equal(endpoint.rumble,false);assert.deepEqual(endpoint.lifecycle,{sessionEnds:0,contextLosses:0});
+      if(branch==='timeout')assert.notEqual(endpoint.collapse,'complete','The deadline uses explosion end, before residual fading finishes.');
+      white.camera.forEach((v,i)=>assert.ok(Math.abs(v-before.camera[i])<1e-7,'Fallback never turns or moves the viewpoint.'));
+      // Let subsequent authored bursts advance behind the white scene. None may
+      // restart rumble over the solo final narration.
+      const lateRumble=await page.evaluate(()=>{
+        const s=window.__collapseCheck,d=window.__debug,before=d.fractureRumble.snapshot().playCount;
+        const next=d.hallwayCollapse.snapshot().blasts.find(b=>b.age<0);
+        if(next){
+          let remaining=next.start+.05-d.hallwayCollapse.snapshot().elapsedSeconds;
+          while(remaining>1e-9){const dt=Math.min(.25,remaining);s.collapseUpdate.call(d.hallwayCollapse,{dt,eligible:true,upright:true,
+            positionWorld:d.camera.position.toArray(),presentation:d.holeWorldRotation.matrix()});remaining-=dt;}
+        }
+        s.endingStopAt=undefined;s.paused=false;return {before,nextId:next?.id??null};
+      });
+      await nativeFrame(page);await nativeFrame(page);
+      assert.equal(await page.evaluate(()=>window.__debug.fractureRumble.snapshot().playing),false);
+      assert.equal(await page.evaluate(()=>window.__debug.fractureRumble.snapshot().playCount),lateRumble.before);
+      if(branch==='boundary')assert.notEqual(lateRumble.nextId,null,'Boundary finale must test a genuinely upcoming blast.');
+      results.push({branch,before,glitch,white,endpoint,lateRumble});
+    } finally {
+      await page.evaluate(()=>{
+        const d=window.__debug,e=window.__endingCheck;if(e.boundarySnapshot)d.desktopBoundary.snapshot=e.boundarySnapshot;
+        delete e.boundarySnapshot;window.__collapseCheck.paused=true;
+      });
+    }
+  }
+  return results;
+}
+
 /** Extends one actual collapse/portal path through the timed white ending. */
 export async function runRealityEndingScenario(page,output,options={}) {
   await page.waitForFunction(()=>window.__debug.realityEnding&&window.__debug.realityEndingEffects);
@@ -158,7 +259,8 @@ export async function runRealityEndingScenario(page,output,options={}) {
         white.camera.forEach((v,i)=>assert.ok(Math.abs(v-endpoint.camera[i])<1e-7,'The ending never changes the physical camera.'));
         await nativeFrame(page);await nativeFrame(page);
         assert.equal(await page.evaluate(()=>window.__endingCheck.narrations.length),1,'The full ending line is requested once.');
-        return {endpoint,ends,relight,hold,beforeGlitch,glitch,white,
+        const fallbackResults=await fallbacks(page,output,prefix);
+        return {endpoint,ends,relight,hold,beforeGlitch,glitch,white,fallbacks:fallbackResults,
           events:await page.evaluate(()=>window.__collapseCheck.endingEvents),
           screenshots:['returning','relight','original-damage','before-glitch','world-glitch','white'].map(s=>`${prefix}reality-ending-${s}.png`)};
       }});
@@ -166,7 +268,7 @@ export async function runRealityEndingScenario(page,output,options={}) {
     const recovered=await page.evaluate(()=>({state:window.__debug.realityEnding.snapshot(),effects:window.__debug.realityEndingEffects.snapshot(),
       narrationRequests:window.__endingCheck.narrations.length,lightRequests:window.__endingCheck.lights.length}));
     assert.equal(recovered.state.active,false);assert.equal(recovered.effects.opacity,1);assert.equal(recovered.effects.active,false);
-    assert.equal(recovered.narrationRequests,1);assert.equal(recovered.lightRequests,2);
+    assert.equal(recovered.narrationRequests,3);assert.equal(recovered.lightRequests,4);
     return {...result,recovered};
   } finally {
     await page.evaluate(()=>{

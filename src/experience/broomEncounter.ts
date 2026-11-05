@@ -4,7 +4,7 @@ import { DEFAULT_INSTALLATION_CONFIG, type Position3 } from './flow.ts';
 import { isHeadsetInBox } from './boxTrigger.ts';
 
 export const BROOM_ENCOUNTER = Object.freeze({ depth: 4, revealDelay: 2, exitDelay: 2, glitchSeconds: .55,
-  width: DEFAULT_INSTALLATION_CONFIG.boxWidth, depthSize: DEFAULT_INSTALLATION_CONFIG.boxDepth,
+  width: 2, depthSize: 2,
   height: DEFAULT_INSTALLATION_CONFIG.boxHeight });
 type Phase = 'idle' | 'waitingReveal' | 'glitchingIn' | 'visible' | 'waitingExit' | 'glitchingOut' | 'complete' | 'cancelled';
 

@@ -149,8 +149,8 @@ export async function runRotationOffsetScenario(page, output) {
       near([state.seat.base[1], state.seat.base[2]], [before.seat.base[1], before.seat.base[2]], 'seat floor/station');
       for (const measure of state.seat.cornerDistances) assert.ok(measure.left >= -1e-8 && measure.right >= -1e-8,
         'seat footprint may not enter either fitted wall');
-      assert.equal(state.seat.cornerDistances.filter(value => Math.abs(value[state.seat.wall]) < 1e-8).length, 2,
-        'one actual seat edge must meet the current chosen wall');
+      assert.equal(state.seat.cornerDistances.filter(value => Math.abs(value[state.seat.wall] - .1) < 1e-8).length, 2,
+        'one actual seat edge must stay 10 cm from the current chosen wall');
       const seatDelta = new Matrix4().fromArray(state.anchors[1]).multiply(new Matrix4().fromArray(before.anchors[1]).invert());
       const expectedSeat = seatDelta.multiply(new Matrix4().fromArray(before.props[1].world));
       near(state.props[1].world, expectedSeat.toArray(), 'seat splat follows its adjusted metric anchor');
@@ -221,7 +221,7 @@ export async function runRotationOffsetScenario(page, output) {
     near(zero.scanMatrix, before.scanMatrix, 'Zero restores the uncorrected reversed root');
     return { phase: shifted.phase, offsetMetres: shifted.amount, offsetWorld: shifted.offsetWorld,
       heading: shifted.heading, splatCounts: shifted.props.map(prop => prop.count), physicalTurnBoxFixed: true,
-      seatEdgeOnCurrentWall: true, seatLongitudinalStation: shifted.seat.base[2], boxFloorRaiseRemoved: true,
+      seatEdgeWallClearanceMetres: .1, seatLongitudinalStation: shifted.seat.base[2], boxFloorRaiseRemoved: true,
       broomCentredAtZ6: shifted.broom.baseWorld, holeNearBounds: shifted.hole.nearBounds, holeFarBounds: shifted.hole.farBounds,
       holeLockedWithWall: true, holeInterval: [shifted.hole.startZ, shifted.hole.endZ],
       wallLockedWidth: shifted.wall.width, wallLockedBase: shifted.wall.centre, wallDoesNotRefitAfterCorrection: true,

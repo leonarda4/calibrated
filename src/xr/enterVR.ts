@@ -268,7 +268,7 @@ export function setupEnterVr(renderer: THREE.WebGLRenderer, onStatus: (text: str
         if (!layer || !('blendTextureSourceAlpha' in layer)) throw new Error('The projection layer cannot disable source alpha.');
         layer.blendTextureSourceAlpha = false;
       }
-      logger.info(TAG, 'XR layer source alpha disabled; uncovered world pixels are opaque black');
+      logger.info(TAG, 'XR layer source alpha disabled; uncovered world pixels are opaque white');
       logger.info(TAG, 'three.js attached the session — presenting now');
       showXrStatus();
       return true;

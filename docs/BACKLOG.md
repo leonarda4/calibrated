@@ -25,7 +25,9 @@ glitch out, use ten seeded semi-random fracture spots, five per side, ordered
 far to near with 0.6–1.1 s gaps. Each supplied 1.8 s fracture and one
 `RumblingSound01.wav` excerpt starts roughly three seconds of growing local
 Gaussian/fog damage. Render irregular cavities with surviving detail at the
-same depths, rather than a planar or whole-volume cutoff. Exposed world/void
+same depths, rather than a planar cutoff. After the last patch matures, fade
+the surviving islands unevenly over eight more seconds into distant void.
+Exposed world/void
 pixels use opaque white with alpha 1, including loading and fully faded scan
 frames. Preserve source colors and original scene0 before the ending return,
 the user surroundings, the full protected return prefix and working physical
@@ -37,7 +39,14 @@ still requires inspected rendered/audio-scheduling evidence and separate
 headset stereo, audible balance, physical registration and comfort checks.
 
 Current ending acceptance (2026-11-05): only actual automatic broom-completion
-collapse arms it. The unchanged physical crossing starts the same four-second
+collapse arms it. Without an earlier return arrival, start the one-second global
+glitch/light sound five seconds after the last explosion animation ends, or
+immediately within one metre inside the live far-end headset boundary of the
+added hallway. Exclude sides/return edges, outside poses and stale/manual bounds.
+The timer continues during slow return and independently of residual splat loss.
+Keep the current viewpoint, reach white, play the same solo final voice once
+and prevent later rumble/portal changes; no ending exits VR. An earlier arrival
+retains the original return branch. The unchanged physical crossing starts the same four-second
 return, with organic damage at both original hallway ends visible already
 during motion. Preserve at least 4 m longitudinally on either side of the user,
 the opening and available physical bounds, expanding protection as needed.

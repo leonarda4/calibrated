@@ -3,7 +3,7 @@ export const FRACTURE_RUMBLE = Object.freeze({
   clip: '/audio/SoundFX/RumblingSound01.wav',
   offsetSeconds: .75, durationSeconds: 1.8,
   attackSeconds: .03, releaseSeconds: .25, maxDelaySeconds: .25,
-  nominalGain: .22, normalizedPeak: .5,
+  nominalGain: .36, normalizedPeak: .5,
   // Measured 24-bit PCM over [.75, 2.55), both channels, before the envelope.
   sourcePeak: .7858550548553467, sourceRms: .19305726175138477,
   maxOverlap: 10, maxConsumedIds: 256,

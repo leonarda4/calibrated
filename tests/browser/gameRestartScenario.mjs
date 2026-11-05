@@ -133,8 +133,8 @@ export async function runGameRestartScenario(parentPage) {
           corners.push(new THREE.Vector3(x, -.5, z).applyMatrix4(object.matrixWorld).applyMatrix4(inverse));
         }
         ensure(corners.every(p => Math.abs(p.x) <= 1.05 + 1e-5), 'Mapped seat footprint leaves the corridor');
-        ensure([-1.05, 1.05].some(edge => corners.filter(p => Math.abs(p.x - edge) < 1e-5).length === 2),
-          'Mapped seat lacks a whole edge on its route-space wall');
+        ensure([-1.05, 1.05].some(edge => corners.filter(p => Math.abs(Math.abs(p.x - edge) - .1) < 1e-5).length === 2),
+          'Mapped seat lacks a whole edge 10 cm from its route-space wall');
         const completeCues = cues.map(event => ({ ...event }));
         advance(2);
         ensure(cues.length === 4, 'A completed game replayed old narration');

@@ -11,6 +11,7 @@ import { setupTrackedHands } from '../xr/hands.ts';
 import { logger } from '../debug/logger.ts';
 import { estimateHallwayCenter, measureWallDistances } from './hallwayCenter.ts';
 import { placeWallAdjacentBox } from './secondBoxPlacement.ts';
+import { SECOND_BOX_INTERACTION } from './secondBoxTrigger.ts';
 import { setupFloorLinePicker } from './floorLinePicker.ts';
 import { getSourceCenters } from '../viewer/splatViewer.ts';
 import { createTestScenario } from './testScenario.ts';
@@ -192,7 +193,7 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
     const line = scanRoot.localToWorld(new THREE.Vector3(...floorLineRaw)).toArray() as [number, number, number];
     secondPlacementResult = placeWallAdjacentBox({ wallFit, guideWorld: guide, guideMode: 'center',
       floorLineWorld: line, tangentSign: 1, floorY: FLOOR_Y,
-      boxWidth: .36, boxDepth: .36, boxHeight: .43 });
+      boxWidth: .36, boxDepth: .36, boxHeight: .43, wallClearance: SECOND_BOX_INTERACTION.wallClearance });
     if (!secondPlacementResult.ok) { reportSecondPlacement(secondPlacementResult.reason); return false; }
     if (!installation.setSecondBoxPlacement(secondPlacementResult.baseWorld, secondPlacementResult.directionWorld)) {
       reportSecondPlacement(installation.snapshot().secondBox.alignmentError ?? 'The second seat needs a supported current-wall fit.');
@@ -200,7 +201,7 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
     }
     secondPlacementRaw = scanRoot.worldToLocal(new THREE.Vector3(...secondPlacementResult.baseWorld)).toArray() as [number, number, number];
     reportSecondPlacement(`Seat guide before the turn: 36 × 36 × 43 cm, raw [${secondPlacementRaw.map(n => n.toFixed(3)).join(', ')}]. ` +
-      'Station prepared from the floor-line guide; its edge follows the selected current wall after the turn.');
+      'Station prepared from the floor-line guide; its edge stays 10 cm inside the selected wall after the turn.');
     return true;
   };
   const floorLinePicker = setupFloorLinePicker(renderer, camera, scanRoot, FLOOR_Y, rawPoint => {
@@ -609,7 +610,7 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
         mayAct() && viewerPosition !== null && viewerForward !== null &&
         [...viewerPosition, ...viewerForward].every(Number.isFinite);
       if (currentViewer && (renderer.xr.isPresenting || installation.snapshot().preview) &&
-        installation.headsetAboveSecondBox(viewerPosition!)) options.onSecondBoxTriggered?.();
+        installation.headsetInSecondBoxHallway(viewerPosition!)) options.onSecondBoxTriggered?.();
       const authoringBlockReason = options.authoringBlockReason?.() ?? null;
       if (authoringBlockReason !== previousAuthoringBlockReason) {
         previousAuthoringBlockReason = authoringBlockReason;

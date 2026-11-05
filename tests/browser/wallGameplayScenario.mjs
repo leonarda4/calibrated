@@ -45,7 +45,7 @@ export async function runWallGameplayScenario(page, output) {
         }
       };
       const resetAssertions = () => { locked = null; previousZ = -8; };
-      player(0, 5, true); ensure(experience.startTestScenarioPreview(), 'Preview could not start');
+      player(0, 8, true); ensure(experience.startTestScenarioPreview(), 'Preview could not start');
       ensure(!wall.snapshot().visible && wall.snapshot().gameplayCue === 'waitingSecondBox', 'Wall did not wait for the second-box trigger');
       advance(8.1); ensure(!wall.snapshot().visible, 'First box revealed the wall');
       scene.updateMatrixWorld(true); const boxPose = scene.getObjectByName('installation-box').matrixWorld.toArray();
@@ -57,8 +57,12 @@ export async function runWallGameplayScenario(page, output) {
       ensure(speechEvents.filter(e=>e.id==='sitOnBox').length===1 && speechEvents.find(e=>e.id==='sitOnBox').seatSettled,
         'The supplied sit instruction must occur once after the second box finishes rising');
       ensure(!speechEvents.some(e=>e.id==='classroom'),'The classroom instruction played before wall appearance');
-      player(second.base[0], second.base[2], true); advance(.1);
-      ensure(!wall.snapshot().visible && wall.snapshot().gameplayCue === 'waitingLookAway', 'Above-second-box trigger did not arm a hidden wall');
+      const section = experience.hallwaySection(second.base[2]);
+      ensure(section.ok, 'Second-box trigger needs supported hallway walls');
+      player(section.centerWorld[0], second.base[2] + .8, true); advance(.05);
+      ensure(Math.hypot(camera.position.x-second.base[0],camera.position.z-second.base[2])>.5,
+        'Wide trigger fixture still stands on the box');
+      ensure(!wall.snapshot().visible && wall.snapshot().gameplayCue === 'waitingLookAway', 'Hallway-section entry did not immediately arm a hidden wall');
       advance(1); ensure(!wall.snapshot().visible, 'Armed wall appeared while watched');
       ensure(!speechEvents.some(e=>e.id==='classroom'),'Waiting for look-away started the classroom prompt');
       look(false); advance(.05);
@@ -99,7 +103,7 @@ export async function runWallGameplayScenario(page, output) {
       look(false);
       window.__wallGameplay = { saved, ensure, near, look, player, advance, resetAssertions, centerX, boxPose, held, speechEvents,
         preparedCorners: preparedHole.worldCorners, now: () => elapsed };
-      return { secondBoxAboveArms: true, timeAloneCannotReveal: true, watchedRevealWaits: true,
+      return { hallwaySectionArmsImmediately: true, triggerLengthMetres:2, timeAloneCannotReveal: true, watchedRevealWaits: true,
         instantUnseenReveal: true, lookBackStopSeconds: .7, waitingZ: held.baseWorld[2], clearanceFromSurface: .75,
         approachSpeed: appeared.approach.speed, firstBoxEndpoint: appeared.routeEndpoints.end[2],
         sitPromptAfterRise:true,classroomDelaySeconds:classroom[0].at-appearedAt };
@@ -189,7 +193,31 @@ export async function runWallGameplayScenario(page, output) {
         manualPreviewParity: true, occupiedEntryWaits: true, stopRecoveryCancel: true };
     });
     assert.equal(finished.gazeSeconds, 5);
-    return { ...waiting, ...finished };
+    const watched = await page.evaluate(() => {
+      const { experience, wallBlocker:wall }=window.__debug, t=window.__wallGameplay;
+      experience.prepareForCalibration(); t.resetAssertions(); t.player(t.centerX,5,true);
+      wall.show(); t.advance(4.999);
+      t.ensure(!wall.snapshot().visible,'Watched hidden wall appeared before five seconds');
+      t.advance(.001); const appeared=wall.snapshot();
+      t.ensure(appeared.visible && appeared.motion==='visible','Five-second watching timeout did not reveal the wall');
+      t.near(appeared.baseWorld[2],-8,'Watched reveal skipped the route start');
+      t.advance(.1);
+      t.ensure(wall.snapshot().moving && wall.snapshot().baseWorld[2]>-8,'Watched timeout did not start movement');
+      return { watchedFallbackSeconds:5, watchedRevealStartsMoving:true, defaultLateralOffset:experience.installation.snapshot().rotationOffsetMetres };
+    });
+    await page.screenshot({path:path.join(output,'wall-watched-reveal.png'),fullPage:true});
+    await page.evaluate(() => {
+      const {experience,wallBlocker:wall}=window.__debug,t=window.__wallGameplay;
+      t.advance(.6); const stopped=wall.snapshot().baseWorld[2]; t.advance(.5);
+      t.near(wall.snapshot().baseWorld[2],stopped,'Watched reveal bypassed the existing stopping rule');
+      experience.prepareForCalibration();t.resetAssertions();t.player(t.centerX,-7.6,true);
+      wall.show();t.advance(5.1);
+      t.ensure(!wall.snapshot().visible&&wall.snapshot().gameplayCue==='waitingPlayer','Watching timeout bypassed player clearance');
+      t.player(t.centerX,5,true);t.advance(.05);t.ensure(wall.snapshot().visible,'Clearing occupied timed reveal did not resume');
+      experience.prepareForCalibration();t.resetAssertions();t.player(t.centerX,5,true);wall.show();t.advance(4.9);
+      wall.stopTravel();t.advance(5.1);t.ensure(!wall.snapshot().visible,'Stop revived a watched reveal');
+    });
+    return { ...waiting, ...finished, ...watched };
   } finally {
     await page.evaluate(() => {
       const t = window.__wallGameplay; if (!t) return;

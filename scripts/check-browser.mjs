@@ -17,6 +17,7 @@ import { runBroomScenario } from '../tests/browser/broomScenario.mjs';
 import { runBroomEncounterScenario } from '../tests/browser/broomEncounterScenario.mjs';
 import { runHallwayCollapseScenario } from '../tests/browser/hallwayCollapseScenario.mjs';
 import { runRealityEndingScenario } from '../tests/browser/realityEndingScenario.mjs';
+import { runDevReloadScenario } from '../tests/browser/devReloadScenario.mjs';
 import { runFractureRumbleScenario } from '../tests/browser/fractureRumbleScenario.mjs';
 import { runLightingScenario } from '../tests/browser/lightingScenario.mjs';
 import { runSecondBoxLightsScenario } from '../tests/browser/secondBoxLightsScenario.mjs';
@@ -459,6 +460,7 @@ try {
     assert.equal(wallRequests, 1);
     return { ...state, requests: wallRequests, hiddenAfterStartupReset: true };
   });
+  await check('development reload waits for headset exit without ending its session',()=>runDevReloadScenario(page));
   if (!audioOnly && !boundaryVoiceOnly && !cutOnly && !startPanelOnly && !wallOnly) {
     await check('mist occupies only the added hallway alongside half-height fog and follows both turn directions',
       () => runRoomMistScenario(page, output));
@@ -471,7 +473,7 @@ try {
     await check('supplied audio preserves the bed, randomized passing walkers and all speech/effect cancellation',
       () => runGameplayAudioScenario(page));
   } else if (boundaryVoiceOnly) {
-    await check('live headset perimeter approach plays priority danger speech at half a metre with cooldown and recovery',
+    await check('only inside half-metre headset end strips play danger speech, with side/outside rejection and recovery',
       () => runBoundaryVoiceScenario(page, output));
   } else if (fogOnly) {
     if (process.env.CHECK_REAL_FOG === '1') {
@@ -722,7 +724,7 @@ try {
       backward: backward.baseWorld, loopFar: far.baseWorld, loopNear: near.baseWorld,
       hideShowRetainsPosition: true, invalidCommandRetainsPosition: true, ...reprojected };
   });
-  await check(`second-box wall reveals unseen, approaches the first box and supports player passage`,
+  await check(`hallway-section entry reveals the wall unseen or after five watched seconds, with player passage`,
     () => runWallGameplayScenario(page, output));
   await check('live calibration preserves the desktop wall side and physical player clearance across XR axes',
     () => runWallRouteFrameScenario(page));
@@ -913,7 +915,7 @@ try {
     await page.screenshot({ path: path.join(output, 'reversed.png'), fullPage: true });
     return { yaw: after.snapshot.yaw, floorRootY: after.position[1], boxUnchanged: true, boxPixel };
   });
-  await check('Show second box meets the current wall at its authored world-Z station after the turn', async () => {
+  await check('Show second box keeps a 10 cm wall gap at its authored station after the turn', async () => {
     const before = await page.evaluate(() => ({ scan: window.__debug.splats.matrix.toArray(),
       first: window.__debug.scene.getObjectByName('installation-box').matrixWorld.toArray(),
       prepared: window.__debug.experience.installation.snapshot().secondBox }));
@@ -939,7 +941,7 @@ try {
     assert.equal(after.parentIsWorld, true);
     assert.equal(after.second.base[2], before.prepared.base[2]);
     assert.equal(after.second.base[1], before.prepared.base[1]);
-    assert.ok(Math.abs(Math.min(...after.contact)) < 1e-6, 'a whole footprint edge must meet a current wall');
+    assert.ok(Math.abs(Math.min(...after.contact) - .1) < 1e-6, 'a whole footprint edge must stay 10 cm from a current wall');
     assert.ok(after.contact.every(distance => distance >= -1e-6));
     assert.deepEqual(after.position, [after.second.base[0], after.second.base[1] + .215, after.second.base[2]]);
     assert.deepEqual(after.scale, [.36, .43, .36]);
@@ -1021,7 +1023,7 @@ try {
     const { runBoundaryScenario } = await import('../tests/browser/boundaryScenario.mjs');
     return await runBoundaryScenario(page);
   });
-  await check('live headset perimeter approach plays priority danger speech at half a metre with cooldown and recovery',
+  await check('only inside half-metre headset end strips play danger speech, with side/outside rejection and recovery',
     () => runBoundaryVoiceScenario(page, output));
   await check('scan-picked centreline follows calibration and remains unchecked', async () => {
     await page.locator('#experience-pick-center').click();

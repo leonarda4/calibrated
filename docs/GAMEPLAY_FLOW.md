@@ -10,10 +10,10 @@ The soundtrack uses the supplied local WAV files. A fresh successful live calibr
 | First box | +8 s | Automatic | Reveal the prepared first box with a short box-moving effect and “Try to step on the box.” Its rise takes 1.5 s. Reserve at least 5 s after the prompt before accepting the live box trigger; scheduled/playing speech can extend that wait. |
 | First transition anticipation | +20 s | A valid headset enters or is above the fully raised first-box footprint after the prompt slot | Crossfade Ambience 1 into Transition 1. Entry latches the 2 s countdown before the visible turn; leaving the footprint afterward does not undo it. STOP or tracking/calibration recovery still cancels it. Live exploration therefore lasts at least the prompt slot and as long as the participant needs; autoplay uses about 20 s. |
 | Room turns 180° | +22–26 s | Automatic after anticipation | The scan turns over 4 s around the fixed first box. The tracked rig and first box stay fixed. Transition 1 uses a 9 s excerpt, from +20 to +29 s; Ambience 2 fades in from about +27.8 s. Play the turn commentary after the turn completes. |
-| Second box | +27 s | Automatic, 5 s after actual turn onset | Reveal the wall-adjacent second box with another short moving-box effect. Its rise takes 1.5 s. A delayed live turn shifts its reveal with it. |
+| Second box | +27 s | Automatic, 5 s after actual turn onset | Reveal the second box 10 cm inward from its wall with another short moving-box effect. Its rise takes 1.5 s. A delayed live turn shifts its reveal with it. |
 | Sit instruction | Second-box rise completion; desktop about +28.5 s | Actual fully appeared second box | Queue the complete `SitDownOnTheBox.wav` recording once, asking the participant to sit. Earlier turn speech finishes naturally. Manual Show uses the same completed-rise hook. |
-| Wall appearance | Player-dependent, after the second box has fully risen | A current valid headset is above the second-box footprint, then looks away from the wall direction | Arm and latch the hidden reveal; once gaze is away and the standing footprint is clear, appear instantly at hallway Z=-8 with no slide-in and begin unseen motion. Manual Show/Run arm the same wait. |
-| Classroom instruction | Actual wall appearance +5 s | Successful unseen reveal, independent of subsequent motion/gaze pauses | Request `GoBackToTheClassRoom.wav` once. Sitting/arming, look-away waiting, blocked entry and endpoint inspection do not start this clock. Speech queues rather than truncating an earlier recording. Wall cancellation and recovery clear the deadline. |
+| Wall appearance | Player-dependent, after the second box has fully risen | Enter the 2 m-long hallway section centred on the second box, spanning the fitted walls and floor-to-ceiling height | Arm immediately; reveal at hallway Z=-8 on look-away or after 5 continuous seconds watching its spawn direction, with no slide-in. Player entry clearance still takes priority. Begin the existing approach, including its 0.7 s watched stopping allowance. Manual Show/Run share this gate. |
+| Classroom instruction | Actual wall appearance +5 s | Successful reveal, independent of subsequent motion/gaze pauses | Request `GoBackToTheClassRoom.wav` once. Sitting/arming, look-away waiting, blocked entry and endpoint inspection do not start this clock. Speech queues rather than truncating an earlier recording. Wall cancellation and recovery clear the deadline. |
 | Second transition anticipation | About +33 s | Automatic, 4.5 s after the second box finishes rising | Crossfade into a 6 s excerpt of Transition 2, anticipating the flicker by 2 s. |
 | Lights flicker | About +35–36 s | Automatic, 6.5 s after the second box finishes rising | Flicker for 1 s with the light sound, then hold at 30% brightness. Transition 2 continues afterward; Ambience 3 fades in from about +37.8 s and is fully in place at +39 s. |
 | Wall approach | Variable; about 10.5 s of translation for the default 10.5 m route, plus waits | Move while unseen; looking back allows exactly 0.7 s before stopping | Travel at 1 m/s from hallway Z=-8 toward the first box's captured station, approximately Z=2.5, centred between fitted walls. No watched introductory travel. The trajectory, heading and width stay fixed; player clearance overrides motion and no waiting budget accumulates. Rumbling fades in over 0.2 s and fades out during the same 0.7 s look-back delay. |
@@ -22,7 +22,7 @@ The soundtrack uses the supplied local WAV files. A fresh successful live calibr
 | Third transition anticipation | Variable | After Transition 2 finishes, a current valid headset is above the open hole's actual fitted footprint | Start a 7 s excerpt of Transition 3 once. After its 2 s anticipation, begin the four-second visual world turn. |
 | World turns into the cutout | Entry +2 to +6 s | Automatic after anticipation | Ease the entire authored environment through 90 degrees about the cutout's floor edge. Play `RoomTilting.wav` over the music only while the rendered environment actually rotates. Its floor finishes on the real floor, ceiling above it and depth horizontal; the tracked viewpoint stays fixed. Hold the exact final pose until a valid outward crossing. |
 | Broom appears in the added hallway | First quarter-turn completion +2 s | Once per game | Glitch the preloaded broom in over 0.55 s, centred four metres beyond this entrance with bristles on its floor. Its actual successful reveal queues the complete `CLEANTHEROOM.wav` speech on the first glitch-in frame. Later returns/reentries preserve its state rather than replaying it. |
-| Broom disappears | Proximity entry +2 s | Current valid headset above its invisible 36 x 36 cm footprint, while the added hallway is fully upright | Latch the delay at entry, then glitch out over 0.55 s. Leaving the footprint does not reset the countdown. No visible trigger mesh or additional story/music cue is added. |
+| Broom disappears | Proximity entry +2 s | Current valid headset above its invisible 2 m x 2 m footprint, while the added hallway is fully upright | Latch the delay at entry, then glitch out over 0.55 s. Leaving the footprint does not reset the countdown. No visible trigger mesh or additional story/music cue is added. |
 | Distant side-wall fractures | Actual broom glitch-out completion | Once per game, after the broom is fully gone | Trigger ten seeded semi-random spots, five per side, progressing from far to near at 0.6–1.1 s intervals. Each supplied fracture plays for 1.8 s with one `RumblingSound01.wav` excerpt. Manual Hide does not trigger them. |
 | Added hallway disintegrates locally | Each individual blast onset | That site's local damage starts with its blast | Grow an irregular three-dimensional patch of splat/fog loss over about 3 s per site. Uneven cavities and surviving Gaussian detail replace a uniform end plane. Affect only the added corridor until the ending return; preserve the current user area and route back to the opening. |
 | Return through the vertical opening | Variable | Current head motion crosses the fitted vertical aperture from inside the cutout toward the original side | Smoothly undo the quarter-turn over 4 s about the same captured hinge, restoring the exact pre-quarter-turn presentation. `RoomTilting.wav` follows this actual return motion. Once automatic collapse has armed the ending, both original hallway ends already appear damaged during this return, and further hole entry is blocked. |
@@ -30,6 +30,7 @@ The soundtrack uses the supplied local WAV files. A fresh successful live calibr
 | Original dimension relights | Ending return endpoint +0 to +1 s | Actual completed return after automatic collapse | Start the dimension clock at zero. Reverse the irregular lighting flicker from current brightness to full brightness over 1 s, using `light_flicker.mp3`, then hold. |
 | Entire environment glitches out | Ending return endpoint +5 to +6 s | Five full seconds in the restored original dimension | Glitch all authored content away over 1 s with the same light-flicker sound. This finale intentionally removes the previously protected surroundings too. |
 | White ending and final voice | Ending return endpoint +6 s | Global glitch completes | Hold opaque white and call `finishReality` once: stop every previous music, effect and speech layer and play the complete 6.710979 s `WhatIsReality.wav` alone. |
+| Fallback ending without return | Last explosion ends +5 s, OR within 1 m inside the live far-end headset boundary | After automatic collapse, unless original return arrival won first | Glitch globally over 1 s with the light sound, then opaque white and the same full solo voice once. Keep the current viewpoint and VR session; exclude side/return edges and stale/manual bounds. |
 | Fourth ambience | After the first Transition 3 | Automatic | Crossfade into looping Ambience 4 through walking and return, until the final solo ending replaces it. Movement comes from physical head/body motion; no camera translation or scale change is added. |
 
 Small frame-boundary differences are expected. Timers follow actual reveal/turn completion rather than assuming a real participant reaches every trigger on the desktop schedule. A frame pause longer than 0.5 s cancels the active timed sequence instead of catching up several physical events at once.
@@ -74,8 +75,10 @@ varying wall insets, heights, depths, patch shapes and 0.6–1.1 s intervals.
 The order moves from the far crop toward the protected near area. Each 1.8 s
 burst immediately starts that site's loss at zero strength, growing irregular
 local cavities over about three seconds. Some Gaussians disappear while others
-remain at the same depths, including asymmetric floor/ceiling remnants; there
-is no whole-corridor cutoff plane or global wipe in this collapse stage.
+remain at the same depths, including asymmetric floor/ceiling remnants. After
+the last patch matures, those islands dissolve unevenly over another eight
+seconds until the distant corridor is white void. The near transition stays
+ragged; protection below overrides all removal. There is no planar wipe.
 The seeded schedule and patch ages remain captured through return.
 These are tunable first-trial values in
 [hallwayCollapse.ts](../src/experience/hallwayCollapse.ts), not physical-clearance
@@ -119,7 +122,7 @@ panel inward and clips its debris to the added corridor and protected depths.
 
 Each actual blast ID plays one supporting 1.8 s excerpt from 0.75 s into
 `RumblingSound01.wav`, with a 30 ms attack and 250 ms release through the shared
-gameplay audio context/master, at nominal gain 0.22 before source normalization.
+gameplay audio context/master, at nominal gain 0.36 before source normalization.
 Decoded audio is reused and overlaps the other
 blasts without lowering music. Pause, mute and recovery stop it without
 replaying missed starts; Reset clears IDs for the next game. Audible balance
@@ -145,7 +148,19 @@ soundtrack, effects, warnings and queued speech, then plays the complete
 6.710979 s `WhatIsReality.wav` once alone, at its original speed. The global
 finale deliberately removes the previously protected area too.
 
-The ending clock pauses outside the restored original phase. Repeated frames
+If the participant has not returned first, start that same one-second global
+glitch five seconds after the last explosion animation ends (not after residual
+Gaussian clearing), or immediately within the inside one-metre strip of the
+live headset boundary facing the distant added-hallway end. Side/return edges,
+outside positions and stale/missing/manual bounds cannot trigger it. Use the
+captured upright corridor direction, not gaze or original tracking axes. This
+fallback skips the return/relight, keeps the current viewpoint and plays the
+same solo final line once white is reached. A slow return does not postpone the
+post-blast deadline; an original-hallway arrival before it retains the endpoint
+relight/five-second sequence. The first ending wins and blocks portal changes;
+later explosions cannot resume rumble over the final voice. Neither ends VR.
+
+The return ending clock pauses outside the restored original phase. Repeated frames
 or crossings cannot replay its final line. Close, STOP, reset, recalibration,
 tracking/session recovery or invalid/stalled frames cancel the ending and its
 audio without delayed revival; a fresh game rearms it. Desktop/VR share this
@@ -155,19 +170,24 @@ path. Timing, stereo, audible delivery and comfort remain pending hardware check
 
 ### Headset-boundary voice
 
-During visible tracked VR, moving toward an edge of the live headset movement
-outline within **0.50 m** requests one of `DangerZone01.wav` through
-`DangerZone04.wav` in turn. Distance uses the actual perimeter in physical
-local-floor space, including corners/concavities; scan/world rotations do not
-move this trigger. Stationary heads, turning in place, vertical head bob and
-walking along an edge do not trigger it. Small motion below 2 cm is filtered.
+During visible tracked VR, moving outward in the **inside 0–0.50 m strip** of
+the live headset boundary facing either hallway end requests one of
+`DangerZone01.wav` through `DangerZone04.wav` in turn. Only finite perimeter
+segments whose normals face within 45 degrees of either calibrated longitudinal
+direction qualify. Side edges, central space and all positions outside the full
+polygon stay silent; negative outside clearance cannot qualify. The physical
+hallway axis comes from the frozen calibration frame, so visual room turns,
+pitch and gaze cannot move these zones. Without that direction, prompts wait.
+Stationary heads, turning in place, vertical head bob and walking along an edge
+do not trigger it. Small motion below 2 cm is filtered.
 
 One prompt is allowed per approach. Retreat to **0.75 m** clearance rearms it,
 and an **8 s** cooldown prevents rapid repeats; expiry alone cannot speak while
 stationary. The warning takes speech priority immediately, replacing a current
 story line while retaining unstarted queued lines. It does not lower or stop
-music. Retreat to the rearm margin, mute, STOP/reset and lost/reset/session
-tracking cancel warning playback and pending scheduling.
+music. Leaving the half-metre strip cancels current/pending warning speech
+immediately; the 0.75 m rearm margin still controls a new approach. Mute,
+STOP/reset and lost/reset/session tracking also cancel it.
 
 Only live headset-reported `bounded-floor` geometry is used, even when its
 desktop outline is hidden. The enabled manual rectangle and last-session

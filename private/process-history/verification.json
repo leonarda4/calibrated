@@ -1,0 +1,10 @@
+{
+  "checkedAt": "2026-11-05T11:09:02.200Z",
+  "checks": [
+    "24 original image hashes and all context links verified",
+    "62 transcript message counts verified",
+    "24 images decode in Chrome; gallery search/reset passes"
+  ],
+  "missingImages": 0,
+  "parseFailures": 0
+}

@@ -11,6 +11,7 @@ import { lockWallTrajectory } from './wallTrajectory.ts';
 import { WallGlitch } from './wallGlitch.ts';
 import { prepareWallGlitchShader, setWallGlitch } from './wallGlitchShader.ts';
 import { WallGaze, lookingAtWall } from './wallGaze.ts';
+import { WallRevealGate } from './wallReveal.ts';
 import { WallPassage } from './wallPassage.ts';
 import { wallConcealsHole } from './wallConcealment.ts';
 
@@ -153,6 +154,7 @@ export function createWallBlocker(options: {
   const approach = new WallApproach();
   const arrival = new WallGlitch({ holdSeconds: 0 });
   const gaze = new WallGaze();
+  const revealGate = new WallRevealGate();
   const passage = new WallPassage();
   let moving = false;
   let arrivalAttempted = false;
@@ -199,7 +201,7 @@ export function createWallBlocker(options: {
         : scene.getWorldPosition(new THREE.Vector3()).toArray() : null,
       routeToWorld: frame.matrix(),
       placementSource: configuredRaw ? 'manual' : 'fitted', travel: travel.snapshot(), approach: approach.snapshot(),
-      gameplayCue, revealInSeconds: null,
+      gameplayCue, revealInSeconds: gameplayCue === 'waitingLookAway' ? revealGate.remainingSeconds() : null,
       alignmentQueries, trajectoryLocked: worldPath !== null,
       routeEndpoints: plannedRoute ? {
         start: frame.worldPoint(new THREE.Vector3(plannedRoute.path.trajectory.xAt(plannedRoute.startZ), plannedRoute.path.position.y, plannedRoute.startZ)).toArray(),
@@ -336,6 +338,7 @@ export function createWallBlocker(options: {
       halfDepth: footprint(plannedRoute.path.rotation, plannedRoute.pose.fittedWidth).halfDepth };
   };
   const reset = (reason = 'Wall hidden.') => {
+    revealGate.reset();
     cancelArrival(); plannedRoute = null; inspectionEndpoint = null;
     slide.reset();
     travel.reset();
@@ -349,6 +352,7 @@ export function createWallBlocker(options: {
     publish();
   };
   const holdApproach = () => {
+    revealGate.reset();
     if (worldPath && pose) syncPose();
     approach.cancel(); gameplayOwned = false;
     gameplayCue = null;
@@ -365,15 +369,16 @@ export function createWallBlocker(options: {
     }
     travel.reset();
   };
-  const show = (gameplay = false, retry = false): boolean => {
+  const show = (gameplay = false, retry = false, deltaSeconds = 0): boolean => {
     if (disposed) return false;
     if (phase !== 'ready') return fail('Wait for the hallway and wall to finish loading.');
     if (slide.snapshot().motion !== 'hidden') return false;
     const blocked = options.canShow?.();
-    if (blocked) return fail(blocked);
+    if (blocked) { revealGate.reset(); return fail(blocked); }
     error = null;
     try {
       cancelArrival();
+      if (!retry) revealGate.reset();
       if (!gameplay && !retry) { gameplayOwned = false; gameplayCue = null; pendingEntry = null; }
       // Hide never turns an automatic route position into an authored override.
       // Buttons and scheduled cues use exactly the same reveal planner.
@@ -393,8 +398,8 @@ export function createWallBlocker(options: {
         const player = playerInRoute(), worldForward = options.getPlayerForward?.();
         const forward = worldForward ? frame.routeVector(new THREE.Vector3(...worldForward)).toArray() : null;
         const looking = lookingAtWall(player, forward, [path.position.x, path.position.y + WALL_SECTION.height / 2, startZ], 50);
-        if (looking !== false) {
-          status = 'Wall armed. Look away from the hallway for it to appear.';
+        if (!revealGate.update(deltaSeconds, looking)) {
+          status = `Wall armed. Look away, or keep watching for ${revealGate.remainingSeconds().toFixed(1)} s.`;
           gameplayCue = 'waitingLookAway'; pendingEntry = { pose, path, startZ, endZ };
           publish(); return false;
         }
@@ -412,7 +417,8 @@ export function createWallBlocker(options: {
       slide.update(WALL_SECTION.slideSeconds);
       gameplayCue = null;
       syncPose();
-      status = 'Wall appeared out of sight.';
+      status = revealGate.remainingSeconds() <= 1e-9 ? 'Wall appeared after five seconds of watching.' : 'Wall appeared out of sight.';
+      revealGate.reset();
       options.onAppeared?.();
       publish();
       return true;
@@ -478,13 +484,14 @@ export function createWallBlocker(options: {
       if (options.resetPlacement) configuredRaw = null;
       if (disposed || phase !== 'ready') return false;
       gameplayOwned = true; gameplayCue = 'waitingSecondBox';
-      status = 'Wall waits for the player above the second box.'; publish(); return true;
+      status = 'Wall waits for entry into the hallway section around the second box.'; publish(); return true;
     },
-    turnCompleted(): void { /* The second-box footprint now supplies the reveal trigger. */ },
+    turnCompleted(): void { /* The second-box hallway section supplies the reveal trigger. */ },
     triggerSecondBox(): boolean {
       if (!gameplayOwned || gameplayCue !== 'waitingSecondBox') return false;
+      revealGate.reset();
       gameplayCue = 'waitingLookAway';
-      status = 'Second box triggered. Look away for the wall to appear.'; publish(); return true;
+      status = 'Hallway section entered. Look away, or watch for five seconds for the wall to appear.'; publish(); return true;
     },
     cancelGameplay(): void { if (gameplayOwned) reset(); },
     /** Explicit authored bottom-centre, expressed in the current world frame. */
@@ -575,11 +582,12 @@ export function createWallBlocker(options: {
       const wasWaitingFor = approach.snapshot().waitingFor;
       const previousArrival = arrival.snapshot().phase;
       const previousGaze = gaze.snapshot().stage;
-      if ((gameplayCue === 'waitingPlayer' || gameplayCue === 'waitingLookAway') &&
-          Number.isFinite(deltaSeconds) && deltaSeconds > 0 && deltaSeconds <= .5 &&
-          (!gameplayOwned || options.getRevealReady?.() !== false)) {
-        const owner = gameplayOwned;
-        if (show(owner, true)) { gameplayCue = null; gameplayOwned = owner; }
+      if (gameplayCue === 'waitingPlayer' || gameplayCue === 'waitingLookAway') {
+        const ready = !gameplayOwned || options.getRevealReady?.() !== false;
+        if (Number.isFinite(deltaSeconds) && deltaSeconds > 0 && deltaSeconds <= .5 && ready) {
+          const owner = gameplayOwned;
+          if (show(owner, true, deltaSeconds)) { gameplayCue = null; gameplayOwned = owner; }
+        } else if (deltaSeconds !== 0 || !ready) revealGate.reset();
       }
       let crossing: ReturnType<WallPassage['update']> = null;
       if (previous === 'visible' && slide.snapshot().motion === 'visible' && worldPath && previousArrival === 'idle' &&

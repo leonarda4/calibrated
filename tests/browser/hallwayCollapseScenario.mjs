@@ -111,7 +111,14 @@ async function pixels(page,{baseline=false,blast=false}={}) {
           for(let i=0;i<count;i++)shapes[i].z=1;
           const mature=read();let peak=0;
           for(let i=0;i<mature.length;i+=4)for(let c=0;c<3;c++)peak=Math.max(peak,Math.abs(mature[i+c]-intact[i+c]));
-          matureControl={changed:changed(mature,intact,20),peak};
+          let inside=0,outsideStrong=0;
+          for(let i=0;i<mature.length;i+=4){
+            const delta=Math.abs(mature[i]-intact[i])+Math.abs(mature[i+1]-intact[i+1])+Math.abs(mature[i+2]-intact[i+2]);
+            if(delta<=20)continue;
+            const x=(i/4)%width,y=Math.floor(i/4/width);
+            if(patchBounds.some(b=>x>=b[0]-5&&x<=b[2]+5&&y>=b[1]-5&&y<=b[3]+5))inside++;else outsideStrong++;
+          }
+          matureControl={changed:changed(mature,intact,20),peak,inside,outsideStrong};
         } finally {shapes.forEach((v,i)=>{v.z=progress[i];});}
       }
       const scanPixel=rgb=>rgb&&rgb[3]===255&&rgb[0]+rgb[1]+rgb[2]>35&&765-rgb[0]-rgb[1]-rgb[2]>20;
@@ -159,7 +166,7 @@ async function pixels(page,{baseline=false,blast=false}={}) {
       const uniform=splats.viewer.splatMesh.material.uniforms.uCutoutDestruction.value.toArray();
       const fogUniforms=hallwayFog.root.children.find(o=>o.material?.uniforms?.uCutoutDestruction)?.material.uniforms;
       const fogUniform=fogUniforms?.uCutoutDestruction.value.toArray();
-      const patchUniforms=uniforms=>({count:uniforms?.uCollapsePatchCount?.value??0,
+      const patchUniforms=uniforms=>({count:uniforms?.uCollapsePatchCount?.value??0,residual:uniforms?.uCollapseResidual?.value??0,
         centers:uniforms?.uCollapsePatchCenters?.value.map(v=>v.toArray())??[],shapes:uniforms?.uCollapsePatchShapes?.value.map(v=>v.toArray())??[]});
       const packedPatches=patchUniforms(splats.viewer.splatMesh.material.uniforms),fogPatches=patchUniforms(fogUniforms);
       return {near,far,farWithFog,grid:gridSummary,visibleWhiteGaps,damagePixels,damagePixelsLow,maxDamageDifference,localPixelControl,matureControl,patchProbes,fracturePixels,originalLit,originalChanged,originalMaxDifference,originalMaskChanged,originalVisibility,originalCamera,uniform,fogUniform,
@@ -184,13 +191,16 @@ export async function runHallwayCollapseScenario(page,output,{privateAsset=false
     const s={THREE:await import('/node_modules/.vite/deps/three.js'),camera:camera.position.toArray(),target:controls.target.toArray(),
       damping:controls.enableDamping,fog:hallwayFog.snapshot().visible,paused:false,stopAt:.6,arms:0,armStates:[],events:[],
       broomUpdate:broomEncounter.update,turnUpdate:holeWorldRotation.update,fogUpdate:hallwayFog.update,
-      endingUpdate:realityEnding?.update,endingEvents:[],
+      endingUpdate:realityEnding?.update,endingEvents:[],holdFallback:true,collapseSpeed:8,
       collapseUpdate:hallwayCollapse.update,collapseArm:hallwayCollapse.arm,
+      lifecycle:{sessionEnds:0,contextLosses:0},
       resources:{geometry:mesh.geometry,material:mesh.material,textures:mesh.splatDataTextures,worker:splats.viewer.sortWorker},
       fxResources:[],tracked:['getController','getControllerGrip','getHand'].flatMap(method=>[0,1].map(i=>{
         const object=renderer.xr[method](i);object.updateWorldMatrix(true,false);return {object,parent:object.parent,matrix:object.matrixWorld.clone()};
       }))};
     hallwayCollapseEffects.root.traverse(o=>{if(o.geometry)s.fxResources.push({object:o,geometry:o.geometry,material:o.material});});
+    s.onSessionEnd=()=>s.lifecycle.sessionEnds++;s.onContextLost=()=>s.lifecycle.contextLosses++;
+    renderer.xr.addEventListener('sessionend',s.onSessionEnd);renderer.domElement.addEventListener('webglcontextlost',s.onContextLost);
     window.__collapseCheck=s;controls.enableDamping=false;hallwayFog.setVisible(true);
     s.settleView=async()=>{
       const viewer=splats.viewer,originalSort=viewer.runSplatSort;
@@ -217,19 +227,25 @@ export async function runHallwayCollapseScenario(page,output,{privateAsset=false
     hallwayFog.update=function(dt,...args){return s.fogUpdate.call(this,s.paused?0:dt,...args);};
     if(realityEnding)realityEnding.update=function(sample){
       const before=this.snapshot();let dt=s.paused?0:sample.dt;
-      if(before.returnedCount>0&&s.endingStopAt!==undefined&&dt>0&&dt<=.5)dt=Math.max(0,Math.min(dt,s.endingStopAt-before.dimensionSeconds));
+      // Geometry probes accelerate collapse and hold story time independently.
+      // Dedicated fallback branches below release this hold at normal frame speed.
+      if(s.holdFallback&&!before.returnedCount&&before.trigger===null)dt=0;
+      const endingClock=state=>s.fallbackClock
+        ? state.trigger==='timeout'?5+state.dimensionSeconds:state.trigger==='boundary'?state.dimensionSeconds:state.afterExplosionsSeconds??0
+        : state.dimensionSeconds;
+      if((before.returnedCount>0||s.fallbackClock)&&s.endingStopAt!==undefined&&dt>0&&dt<=.5)dt=Math.max(0,Math.min(dt,s.endingStopAt-endingClock(before)));
       s.endingUpdate.call(this,{...sample,dt});
       const after=this.snapshot();
       if(before.phase!==after.phase)s.endingEvents.push({phase:after.phase,seconds:after.dimensionSeconds});
       if(before.returnedCount===0&&after.returnedCount===1)s.endingEndpoint={state:after,camera:camera.matrixWorld.toArray()};
-      if(after.returnedCount>0&&s.endingStopAt!==undefined&&after.dimensionSeconds>=s.endingStopAt-1e-8)s.paused=true;
+      if((after.returnedCount>0||s.fallbackClock)&&s.endingStopAt!==undefined&&endingClock(after)>=s.endingStopAt-1e-8)s.paused=true;
     };
     hallwayCollapse.arm=function(...args){args[5]={...args[5],seed:1407};const phase=broomEncounter.snapshot().phase,ok=s.collapseArm.apply(this,args);
       if(ok){s.arms++;s.armStates.push({broom:phase,lastEvent:s.events.at(-1)});}return ok;};
     hallwayCollapse.update=function(sample){
       let dt=s.paused?0:sample.dt;
       if(!s.paused&&dt>0&&dt<=.5&&sample.eligible&&sample.upright&&this.snapshot().active){
-        dt=Math.min(.25,dt*8);
+        dt=Math.min(.25,dt*s.collapseSpeed);
         if(s.stopAt!==null)dt=Math.max(0,Math.min(dt,s.stopAt-this.snapshot().elapsedSeconds));
       }
       s.collapseUpdate.call(this,{...sample,dt});
@@ -311,8 +327,10 @@ export async function runHallwayCollapseScenario(page,output,{privateAsset=false
     assert.ok(Math.max(...gaps)-Math.min(...gaps)>.05,'Blast timing varies.');
     assert.ok(Math.max(...first.collapse.blasts.map(b=>b.height))-Math.min(...first.collapse.blasts.map(b=>b.height))>.3,'Blast heights vary.');
     assert.equal(first.collapse.patches.filter(p=>p.fadeProgress>0).length,1,'The first local patch starts with its own blast.');
-    assert.ok(first.damagePixelsLow>0,`The first blast starts actual local fading: ${JSON.stringify({low:first.damagePixelsLow,max:first.maxDamageDifference,mature:first.matureControl,packed:first.packedPatches})}`);
-    assert.ok(first.localPixelControl.inside>0,'First-blast fading occurs near the first supplied fracture.');
+    // A far, densely overlapping patch can initially be subpixel. Its matured
+    // single-site control must still remove real pixels only around that site.
+    assert.ok(first.matureControl?.changed>0&&first.matureControl.inside>0,'The first local patch removes actual pixels as it matures.');
+    assert.equal(first.matureControl.outsideStrong,0,'The matured single-site control cannot affect an unfired region.');
     assert.equal(first.localPixelControl.outsideStrong,0,`First-blast fading stays inside its local projected region, allowing two-level rounding: ${JSON.stringify(first.localPixelControl)}`);
     assert.equal(first.grid.distantChanges,0,`Unfired, distant regions remain intact after the first blast: ${JSON.stringify(first.grid)}`);
     nearEqual(first.near,before.near,'The first local fracture preserves the nearby crop.');
@@ -346,6 +364,20 @@ export async function runHallwayCollapseScenario(page,output,{privateAsset=false
     assert.ok(middle.grid.changed>0&&middle.grid.surviving>0,`Intermediate damage removes local regions while leaving other regions intact: ${JSON.stringify(middle.grid)}`);
     assert.ok(middle.grid.rows.some(row=>row.changed>0&&row.surviving>0),'At an equal depth, some surfaces change and others survive.');
     assert.equal(middle.originalMaskChanged,0,'Enabling erosion cannot change any original-corridor pixel in the same frame.');
+    const patchMatureAt=first.collapse.patchMatureSeconds;
+    await resume(page,patchMatureAt);
+    await page.waitForFunction(t=>window.__debug.hallwayCollapse.snapshot().elapsedSeconds>=t-1e-8,patchMatureAt,{timeout:9000});
+    await capture(page,output,`${prefix}hallway-collapse-islands.png`);
+    const islands=await pixels(page);
+    assert.ok(islands.collapse.residualProgress<1e-8);
+    assert.ok(islands.grid.rows.filter(row=>row.missing>0&&row.surviving>0).length>=3,'Initial organic cavities retain irregular islands.');
+    await resume(page,patchMatureAt+4);
+    await page.waitForFunction(t=>window.__debug.hallwayCollapse.snapshot().elapsedSeconds>=t-1e-8,patchMatureAt+4,{timeout:9000});
+    await capture(page,output,`${prefix}hallway-collapse-islands-fading.png`);
+    const fading=await pixels(page);
+    assert.ok(Math.abs(fading.collapse.residualProgress-.5)<1e-7);
+    nearEqual(fading.near,before.near,'Slow clearing retains the complete nearby return route.');
+    assert.equal(fading.originalMaskChanged,0);
     await resume(page,duration);
     await page.waitForFunction(()=>window.__debug.hallwayCollapse.snapshot().phase==='complete',undefined,{timeout:7000});
     await capture(page,output,`${prefix}hallway-collapse-black.png`);
@@ -355,14 +387,19 @@ export async function runHallwayCollapseScenario(page,output,{privateAsset=false
     assert.equal(final.packedPatches.count,10);assert.deepEqual(final.fogPatches,final.packedPatches);
     assert.ok(final.grid.missing>0,'Mature local damage leaves actual white gaps.');
     assert.ok(final.visibleWhiteGaps>0,'Organic gaps remain opaque white with actual fog enabled.');
-    assert.ok(final.grid.surviving>0,'Mature damage leaves scattered original surfaces.');
-    assert.ok(final.grid.rows.filter(row=>row.missing>0&&row.surviving>0).length>=3,`The result must contain interleaved holes and surviving surfaces at several equal depths: ${JSON.stringify(final.grid.rows)}`);
+    assert.ok(Math.abs(final.collapse.residualProgress-1)<1e-9,'Residual clearing reaches completion within floating-point precision.');
+    assert.ok(final.grid.missing>islands.grid.missing,'The initial islands keep dissolving after the explosions.');
+    assert.ok(final.grid.surviving<islands.grid.surviving,'Far fewer residual surfaces survive the slow clearing.');
+    assert.ok(fading.grid.missing>=islands.grid.missing&&fading.grid.missing<=final.grid.missing,'Missing regions grow gradually through the residual stage.');
+    const farRows=final.grid.rows.filter(row=>row.depth>final.collapse.protectedDepth+4.5);
+    assert.ok(farRows.some(row=>row.missing>0&&row.surviving===0),'A distant row fully clears rather than freezing its splat islands.');
     assert.equal(final.fx.activeActors,0);assert.equal(final.collapse.protectedDepth,6);
     const result=await page.evaluate(()=>{
       const s=window.__collapseCheck,{splats,hallwayCollapseEffects,broom,broomEncounter,holeWorldRotation}=window.__debug,mesh=splats.viewer.splatMesh;
       return {arms:s.arms,armStates:s.armStates,broom:broom.snapshot(),encounter:broomEncounter.snapshot(),turn:holeWorldRotation.snapshot(),rumble:window.__debug.fractureRumble.snapshot(),
         resourcesStable:mesh.geometry===s.resources.geometry&&mesh.material===s.resources.material&&mesh.splatDataTextures===s.resources.textures&&splats.viewer.sortWorker===s.resources.worker,
         fragmentResourcesStable:s.fxResources.every(r=>r.object.geometry===r.geometry&&r.object.material===r.material),
+        world:holeWorldRotation.snapshot(),endingState:window.__debug.realityEnding.snapshot(),lifecycle:{...s.lifecycle},
         sceneCount:mesh.scenes.length,fx:hallwayCollapseEffects.snapshot(),trackedStable:s.tracked.every(t=>{
           t.object.updateWorldMatrix(true,false);return t.object.parent===t.parent&&t.object.matrixWorld.elements.every((v,j)=>Math.abs(v-t.matrix.elements[j])<1e-7);
         })};
@@ -372,6 +409,9 @@ export async function runHallwayCollapseScenario(page,output,{privateAsset=false
     assert.equal(result.broom.visible,false);assert.equal(result.encounter.phase,'complete');
     assert.equal(result.resourcesStable,true);assert.equal(result.fragmentResourcesStable,true);assert.equal(result.trackedStable,true);assert.equal(result.sceneCount,6);
     assert.equal(result.rumble.requestedCount,10,'Each actual blast requests its rumble exactly once.');
+    assert.equal(result.world.phase,'complete','Finishing explosions and island clearing cannot reset the rotated world.');
+    assert.equal(result.endingState.phase,'armed','The visual fixture holds ending time while inspecting every collapse stage.');
+    assert.deepEqual(result.lifecycle,{sessionEnds:0,contextLosses:0},'Collapse completion cannot emit a session end or lose the graphics context.');
     assert.equal(new Set(result.rumble.consumedIds).size,10);
     if(beforeReturn)await beforeReturn(page,{output,prefix,positions});
     await resume(page,null);
@@ -432,11 +472,12 @@ export async function runHallwayCollapseScenario(page,output,{privateAsset=false
         endingOpacity:window.__debug.realityEndingEffects?.snapshot().opacity??1}));
       assert.deepEqual(cleared,{active:false,fx:0,mask:0,playing:false,endingActive:false,endingOpacity:1},`${action} cancels destruction, fragments, rumble and the ending.`);recovery.push(action);
     }
-    return {nativeCompletion:true,before,first,blasts,nativeBlasts,restoredBlasts,middle,final,returned,closed,recovery,ending,...result,
-      screenshots:['before','first-patch','blasts','blasts-restored','mid','black','return'].map(stage=>`${prefix}hallway-collapse-${stage}.png`)};
+    return {nativeCompletion:true,before,first,blasts,nativeBlasts,restoredBlasts,middle,islands,fading,final,returned,closed,recovery,ending,...result,
+      screenshots:['before','first-patch','blasts','blasts-restored','mid','islands','islands-fading','black','return'].map(stage=>`${prefix}hallway-collapse-${stage}.png`)};
   } finally {
     await page.evaluate(saved=>{
       const s=window.__collapseCheck,d=window.__debug;if(!s)return;
+      d.renderer.xr.removeEventListener('sessionend',s.onSessionEnd);d.renderer.domElement.removeEventListener('webglcontextlost',s.onContextLost);
       d.broomEncounter.update=s.broomUpdate;d.holeWorldRotation.update=s.turnUpdate;d.hallwayFog.update=s.fogUpdate;
       if(s.endingUpdate)d.realityEnding.update=s.endingUpdate;
       d.hallwayCollapse.update=s.collapseUpdate;d.hallwayCollapse.arm=s.collapseArm;

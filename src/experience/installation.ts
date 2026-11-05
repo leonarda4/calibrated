@@ -8,8 +8,9 @@ import { FloorReveal } from './floorReveal.ts';
 import { BoxGlitch } from './boxGlitch.ts';
 import { createWoodenBoxVisuals } from '../viewer/woodenBox.ts';
 import type { DropInViewer } from '@mkkellogg/gaussian-splats-3d';
-import type { HallwayCenterResult } from './hallwayCenter.ts';
+import type { HallwayCenterResult, HallwayWallPlanes } from './hallwayCenter.ts';
 import { alignBoxToWall } from './wallBoxAlignment.ts';
+import { headsetInSecondBoxSection, SECOND_BOX_INTERACTION } from './secondBoxTrigger.ts';
 import { scanOriginForStart } from '../viewer/scanPlacement.ts';
 import type { HallwayPlacementFrame } from '../viewer/wallRouteFrame.ts';
 
@@ -85,6 +86,7 @@ export function createInstallation(options: InstallationOptions) {
   let secondBoxBase: Position3 | null = null;
   let secondBoxYaw = 0;
   let secondBoxShown = false;
+  let secondTrigger: { walls: HallwayWallPlanes; stationZ: number; floorY: number } | null = null;
   // Keep the station and selected physical side in the same frame as wall fits.
   let secondAnchor: { reference: Position3; direction: Position3; normal?: Position3 } | null = null;
   let secondAlignmentError: string | null = null;
@@ -149,6 +151,7 @@ export function createInstallation(options: InstallationOptions) {
     ]);
   };
   const revokeSecondBox = (): void => {
+    secondTrigger = null;
     secondAnchor = null;
     secondAlignmentError = null;
     secondSyncKey = '';
@@ -193,7 +196,8 @@ export function createInstallation(options: InstallationOptions) {
       if (!fit.ok) throw new Error(fit.reason);
       const aligned = alignBoxToWall({ walls: fit.wallPlanes, reference: secondAnchor.reference,
         direction: secondAnchor.direction, preferredNormal: secondAnchor.normal,
-        width: secondSize.width, depth: secondSize.depth });
+        width: secondSize.width, depth: secondSize.depth, wallClearance: SECOND_BOX_INTERACTION.wallClearance });
+      secondTrigger = { walls: fit.wallPlanes, stationZ: secondAnchor.reference[2], floorY: secondAnchor.reference[1] };
       secondAnchor.normal ??= aligned.inwardNormal;
       const base = new THREE.Vector3(...aligned.base);
       const direction = new THREE.Vector3(...aligned.direction);
@@ -207,6 +211,7 @@ export function createInstallation(options: InstallationOptions) {
       secondBox.rotation.set(0, secondBoxYaw, 0);
       secondAlignmentError = null;
     } catch (cause) {
+      secondTrigger = null;
       secondAlignmentError = `Seat alignment: ${cause instanceof Error ? cause.message : String(cause)}`;
       secondBoxShown = false;
       secondReveal.reset();
@@ -449,13 +454,12 @@ export function createInstallation(options: InstallationOptions) {
         state.boxReveal.motion === 'visible' &&
         isHeadsetInBox(position, state.config, state.boxYaw);
     },
-    headsetAboveSecondBox(position: Position3): boolean {
+    headsetInSecondBoxHallway(position: Position3): boolean {
       const state = snapshot(), second = state.secondBox;
       return state.phase === 'reversed' && (state.calibrated || state.preview) &&
-        second.visible && second.reveal.motion === 'visible' && second.base !== null &&
-        isHeadsetInBox(position, { ...state.config, centerX: second.base[0],
-          centerZ: second.base[2], floorY: second.base[1], boxWidth: second.width,
-          boxDepth: second.depth }, second.yaw);
+        second.visible && second.reveal.motion === 'visible' && secondTrigger !== null &&
+        headsetInSecondBoxSection(options.placementFrame
+          ? options.placementFrame.routePoint(new THREE.Vector3(...position)).toArray() : position, secondTrigger);
     },
     rotateHallway(): boolean {
       if (boxReveal.snapshot().motion === 'hidden' || boxReveal.snapshot().motion === 'exiting') return false;

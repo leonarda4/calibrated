@@ -2,6 +2,7 @@
 export const BROOM = {
   modelUrl: '/splats/broooooommm.ply',
   sceneIndex: 2,
+  brightness: 1.35,
   // Bottom centre of the bristle end, in the supplied file's raw coordinates.
   sourceBase: [0.1806081049144268, -1.2656397819519043, 1.3037186861038208] as const,
   // Proper rotation: raw (X,Y,Z) -> object (-Y,-Z,X).

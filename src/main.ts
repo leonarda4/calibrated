@@ -8,6 +8,7 @@ import {
   createViewerRig, loadScene, createSpawnMarker, getScanUrl, setScanOpacity, getSourceCenters,
 } from './viewer/splatViewer';
 import { setupEnterVr } from './xr/enterVR';
+import { deferDevReload } from './xr/deferDevReload';
 import { setupCalibrationCapture } from './xr/calibrationCapture';
 import { makeHud } from './ui/hud';
 import { bindSpawnPanel } from './ui/spawnPanel';
@@ -38,12 +39,14 @@ import { HoleWorldRotation } from './experience/holeWorldRotation';
 import { BroomEncounter } from './experience/broomEncounter';
 import { HallwayCollapse } from './experience/hallwayCollapse';
 import { RealityEnding } from './experience/realityEnding';
+import { endingBoundaryDistance } from './experience/endingBoundary';
 import { createRealityEndingEffects } from './effects/realityEndingEffects';
 import { createFractureRumble } from './audio/fractureRumble';
 import { HolePortalCrossing } from './experience/holePortalCrossing';
 import { createWorldPresentation } from './viewer/worldPresentation';
 import { createVolumeFog } from './effects/volumeFog';
 import { createRoomMist } from './effects/roomMist';
+import { createBroomAtmosphere } from './viewer/broomAtmosphere';
 import { bindMistControl } from './ui/mistControl';
 import { createFractureBursts } from './effects/fractureBursts';
 import { prepareCutoutDisintegration } from './effects/cutoutDisintegration';
@@ -55,6 +58,8 @@ logger.info('boot', 'app starting');
 const hud = makeHud();
 
 const { renderer, scene, camera, splats } = createViewerRig();
+const devReload=deferDevReload(import.meta.hot,()=>renderer.xr.getSession(),()=>logger.info('dev','Source update deferred until VR exits.'));
+window.addEventListener('pagehide',()=>devReload.dispose(),{once:true});
 const showWorldGuides = new URLSearchParams(window.location.search).get('worldGuides') === '1';
 let scanReady = false;
 const operatorPanel = bindOperatorPanel();
@@ -229,6 +234,13 @@ const desktopBoundary = setupDesktopBoundary(renderer, scene, { showWorldGuides,
   const state = experience.installation.snapshot();
   return state.placementSource === 'unplaced' ? undefined : state.config;
 }, onWarning: () => experience.gameplayAudio.warnDanger(),
+  getHallwayForward: () => {
+    if (!experience.installation.snapshot().calibrated || experience.calibrationBlockReason() !== null) return null;
+    // Freeze the physical hallway axis at calibration; artistic yaw/pitch never
+    // changes which real headset boundary edges face the hallway ends.
+    const route = placementFrame.matrix();
+    return [route[8], 0, route[10]];
+  },
   onWarningCancelled: () => experience.gameplayAudio.cancelDangerWarning(),
   isWarningEnabled: () => !audioMuted && experience.installation.snapshot().phase !== 'stopped' });
 resetBoundaryVoice = desktopBoundary.resetWarning;
@@ -301,6 +313,8 @@ loadScene(splats, (percent) => {
     floorHole.initialize();
     experience.installation.initializeVisuals();
     hallwayLighting.initialize();
+    const broomAtmosphere=createBroomAtmosphere(scene,splats,()=>hallwayFog.root.visible||hallwayMist.root.visible);
+    window.addEventListener('pagehide',()=>broomAtmosphere.dispose(),{once:true});
     await Promise.all([hallwayFog.initialize(), hallwayMist.initialize(), hallwayCollapseEffects.initialize(), fractureRumble?.prepare()]);
     if (hallwayFog.snapshot().error) logger.info('fog', hallwayFog.snapshot().error!);
     if (hallwayMist.snapshot().error) logger.info('mist', hallwayMist.snapshot().error!);
@@ -437,12 +451,12 @@ renderer.setAnimationLoop((_time, frame) => {
     holeState.open && hallwayCut.snapshot().visible;
   const previousHoleTurn = holeWorldRotation.snapshot();
   const previousHoleTurnPhase = previousHoleTurn.phase;
-  const endingOwnsReturn = realityEnding.snapshot().originalDamage;
+  const endingOwnsReturn = realityEnding.snapshot().blocksPortal;
   if (previousHoleTurnPhase === 'original' && !endingOwnsReturn && holeEligible && headsetClearOfHole(holePosition, entryHole)) repeatHoleEntryArmed = true;
   if (previousHoleTurnPhase === 'idle' || (previousHoleTurnPhase === 'original' && !endingOwnsReturn)) {
     holeTransition.update(dt, holeEligible, (previousHoleTurnPhase === 'idle' || repeatHoleEntryArmed) && headsetAboveHole(holePosition, entryHole));
   }
-  if (previousHoleTurnPhase === 'complete' && holePortalCrossing.update({ position: wallPlayerPosition, deltaSeconds: dt, eligible: holeEligible })) {
+  if (previousHoleTurnPhase === 'complete' && !endingOwnsReturn && holePortalCrossing.update({ position: wallPlayerPosition, deltaSeconds: dt, eligible: holeEligible })) {
     holeWorldRotation.returnToOriginal();
   }
   // A newly started leg takes its first animation step on the following frame.
@@ -489,11 +503,15 @@ renderer.setAnimationLoop((_time, frame) => {
   syncDestructionMask();
   hallwayCollapseEffects.update(hallwayCollapse, worldPhase === 'complete');
   const collapseAudioState = hallwayCollapse.snapshot();
-  fractureRumble?.update(collapseAudioState.blasts, collapseAudioState.active && worldPhase === 'complete' && !audioMuted);
+  fractureRumble?.update(collapseAudioState.blasts, collapseAudioState.active && worldPhase === 'complete' && !audioMuted &&
+    realityEnding.snapshot().phase !== 'white');
   const beforeEnding = realityEnding.snapshot();
+  const farBoundaryMetres = worldPhase === 'complete'
+    ? endingBoundaryDistance(desktopBoundary.snapshot().runtime, collapseAudioState.worldToOpening) : null;
   realityEnding.update({dt,eligible:holeEligible&&!['idle','cancelled'].includes(worldPhase),worldPhase,
     // A distant effect suppressed by its protection guard still owns its ending.
-    collapseStarted:!['idle','cancelled'].includes(collapseAudioState.phase),brightness:hallwayLighting.snapshot().brightness});
+    collapseStarted:!['idle','cancelled'].includes(collapseAudioState.phase),brightness:hallwayLighting.snapshot().brightness,
+    explosionsFinished:collapseAudioState.explosionsFinished, farBoundaryMetres});
   const ending = realityEnding.snapshot();
   if(ending.originalDamage&&!realityEndingEffects.snapshot().rawToRoute&&capturedHole&&wallPlayerPosition){
     const inversePresentation=holeWorldRotation.matrix().clone().invert();

@@ -9,8 +9,9 @@ export async function runBoundaryVoiceScenario(parentPage, output) {
     await page.route('**/src/main.ts', route => route.fulfill({ contentType: 'text/javascript', body: '' }));
     await page.goto(new URL('/', parentPage.url()).href, { waitUntil: 'domcontentloaded' });
     await page.evaluate(async () => {
-      const [THREE, { setupDesktopBoundary }, { createGameplayAudio }] = await Promise.all([
+      const [THREE, { setupDesktopBoundary }, { createGameplayAudio }, { createHallwayPlacementFrame }] = await Promise.all([
         import('/node_modules/.vite/deps/three.js'), import('/src/experience/setupDesktopBoundary.ts'), import('/src/audio/gameplayAudio.ts'),
+        import('/src/viewer/wallRouteFrame.ts'),
       ]);
       document.body.replaceChildren();
       const originalContext = Object.getOwnPropertyDescriptor(window, 'AudioContext'), originalFetch = window.fetch;
@@ -48,19 +49,23 @@ export async function runBoundaryVoiceScenario(parentPage, output) {
       const reference = new THREE.EventDispatcher(), bounded = new THREE.EventDispatcher(), xr = new THREE.EventDispatcher();
       bounded.boundsGeometry = [[-2,-2],[2,-2],[2,2],[-2,2]].map(([x,z]) => ({ x,y:0,z,w:1 }));
       const session = new THREE.EventDispatcher(); session.visibilityState = 'visible';
-      let available = true, poseValid = true, emulated = false, enabled = true, time = 0;
+      let available = true, poseValid = true, emulated = false, enabled = true, hallwayReady = true, time = 0;
       session.requestReferenceSpace = async () => { if (!available) throw Error('unsupported'); return bounded; };
       Object.assign(xr, { isPresenting: true, getSession: () => session, getReferenceSpace: () => reference });
       const matrix = new THREE.Matrix4().makeRotationY(.63).setPosition(3,0,-4), head = new THREE.Vector3();
       const frame = { getViewerPose: () => poseValid ? { emulatedPosition: emulated, transform: { position: head } } : null,
         getPose: () => ({ transform: { matrix: matrix.toArray() }, emulatedPosition: false }) };
       const engine = createGameplayAudio(), scene = new THREE.Scene(), scan = new THREE.Group(); scene.add(scan);
+      const hallwayFrame = createHallwayPlacementFrame(scan); hallwayFrame.set(matrix);
       let accepted = 0;
       const boundary = setupDesktopBoundary({ xr }, scene, {
+        getHallwayForward: () => {
+          const route = hallwayFrame.matrix(); return hallwayReady ? [route[8],0,route[10]] : null;
+        },
         onWarning: () => { const played = engine.warnDanger(); if (played) accepted++; return played; },
         onWarningCancelled: () => engine.cancelDangerWarning(), isWarningEnabled: () => enabled && !engine.snapshot().muted,
       });
-      const step = (x, z = 0, dt = .1) => { time += dt; head.set(x,1.65,z).applyMatrix4(matrix); boundary.update(frame,time); };
+      const step = (depth, across = 0, dt = .1) => { time += dt; head.set(across,1.65,depth).applyMatrix4(matrix); boundary.update(frame,time); };
       const button = document.createElement('button'); button.id = 'boundary-voice-enable'; button.textContent = 'Enable silent audio check';
       let ready = false;
       button.onclick = () => { void engine.unlock().then(async ok => { if (ok) { await engine.preload(); ready = true; } }); };
@@ -69,7 +74,8 @@ export async function runBoundaryVoiceScenario(parentPage, output) {
         sources, contexts, requests, decoded, originalContext, originalFetch,
         ready: () => ready, accepted: () => accepted, time: () => time,
         pose: (valid, fake = false) => { poseValid = valid; emulated = fake; },
-        available: value => { available = value; }, enabled: value => { enabled = value; } };
+        available: value => { available = value; }, enabled: value => { enabled = value; },
+        hallway: value => { hallwayReady = value; } };
       await Promise.resolve(); await Promise.resolve(); step(1.4);
     });
     await page.locator('#boundary-voice-enable').click();
@@ -83,6 +89,14 @@ export async function runBoundaryVoiceScenario(parentPage, output) {
       s.boundary.setRuntimeVisible(false);
       s.boundary.configureManual({ centerX: 99,centerZ: 99,width: 1,depth: 1,floorY: 0,yawDegrees: 45 });
       s.boundary.setManualVisible(true);
+      s.step(0,1.4); s.step(0,1.5); s.step(0,1.8);
+      s.ensure(s.accepted() === 0, 'Lateral headset bounds triggered danger speech');
+      s.ensure(s.boundary.snapshot().warning.distanceMetres > .5, 'Side clearance replaced hallway-end clearance');
+      s.step(3.5); s.step(3.6);
+      s.ensure(s.accepted() === 0 && !s.boundary.snapshot().warning.inWarningStrip, 'Negative outside distance triggered speech far from the strip');
+      s.hallway(false); s.step(1.7); s.step(1.8);
+      s.ensure(s.accepted() === 0 && s.boundary.snapshot().warning.status === 'unoriented', 'Missing hallway orientation guessed tracking-space ends');
+      s.hallway(true); s.step(1.4);
       s.step(1.45); s.ensure(s.accepted() === 0, 'Warning fired before half-metre threshold');
       s.step(1.5); s.ensure(s.accepted() === 1, 'Actual runtime-head approach failed at half a metre');
       s.ensure(Math.abs(s.boundary.snapshot().warning.distanceMetres - .5) < 1e-8, 'Calibrated yaw/origin changed physical clearance');
@@ -91,13 +105,16 @@ export async function runBoundaryVoiceScenario(parentPage, output) {
       s.ensure(s.accepted() === 1, 'Stationary head or visual world transform replayed a boundary warning');
       s.ensure(!s.scene.getObjectByName('desktop-movement-boundaries').visible, 'Voice enabled a world outline');
       return { thresholdMetres: s.boundary.snapshot().warning.distanceMetres, runtimeOutlineHidden: true,
-        worldTransformDoesNotAffectWarning: true, physicalFrameYaw: .63 };
+        worldTransformDoesNotAffectWarning: true, physicalFrameYaw: .63,
+        lateralEdgesSilent: true, outsideBandSilent: true, calibratedHallwayAxisRequired: true };
     });
     await page.waitForFunction(() => window.__boundaryVoice.sources.some(s => s.path?.endsWith('DangerZone01.wav')));
     await page.evaluate(() => {
       const s = window.__boundaryVoice;
       s.ensure(s.sources.find(source => source.path.endsWith('Welcome To The Hallway.wav')).stopped, 'Warning waited behind ordinary speech');
       s.ensure(s.engine.snapshot().currentMusic?.endsWith('Ambience_1.wav'), 'Warning stopped the background');
+      s.step(1.49);
+      s.ensure(!s.engine.snapshot().dangerPlaying && !s.boundary.snapshot().warning.inWarningStrip, 'Leaving the half-metre strip retained active speech');
       s.step(1.25);
       s.ensure(!s.engine.snapshot().dangerPlaying, 'Retreat retained boundary speech');
       s.step(1.4); s.step(1.5); s.ensure(s.accepted() === 1, 'Cooldown did not suppress fast re-entry');
@@ -142,7 +159,7 @@ export async function runBoundaryVoiceScenario(parentPage, output) {
       s.ensure(s.sources.filter(source => /DangerZone/.test(source.path)).every(source => source.stopped), 'A cancelled danger source survived recovery');
       return { dangerFiles: files.map(([file,duration]) => ({ file,duration })), nativeDangerSources: s.sources.filter(source => /DangerZone/.test(source.path)).length,
         acceptedWarningRequests: s.accepted(), priorityInterruptsSpeech: true, musicContinues: true,
-        cooldownAndRetreat: true, currentPhysicalPoseOnly: true, resetMuteSessionCancellation: true,
+        cooldownAndRetreat: true, stripExitCancelsSpeech: true, currentPhysicalPoseOnly: true, resetMuteSessionCancellation: true,
         noManualFallback: true, silentOutput: true, screenshot: 'boundary-voice-unavailable.png', syntheticXrOnly: true };
     });
     assert.deepEqual(errors, []); return { ...opening, ...result };

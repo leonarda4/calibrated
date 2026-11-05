@@ -19,7 +19,7 @@ The active asset is the original public/splats/hallway3/hallway3_0.ply, loaded w
 4. Check uniform metric scale with corresponding measurements, using approximately 2.10 m local width and approximately 2.40 m floor-to-bars height as independent references. Whole-scene bounds do not provide these distances. Scale and floor orientation still require physical checks.
 5. Enter VR and perform the existing controller fit below, then check floor/box position, reach and independent landmarks before starting the installation. A picked box anchor follows the fit. Check any manually entered world placement again after a new fit.
 
-The second 36 x 36 cm, 43 cm high box is prepared against the wall/floor-line guides before the turn. Refine its guide with **Pick second-box floor line** on the desktop before entering VR. Preparation retains its Z station in the shared calibrated hallway frame and selected physical wall side; this station is independent of the XR tracking axes. After rotation, on reveal and after an alignment-offset edit, its lateral position and heading refit to the current selected wall plane so a whole footprint edge meets that wall. Its displayed XYZ and yaw remain world coordinates. A new calibration fit or interruption clears its prior placement. The first box alone remains fixed as the turn pivot.
+The second 36 x 36 cm, 43 cm high box is prepared against the wall/floor-line guides before the turn. Refine its guide with **Pick second-box floor line** on the desktop before entering VR. Preparation retains its Z station in the shared calibrated hallway frame and selected physical wall side; this station is independent of the XR tracking axes. After rotation, on reveal and after an alignment-offset edit, its lateral position and heading refit to the current selected wall plane so a whole footprint edge stays 10 cm inward from that wall. Its displayed XYZ and yaw remain world coordinates. A new calibration fit or interruption clears its prior placement. The first box alone remains fixed as the turn pivot.
 
 The visible boxes use the original local `WoodenBox.ply`, normalized upright to the existing dimensions. Each reveal rises from below the floor over 1.5 seconds; Hide lowers it below the same plane. The first box's headset trigger waits until its rise finishes; the narrated game also reserves five seconds after its reveal action for the announcement. These visual transitions do not move the first box, turn pivot or tracked rig. The second box follows the current selected wall at its prepared station. Recovery cancels both animations immediately.
 
@@ -36,18 +36,22 @@ After the five-second minimum, live box entry also waits for scheduled/playing f
 ## Headset-boundary voice
 
 The separate boundary voice uses current physical headset position and the live
-runtime `bounded-floor` outline, independently of the scan's alignment or visual
-turns. Moving outward within 0.5 m of an edge requests a supplied DangerZone
-line; retreat to 0.75 m and an eight-second cooldown rearm it. It grants no
-calibration acceptance. STOP, mute, invalid/reset tracking and session changes
-cancel its audio/history; a fresh current motion sample is required afterward.
+runtime `bounded-floor` outline. Only edges facing the two calibrated hallway
+ends qualify: moving outward in their inside 0–0.5 m strip requests a supplied
+DangerZone line. Side edges, central space and all positions outside the polygon
+stay silent. The frozen calibrated hallway axis selects the ends; artistic room
+turns and pitch never rotate the physical warning area. Until that direction is
+available after calibration, warnings wait. Leaving the strip cancels speech;
+retreat to 0.75 m and an eight-second cooldown rearm it. It grants no calibration
+acceptance. STOP, mute, invalid/reset tracking and session changes cancel its
+audio/history; a fresh current motion sample is required afterward.
 Hidden desktop guides do not disable it. As explicitly selected, unavailable
 headset geometry has no manual-area fallback; its status is shown on the PC.
 See [boundary audio](GAMEPLAY_FLOW.md#headset-boundary-voice).
 
 ## Automatic lights-out cue
 
-After the second box finishes rising, the supplied sit-down recording asks the participant to sit. Its existing current-headset footprint trigger arms the wall; actual unseen wall appearance starts a separate five-second deadline for the classroom instruction. Waiting for appearance does not start that clock; later motion pauses do not postpone it. Speech queues complete recordings, and recovery clears pending prompts with the wall sequence. The footprint trigger does not measure whether the participant is physically seated.
+After the second box finishes rising, the supplied sit-down recording asks the participant to sit. Its full-width/full-height 2 m hallway-section trigger arms the wall; actual wall appearance starts a separate five-second deadline for the classroom instruction. Waiting for appearance does not start that clock; later motion pauses do not postpone it. Speech queues complete recordings, and recovery clears pending prompts with the wall sequence. The footprint trigger does not measure whether the participant is physically seated.
 
 The second box's completed floor rise starts a 6.5-second delay before one second of light flicker and its quiet local effect, then 30% hallway brightness. Transition 2 begins 2 s before the flicker and fades into Ambience 3 afterward. Manual lighting controls override this cue. STOP/reset/calibration/session or viewer-tracking interruption cancels pending/active lighting and sound and restores normal brightness; a later frame cannot revive the cancelled cue. See [lights out](INTERACTION_PLAN.md#lights-out). Audible Steam Link level and visual comfort need a separate headset check.
 
@@ -85,7 +89,7 @@ acceptance; repeated passage, stereo and comfort still need hardware checks.
 Only the first completed hole quarter-turn in each game starts the added
 hallway's broom cue. After two seconds it glitches into view over 0.55 s,
 centred four metres beyond the entrance and upright on that corridor's floor.
-Its invisible 36 x 36 cm trigger uses the existing upward headset-footprint
+Its invisible 2 m x 2 m trigger uses the existing upward headset-footprint
 rule, rather than requiring the headset inside a 43 cm tall physical box.
 Entry while the hallway is fully upright latches a two-second delay before
 a 0.55 s glitch out, even if the wearer leaves the footprint afterward.
@@ -109,8 +113,9 @@ collapse per game; manual Hide cannot trigger it. Ten seeded, semi-random
 fracture spots give five on each side, progressing from the far crop toward
 the protected near area with 0.6–1.1 s gaps. Each 1.8 s burst starts one supplied
 `RumblingSound01.wav` excerpt and its own roughly three-second growth of
-irregular local splat/fog loss. Surviving detail remains between cavities;
-there is no full-cross-section cutoff plane. Keep
+irregular local splat/fog loss. Surviving detail between cavities then fades
+unevenly over eight seconds after the last patch matures, leaving distant white
+void and a ragged transition. There is no full-cross-section cutoff plane. Keep
 the complete route from the opening fully visible for at least 6 m, expanding
 permanently to the greatest current-user depth plus 2 m; optional current bounds
 can enlarge this by protecting their farthest depth plus 1 m. Missing bounds
@@ -126,7 +131,20 @@ tracking/session recovery or invalid/stalled frames cancel it; a fresh game
 rearms it. These are tunable visual trial settings, not physical-safety or
 headset-comfort certification.
 
-Once actual automatic collapse has armed the ending, the existing physical
+Once actual automatic collapse has armed the ending, a fallback starts the same
+one-second global glitch/light sound if the user has not arrived back first:
+five seconds after the last explosion animation ends, or immediately within
+the inside one-metre strip at the far added-hallway headset boundary. Require
+current live headset geometry/pose; select forward-facing finite edges using
+the captured upright corridor depth axis, excluding sides and the return end.
+No stale or manual outline can trigger it. The timer also works on desktop,
+continues during a slow return and does not wait for residual splat clearing.
+The first ending owns the sequence, with no extra relight for a fallback: keep
+the viewpoint fixed, glitch to white, then play the complete solo final line.
+Block portal changes and later rumble; do not end VR. Arrival back before the
+fallback retains the following existing return behavior.
+
+The existing physical
 crossing starts the same four-second return, with organic damage at both ends
 of the original hallway already visible during motion. Preserve a longitudinal
 interval at least 4 m either side of the current user, including the opening
@@ -142,13 +160,13 @@ grant fresh calibration acceptance. STOP/reset/calibration/tracking/session
 recovery cancels both visual and audio state; a new game rearms it. Real-headset
 registration, stereo, audible output and comfort remain pending.
 
-The wall controls show bottom-centre XYZ in current world metres. In gameplay, a current valid headset above the fully raised second-box footprint arms the hidden wall. It waits for a look away from that hallway direction and a clear standing footprint, then appears instantly at **hallway Z=-8**, without a slide-in. It immediately approaches the first box's captured hallway station, approximately **Z=2.5**, at **1 m/s** while unseen. Looking back allows exactly **0.7 s** before stopping; looking away resumes. There is no watched introductory travel. **Five continuous seconds looking at the wall at its final standing position**, or a genuine passage through it at any route position, starts its stationary **0.55-second glitch**. The dwell starts fresh at actual arrival; looking away or invalid/stalled gaze resets it. Show/Run manually arm the same unseen reveal and motion used by preview and VR. Use current valid headset gaze in XR and the camera only on desktop, with 45-degree entry/50-degree retention cones; unknown gaze blocks movement.
+The wall controls show bottom-centre XYZ in current world metres. In gameplay, a current valid headset inside the wall-to-wall, floor-to-ceiling 2 m hallway section centred on the fully raised second box arms the hidden wall. It waits for a look-away or five continuous seconds watching that hallway direction, plus a clear standing footprint, then appears instantly at **hallway Z=-8**, without a slide-in. It immediately approaches the first box's captured hallway station, approximately **Z=2.5**, at **1 m/s** while unseen. Looking back allows exactly **0.7 s** before stopping; looking away resumes. There is no watched introductory travel. **Five continuous seconds looking at the wall at its final standing position**, or a genuine passage through it at any route position, starts its stationary **0.55-second glitch**. The dwell starts fresh at actual arrival; looking away or invalid/stalled gaze resets it. Show/Run manually arm the same unseen reveal and motion used by preview and VR. Use current valid headset gaze in XR and the camera only on desktop, with 45-degree entry/50-degree retention cones; unknown gaze blocks movement.
 
 Desktop route coordinates equal world coordinates. After a live fit, the route follows the calibrated hallway yaw and horizontal origin frozen before the artistic turn; arbitrary SteamVR axes cannot reverse the approach side. Floor Y remains zero. Player/gaze poses and swept clearance use this same frame; displayed/manual XYZ remain world metres. Each new fit replaces the frame without granting acceptance or bypassing interruption guards. Before reveal, five supported sections across the corrected scan define one straight centreline and fixed upright heading. Anchor the line at the normalized wall-distance midpoint at the captured first-box station, then size a constant width over the route and full slab depth, with 1 cm edge overlap; height/depth are preserved. Route, heading and width stay fixed during motion and waits, even after a later scan correction. New reveals or explicit authoring fit again; no per-frame section query adjusts the wall.
 
 Its full-thickness footprint stays 75 cm from the current headset, requires 15 cm extra clearance to resume and limits swept steps before crossing that buffer. This overrides gaze permission. The wall never retreats, exceeds its captured endpoint or catches up after waits; the player can pass through it and trigger disappearance. Only a valid finite passage through its actual footprint counts, not proximity, a side miss or a pose jump. Appearance waits if occupied. Desktop preview uses the inspection camera. `/audio/SoundFX/RumblingSound02.wav` loops at 35% gain while translating, with a 0.2-second fade-in and a look-back fade-out matching the 0.7-second stopping delay. Proximity/paused/invalid waits, Stop and recovery silence it. These appearance/head-position checks certify neither body clearance nor physical safety.
 
-Wall, broom and floor use this same calibrated hallway frame for every button/system trigger. Explicit manual coordinates are scan-local candidates for this page, honoured by Show/Run and gameplay and reprojected through a new rigid fit; manual forward/back follows the hallway. Manual position/motion or Stop overrides the script. Calibration/reset/tracking/session interruption cancels pending reveals, motion and audio and hides the wall; a fresh enabled game waits for the second-box-above trigger again. Hide does not author coordinates; the next default Show arms the same unseen instant reveal from -8 toward the captured first-box station. Use start position clears explicit overrides and restores -8. The tracked rig never moves. See [interaction plan](INTERACTION_PLAN.md).
+Wall, broom and floor use this same calibrated hallway frame for every button/system trigger. Explicit manual coordinates are scan-local candidates for this page, honoured by Show/Run and gameplay and reprojected through a new rigid fit; manual forward/back follows the hallway. Manual position/motion or Stop overrides the script. Calibration/reset/tracking/session interruption cancels pending reveals, motion and audio and hides the wall; a fresh enabled game waits for the second-box hallway-section trigger again. Hide does not author coordinates; the next default Show arms the same unseen instant reveal from -8 toward the captured first-box station. Use start position clears explicit overrides and restores -8. The tracked rig never moves. See [interaction plan](INTERACTION_PLAN.md).
 
 ## Restored current method (2026-11-03)
 

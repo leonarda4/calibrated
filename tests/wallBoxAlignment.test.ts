@@ -19,6 +19,19 @@ test('seat edge follows the actual selected nonparallel plane at an unchanged wo
   assert.ok(Math.abs(aligned.direction[0] * walls.right.normal[0] + aligned.direction[2] * walls.right.normal[2]) < 1e-12);
 });
 
+test('ten-centimetre seat clearance follows the selected plane without changing its station or walls', () => {
+  const original = structuredClone(walls);
+  for (const x of [-1, 1]) {
+    const aligned = alignBoxToWall({ walls, reference: [x, 0, 4], direction: [0, 0, 1], wallClearance: .1 });
+    const distances = aligned.corners.map(p => measureWallDistances(walls, p)[aligned.wallSide]);
+    assert.equal(distances.filter(d => Math.abs(d - .1) < 1e-10).length, 2);
+    assert.ok(Math.abs(Math.max(...distances) - .46) < 1e-10);
+    assert.equal(aligned.base[1], 0); assert.equal(aligned.base[2], 4);
+  }
+  assert.deepEqual(walls, original);
+  assert.throws(() => alignBoxToWall({ walls, reference: [1, 0, 4], direction: [0, 0, 1], wallClearance: -.1 }));
+});
+
 test('seat keeps the same physical wall side when rotation swaps estimator wall labels', () => {
   const first = alignBoxToWall({ walls, reference: [-.9, 0, 4], direction: [0, 0, 1] });
   const shifted: HallwayWallPlanes = {

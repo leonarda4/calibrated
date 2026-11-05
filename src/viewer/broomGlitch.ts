@@ -11,6 +11,7 @@ export function prepareBroomGlitch(material: ShaderMaterial): void {
   material.vertexShader = 'uniform float uBroomGlitch; varying float vBroomGlitchDrop;\n' +
     material.vertexShader.replace(vertex, `
       vBroomGlitchDrop = 0.0;
+      if (int(sceneIndex) == ${BROOM.sceneIndex}) vColor.rgb = min(vec3(1.0), vColor.rgb * ${BROOM.brightness});
       if (int(sceneIndex) == ${BROOM.sceneIndex} && uBroomGlitch > 0.0) {
         float band = floor(-splatCenter.z * 45.0);
         float tick = floor(uBroomGlitch * 20.0);

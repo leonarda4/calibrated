@@ -9,6 +9,7 @@ export function setupDesktopBoundary(
   renderer: Pick<THREE.WebGLRenderer, 'xr'>,
   scene: THREE.Scene,
   options: { getBox?(): BoundaryBoxMarker | undefined; showWorldGuides?: boolean;
+    getHallwayForward?(): Point3 | null;
     onWarning?(): boolean; onWarningCancelled?(): void; isWarningEnabled?(): boolean } = {},
 ) {
   const warning = createBoundaryApproachWarning({ onWarning: () => options.onWarning?.() ?? false,
@@ -53,11 +54,14 @@ export function setupDesktopBoundary(
       warning: warning.snapshot() }; },
     update(frame?: XRFrame, nowSeconds = performance.now() / 1000) {
       const runtime = boundary.update(frame);
-      warning.update(nowSeconds, runtime, renderer.xr.isPresenting && options.isWarningEnabled?.() !== false);
+      warning.update(nowSeconds, { ...runtime, hallwayForward: options.getHallwayForward?.() ?? null },
+        renderer.xr.isPresenting && options.isWarningEnabled?.() !== false);
       const voice = warning.snapshot();
       panel.setVoiceStatus(voice.status === 'unavailable' ? 'Boundary voice: no live headset outline available.'
+        : voice.status === 'unoriented' ? 'Boundary voice: waiting for calibrated hallway end bounds.'
         : voice.status === 'paused' ? 'Boundary voice paused.'
-        : `Boundary voice: ${voice.distanceMetres!.toFixed(2)} m from edge${voice.latched ? ' · warning delivered' : ''}. Trigger: 0.50 m while approaching.`);
+        : voice.status === 'outside' ? 'Boundary voice: outside headset bounds; warning strip inactive.'
+        : `Boundary voice: ${voice.distanceMetres!.toFixed(2)} m from hallway-end edge${voice.latched ? ' · warning delivered' : ''}. Trigger: inside 0.50 m while approaching.`);
       // A manual map remains useful when the runtime declines bounded-floor.
       // Its head marker still requires a real current local-floor viewer pose.
       liveHead = null;

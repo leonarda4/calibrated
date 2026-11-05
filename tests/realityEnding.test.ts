@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { RealityEnding, REALITY_ENDING, type RealityEndingSample, type RealityWorldPhase } from '../src/experience/realityEnding.ts';
+import { Matrix4, Vector3 } from 'three';
+import { endingBoundaryDistance } from '../src/experience/endingBoundary.ts';
+import type { Point3 } from '../src/boundary/geometry.ts';
 
 const near = (a: number, b: number, tolerance = 1e-9) => assert.ok(Math.abs(a - b) < tolerance, `${a} != ${b}`);
 function fixture(seed = 72) {
@@ -172,4 +175,92 @@ test('seed validation preserves state on invalid reset and no public snapshot ca
   const publicState = f.ending.snapshot(); publicState.originalDamage = false; publicState.dimensionSeconds = 100;
   assert.deepEqual(f.ending.snapshot(), before);
   assert.equal(new RealityEnding().snapshot().seed, REALITY_ENDING.defaultSeed);
+});
+
+test('five seconds after the last explosion starts the same global glitch without a return', () => {
+  const f = fixture(); f.arm();
+  const added = { worldPhase: 'complete' as const, explosionsFinished: true };
+  f.step(3, { worldPhase: 'complete' });
+  assert.equal(f.ending.snapshot().afterExplosionsSeconds, null);
+  f.ending.update(f.sample({ ...added, dt: .5 }));
+  assert.equal(f.ending.snapshot().afterExplosionsSeconds, 0, 'The observed explosion endpoint starts at zero.');
+  f.step(4.999, added); assert.equal(f.ending.snapshot().phase, 'armed');
+  f.ending.update(f.sample({ ...added, dt: .001 }));
+  const start = f.ending.snapshot();
+  assert.equal(start.trigger, 'timeout'); assert.equal(start.phase, 'glitching'); near(start.glitchProgress, 0);
+  assert.equal(start.returnedCount, 0); assert.equal(start.brightness, null); assert.equal(start.originalDamage, false);
+  assert.equal(start.blocksPortal, true); assert.equal(start.narrationCount, 0);
+  f.step(.42, added); assert.ok(f.ending.snapshot().environmentOpacity > 0 && f.ending.snapshot().environmentOpacity < 1);
+  f.step(.58, added); assert.equal(f.ending.snapshot().phase, 'white'); assert.equal(f.ending.snapshot().narrationCount, 1);
+  f.step(15, added); assert.equal(f.ending.snapshot().narrationCount, 1);
+});
+
+test('far boundary within one metre starts immediately after collapse, without waiting for explosions', () => {
+  for (const distance of [0, .1, .999, 1]) {
+    const f = fixture();
+    f.ending.update(f.sample({ worldPhase: 'complete', collapseStarted: true, farBoundaryMetres: distance, dt: 0 }));
+    assert.equal(f.ending.snapshot().trigger, 'boundary'); assert.equal(f.ending.snapshot().phase, 'glitching');
+    near(f.ending.snapshot().glitchProgress, 0); assert.equal(f.ending.snapshot().brightness, null);
+    f.step(1, { worldPhase: 'complete', farBoundaryMetres: distance });
+    assert.equal(f.ending.snapshot().environmentOpacity, 0); assert.equal(f.ending.snapshot().narrationCount, 1);
+  }
+  for (const distance of [null, -1, -.001, 1.001, 5]) {
+    const f = fixture(); f.arm(); f.step(7, { worldPhase: 'complete', farBoundaryMetres: distance });
+    assert.equal(f.ending.snapshot().trigger, null); assert.equal(f.ending.snapshot().phase, 'armed');
+  }
+  const f = fixture(); f.step(7, { worldPhase: 'complete', farBoundaryMetres: .1 });
+  assert.equal(f.ending.snapshot().phase, 'idle', 'A boundary alone cannot start the story.');
+});
+
+test('return arrival wins before the deadline, while a slow return cannot postpone fallback', () => {
+  const f = fixture(); f.arm();
+  f.ending.update(f.sample({ worldPhase: 'complete', explosionsFinished: true }));
+  f.step(2, { worldPhase: 'complete' }); f.returning(); f.step(2, { worldPhase: 'returning' }); f.arrive();
+  assert.equal(f.ending.snapshot().trigger, 'return'); assert.equal(f.ending.snapshot().dimensionSeconds, 0);
+  f.step(4.99, { farBoundaryMetres: .2, explosionsFinished: true });
+  assert.equal(f.ending.snapshot().phase, 'holding');
+  f.step(1.01); assert.equal(f.ending.snapshot().phase, 'white'); assert.equal(f.ending.snapshot().narrationCount, 1);
+  const slow = fixture(); slow.arm();
+  slow.ending.update(slow.sample({ worldPhase: 'complete', explosionsFinished: true }));
+  slow.step(4.9, { worldPhase: 'complete' });
+  slow.ending.update(slow.sample({ worldPhase: 'returning', dt: .3 }));
+  assert.equal(slow.ending.snapshot().trigger, 'timeout'); near(slow.ending.snapshot().glitchProgress, .2);
+  slow.step(.8, { worldPhase: 'returning' });
+  assert.equal(slow.ending.snapshot().phase, 'white'); assert.equal(slow.ending.snapshot().returnedCount, 0);
+  slow.arrive(); assert.equal(slow.ending.snapshot().trigger, 'timeout'); assert.equal(slow.ending.snapshot().narrationCount, 1);
+});
+
+test('fallback cancels during countdown or glitch, resets cleanly and rejects invalid observations', () => {
+  for (const elapsed of [2, 5.3, 7]) for (const invalid of [{ eligible: false }, { dt: .501 }, { farBoundaryMetres: NaN }]) {
+    const f = fixture(); f.arm();
+    f.ending.update(f.sample({ worldPhase: 'complete', explosionsFinished: true }));
+    f.step(elapsed, { worldPhase: 'complete' });
+    f.ending.update(f.sample({ ...invalid, worldPhase: 'complete' }));
+    assert.equal(f.ending.snapshot().phase, 'cancelled'); assert.equal(f.ending.snapshot().blocksPortal, false);
+    f.step(8, { worldPhase: 'complete', explosionsFinished: true, farBoundaryMetres: .1 });
+    assert.equal(f.ending.snapshot().phase, 'cancelled');
+    f.ending.reset(); assert.equal(f.ending.snapshot().afterExplosionsSeconds, null);
+    assert.equal(f.ending.snapshot().narrationCount, 0); assert.equal(f.ending.snapshot().trigger, null);
+    f.arm(); f.ending.update(f.sample({ worldPhase: 'complete', farBoundaryMetres: 1 }));
+    assert.equal(f.ending.snapshot().trigger, 'boundary');
+  }
+});
+
+test('only the live forward headset end supplies distance through yaw, translation and both windings', () => {
+  for (const yaw of [0, .63, -1.5, Math.PI]) for (const reverse of [false, true]) {
+    const matrix = new Matrix4().makeRotationY(yaw).setPosition(7, 0, -4);
+    const map = (p: Point3) => new Vector3(...p).applyMatrix4(matrix).toArray();
+    const rectangle: Point3[] = [[-2, 0, -5], [2, 0, -5], [2, 0, 5], [-2, 0, 5]];
+    const points = rectangle.map(map);
+    if (reverse) points.reverse();
+    const inverse = matrix.clone().invert().toArray();
+    const distance = (p: Point3) => endingBoundaryDistance({ live: true, points, head: map(p) }, inverse);
+    near(distance([0, 1.65, 4])!, 1); near(distance([1.9, 1.65, 0])!, 5);
+    near(distance([0, 1.65, -4.9])!, 9.9, 1e-8);
+    assert.ok(distance([2.1, 1.65, 4.5])! < 0, 'Outside positions do not enter the inside trigger strip.');
+    assert.equal(endingBoundaryDistance({ live: false, points, head: map([0, 1.65, 4.5]) }, inverse), null);
+    assert.equal(endingBoundaryDistance({ live: true, points, head: null }, inverse), null);
+    assert.equal(endingBoundaryDistance({ live: true, points: [], head: map([0, 1.65, 4.5]) }, inverse), null);
+    assert.equal(endingBoundaryDistance({ live: true, points, head: map([0, 1.65, 4.5]) }, null), null);
+  }
 });

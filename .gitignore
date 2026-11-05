@@ -14,7 +14,9 @@ playwright-report/
 public/splats/*
 !public/splats/.gitkeep
 !public/splats/README.md
-private/
+private/*
+# User-approved process documentation, transcripts and supplied screenshots.
+!private/process-history/
 captures/
 calibration-local/
 public/audio/generated/*

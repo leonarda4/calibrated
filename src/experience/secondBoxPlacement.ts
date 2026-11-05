@@ -17,6 +17,7 @@ export interface SecondBoxPlacementOptions {
   boxWidth?: number;
   boxDepth?: number;
   boxHeight?: number;
+  wallClearance?: number;
 }
 
 export type SecondBoxPlacementResult = {
@@ -30,7 +31,7 @@ export type SecondBoxPlacementResult = {
   wallPoint: Point;
   /** Fitted separation of the opposing walls, in world metres. */
   width: number;
-  /** Perpendicular centre-to-selected-wall distance; exactly half the box width. */
+  /** Perpendicular centre-to-selected-wall distance: half width plus clearance. */
   wallDistance: number;
   /** Signed shift from the approximate box guide's station to the final centre. */
   tangentOffset: number;
@@ -80,8 +81,9 @@ export function placeWallAdjacentBox(options: SecondBoxPlacementOptions): Second
   const boxWidth = options.boxWidth ?? 0.36;
   const boxDepth = options.boxDepth ?? 0.36;
   const boxHeight = options.boxHeight ?? 0.43;
+  const clearance = options.wallClearance ?? 0;
   if (![boxWidth, boxDepth, boxHeight].every(value => Number.isFinite(value) && value > 0 && value <= 5)
-    || boxWidth >= wallFit.width) {
+    || !Number.isFinite(clearance) || clearance < 0 || boxWidth + clearance >= wallFit.width) {
     return fail('The box dimensions must be positive metres and fit between the walls.');
   }
   const length = Math.hypot(wallFit.directionWorld[0], wallFit.directionWorld[2]);
@@ -111,9 +113,9 @@ export function placeWallAdjacentBox(options: SecondBoxPlacementOptions): Second
   const floorLineOffset = floorLine ? options.tangentSign! * boxDepth / 2 : null;
   const tangentOffset = lineAlong - along + (floorLineOffset ?? 0);
   const baseWorld: Point = [
-    wallPoint[0] - nx * wallSign * boxWidth / 2 + dx * (floorLineOffset ?? 0),
+    wallPoint[0] - nx * wallSign * (boxWidth / 2 + clearance) + dx * (floorLineOffset ?? 0),
     options.floorY,
-    wallPoint[2] - nz * wallSign * boxWidth / 2 + dz * (floorLineOffset ?? 0),
+    wallPoint[2] - nz * wallSign * (boxWidth / 2 + clearance) + dz * (floorLineOffset ?? 0),
   ];
   const footprint = [[-1, -1], [-1, 1], [1, 1], [1, -1]].map(([widthSign, depthSign]) => [
     baseWorld[0] + nx * widthSign * boxWidth / 2 + dx * depthSign * boxDepth / 2,
@@ -128,12 +130,12 @@ export function placeWallAdjacentBox(options: SecondBoxPlacementOptions): Second
     centerWorld: [baseWorld[0], options.floorY + boxHeight / 2, baseWorld[2]],
     directionWorld: [dx, 0, dz], yaw: Math.atan2(dx, dz),
     wallSide: wallSign < 0 ? 'left' : 'right', wallPoint, width: wallFit.width,
-    wallDistance: boxWidth / 2, tangentOffset, floorLineOffset, footprint,
+    wallDistance: boxWidth / 2 + clearance, tangentOffset, floorLineOffset, footprint,
     evidence: {
       guideMode: options.guideMode, guideSource: 'operator', guideWorld: [...guideWorld],
       floorLineSource: floorLine ? 'operator' : null, floorLineWorld: floorLine ? [...floorLine] : null,
       guideToWallDistance: Math.min(leftDistance, rightDistance),
-      oppositeWallClearance: wallFit.width - boxWidth, wallFitResidual: wallFit.residual,
+      oppositeWallClearance: wallFit.width - boxWidth - clearance, wallFitResidual: wallFit.residual,
     },
   };
 }

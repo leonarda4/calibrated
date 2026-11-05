@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import fs from 'node:fs/promises';
 
 async function moveHead(page, point, target) {
   await page.evaluate(async ({point,target}) => {
@@ -29,7 +30,7 @@ async function captureGlitch(page, output, name) {
   await page.evaluate(()=>{window.__broomEncounterCheck.paused=true;});
   try {
     const evidence=await page.evaluate(async()=>{
-      const {THREE}=window.__broomEncounterCheck,{renderer,scene,camera,splats,broom,broomEncounter}=window.__debug;
+      const {THREE}=window.__broomEncounterCheck,{renderer,scene,camera,splats,broom,broomEncounter,hallwayFog:fog,hallwayMist:mist}=window.__debug;
       scene.updateMatrixWorld(true);splats.viewer.update(renderer,camera);await splats.viewer.sortPromise;
       splats.viewer.splatMesh.updateTransforms();await splats.viewer.runSplatSort(true,true);await splats.viewer.sortPromise;
       const state=broomEncounter.snapshot(), object=splats.getSplatScene(2), material=splats.viewer.splatMesh.material;
@@ -44,14 +45,46 @@ async function captureGlitch(page, output, name) {
       const read=()=>{renderer.render(scene,camera);const bytes=new Uint8Array(w*h*4);gl.readPixels(x,y,w,h,gl.RGBA,gl.UNSIGNED_BYTE,bytes);return bytes;};
       const changed=(a,b)=>{let count=0;for(let i=0;i<a.length;i+=4)if(Math.abs(a[i]-b[i])+Math.abs(a[i+1]-b[i+1])+Math.abs(a[i+2]-b[i+2])>15)count++;return count;};
       object.visible=false;const empty=read();object.visible=true;material.uniforms.uBroomGlitch.value=0;const solid=read();
+      const savedFog=fog.snapshot().visibleRequested,savedMist=mist.snapshot().visibleRequested,background=scene.background;
+      const visibility=Array.from({length:splats.getSceneCount()},(_,i)=>splats.getSplatScene(i).visible);
+      let atmosphere;const atmosphereImages={};
+      try{
+        fog.setVisible(false);mist.setVisible(false);
+        for(let i=0;i<visibility.length;i++)splats.getSplatScene(i).visible=i===2;
+        scene.background=new THREE.Color(0);const black=read();atmosphereImages.maskBlack=renderer.domElement.toDataURL('image/png');
+        scene.background=new THREE.Color(0xffffff);const white=read();atmosphereImages.maskWhite=renderer.domElement.toDataURL('image/png');
+        const core=[];for(let i=0;i<black.length;i+=4)if(Math.max(...[0,1,2].map(c=>Math.abs(black[i+c]-white[i+c])))<8)core.push(i);
+        if(core.length<8)throw Error('No opaque source broom pixels for atmosphere evidence: '+core.length);
+        scene.background=background;visibility.forEach((v,i)=>{splats.getSplatScene(i).visible=v;});
+        const clear=read(),comparisons=[];atmosphereImages.clear=renderer.domElement.toDataURL('image/png');
+        for(const kind of ['fog','mist','both']){
+          fog.setVisible(kind!=='mist');mist.setVisible(kind!=='fog');const haze=read();
+          atmosphereImages[kind]=renderer.domElement.toDataURL('image/png');
+          // The shared old pass can itself blend background splats over bristles.
+          // A reference over black/white bounds the exact source color over ANY
+          // background, without incorrectly treating that old bleed as ground truth.
+          let worst=0;for(const i of core)for(let c=0;c<3;c++)worst=Math.max(worst,black[i+c]-haze[i+c],haze[i+c]-white[i+c]);
+          const layer=splats.viewer.splatMesh.getObjectByName('broom-in-front-of-atmosphere');
+          if(!layer?.geometry.instanceCount)throw Error('Foreground broom does not reuse sorted source indices');
+          comparisons.push({kind,maxSourceColorDeviation:worst,changedPixels:changed(clear,haze),broomInstances:layer.geometry.instanceCount});
+        }
+        atmosphere={opaqueCorePixels:core.length,comparisons};
+      }finally{
+        scene.background=background;visibility.forEach((v,i)=>{splats.getSplatScene(i).visible=v;});
+        fog.setVisible(savedFog);mist.setVisible(savedMist);
+      }
       material.uniforms.uBroomGlitch.value=state.glitch;const glitch=read();
       const raw=splats.getSplatScene(2);raw.updateMatrix();const source=splats.matrixWorld.clone().multiply(raw.matrix);
       const {BROOM}=await import('/src/viewer/broomConfig.ts');
       const actualBase=new THREE.Vector3(...BROOM.sourceBase).applyMatrix4(source), up=new THREE.Vector3(0,0,-1).transformDirection(source);
       return {state,visible:broom.snapshot().visible,fullPixels:changed(solid,empty),glitchPixels:changed(glitch,solid),
         actualBase:actualBase.toArray(),expectedBase:base.toArray(),up:up.toArray(),determinant:source.determinant(),
-        distanceFromEntrance:base.distanceTo(new THREE.Vector3(...state.entranceWorld)),roi:[x,y,w,h]};
+        distanceFromEntrance:base.distanceTo(new THREE.Vector3(...state.entranceWorld)),roi:[x,y,w,h],atmosphere,atmosphereImages};
     });
+    for(const[kind,data]of Object.entries(evidence.atmosphereImages))await fs.writeFile(path.join(output,name.replace('.png','-atmosphere-'+kind+'.png')),Buffer.from(data.split(',')[1],'base64'));
+    delete evidence.atmosphereImages;
+    assert.ok(evidence.atmosphere.comparisons.every(c=>c.maxSourceColorDeviation<=3),JSON.stringify(evidence.atmosphere));
+    assert.ok(evidence.atmosphere.comparisons.every(c=>c.changedPixels>10),'The surrounding haze must remain visible.');
     assert.ok(evidence.fullPixels>12,`Broom must render: ${JSON.stringify(evidence)}`);
     assert.ok(evidence.glitchPixels>4,'The sliced glitch must change actual broom pixels.');
     evidence.actualBase.forEach((v,i)=>assert.ok(Math.abs(v-evidence.expectedBase[i])<1e-7));
@@ -105,7 +138,7 @@ export async function runBroomEncounterScenario(page, output) {
     const positions=await page.evaluate(()=>{
       const {THREE}=window.__broomEncounterCheck,s=window.__debug.broomEncounter.snapshot(),pose=new THREE.Matrix4().fromArray(s.uprightMatrix);
       const base=new THREE.Vector3().setFromMatrixPosition(pose),forward=new THREE.Vector3(0,0,1).transformDirection(pose);
-      return {near:base.clone().add(new THREE.Vector3(0,1.65,0)).toArray(),
+      return {near:base.clone().addScaledVector(forward,-.9).add(new THREE.Vector3(0,1.65,0)).toArray(),
         view:base.clone().addScaledVector(forward,-1.4).add(new THREE.Vector3(0,1.65,0)).toArray(),
         target:base.clone().add(new THREE.Vector3(0,.73,0)).toArray(),
         outside:new THREE.Vector3(...s.entranceWorld).addScaledVector(forward,-.25).add(new THREE.Vector3(0,1.65,0)).toArray()};
@@ -185,7 +218,7 @@ export async function runBroomEncounterScenario(page, output) {
       return {sameCentralRevealCallback:true,repeatedVisibleUpdatesSilent:true,newRevealReplaysOnce:true};
     });
     return {appearance,disappearance,...result,returned,recovery,manualAudio,cleanRoomAtActualGlitchIn:true,
-      actualMainFirstRotation:true,boxFootprintMetres:[.36,.36],desktopOnly:true};
+      actualMainFirstRotation:true,boxFootprintMetres:[2,2],approachDistanceMetres:.9,desktopOnly:true};
   } finally {
     await page.evaluate(saved=>{
       const {broomEncounter,holeWorldRotation,camera,controls,experience}=window.__debug,s=window.__broomEncounterCheck;
