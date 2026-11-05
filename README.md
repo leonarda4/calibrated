@@ -103,7 +103,7 @@ The second box uses the approximate screenshot guide [2.8, 23.3, -1.45], a local
 | [Headset setup](docs/HEADSET_SETUP.md) | Both delivery routes, boundary handling, runtime fixes |
 | [Agent rules](AGENTS.md) | Shared instructions for coding agents |
 | [Strategy and decisions](ai/strategy.md) | Current state, decisions, and next task |
-| [Process history](private/process-history/README.md) | User-approved archive of conversations, supplied screenshots, gallery and standalone summary |
+| [Process history](private/process-history/README.md) | User-approved conversations, screenshots, participant recordings, gallery and standalone summary |
 | [References and attribution](docs/REFERENCES.md) | Source kit and technical evidence |
 
 The agent workflow is adapted from [Photolipsia](https://github.com/leonarda4/photolipsia-agentic-kit). `CLAUDE.md` points to the same rules. Tool accounts, model choices, and permissions remain in the user's existing configuration.

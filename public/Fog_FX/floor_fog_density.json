@@ -1,0 +1,38 @@
+{
+  "file": "floor_fog_density.bin",
+  "encoding": "uint8, linear density 0..1 (value / 255), no density_scale applied",
+  "order": "x fastest, then y, then z (matches THREE.Data3DTexture)",
+  "resolution": [
+    160,
+    20,
+    400
+  ],
+  "voxelSize": [
+    0.015000000596046448,
+    0.015000000596046448,
+    0.015
+  ],
+  "boundsMin": [
+    -1.2000000476837158,
+    0.0,
+    -3.0
+  ],
+  "boundsMax": [
+    1.2000000476837158,
+    0.30000001192092896,
+    3.0
+  ],
+  "axes": "metres, Y up from the floor, X across the hallway, Z along the hallway",
+  "tiling": "seamless in X (period 2.40 m) and Z (period 6.00 m); not in Y",
+  "houdiniSliders": {
+    "density_scale": 2.0,
+    "depth_min": 0.08,
+    "depth_max": 0.28,
+    "puff_freq": 2.5,
+    "gap_low": 0.1,
+    "gap_high": 0.45,
+    "swirl": 0.35,
+    "speed": 1.0
+  },
+  "source": "/obj/floor_fog_v2/bake_density, frame 1, Houdini 22.0.466"
+}

@@ -13,6 +13,10 @@ This account covers the locally recoverable project history from **29 October to
 
 Start with the [searchable picture gallery](gallery.html), [pictures with original explanations](IMAGES.md), [conversation inventory](CONVERSATIONS.md), or [chronological user requests](USER_REQUESTS.md). The [contact sheet](contact-sheet.png) provides a quick visual overview.
 
+The separately supplied participant recordings are in [videos/](videos/README.md).
+They were added after this transcript export; Sam's copy removes the long blank
+tail while retaining the ending audio. Video files use Git LFS.
+
 ## How the process developed
 
 | Period | Work and turning point | Evidence |

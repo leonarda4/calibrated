@@ -1,0 +1,243 @@
+{
+  "addedDate": "2026-11-05",
+  "storage": "Git LFS",
+  "originalsUnchanged": true,
+  "ffmpegVersion": "9.0.2",
+  "clips": [
+    {
+      "file": "sam.mp4",
+      "source": {
+        "filename": "sam.mp4",
+        "bytes": 113286297,
+        "durationSeconds": 272.466633,
+        "sha256": "117bb120a964e47634ab3fbb58be17740299ada8a7d24a7be3be36b1532cb573"
+      },
+      "output": {
+        "bytes": 110730360,
+        "durationSeconds": 215.018667,
+        "sha256": "d63fd5eedc726f82b715e22e35b20d45afd1b75c45d74805fd7794e4995065db",
+        "streams": [
+          {
+            "codec_name": "h264",
+            "codec_type": "video",
+            "width": 1008,
+            "height": 1078,
+            "r_frame_rate": "30/1",
+            "duration": "215.000000"
+          },
+          {
+            "codec_name": "aac",
+            "codec_type": "audio",
+            "sample_rate": "48000",
+            "channels": 2,
+            "r_frame_rate": "0/0",
+            "duration": "215.018667"
+          }
+        ]
+      },
+      "processing": {
+        "method": "lossless packet stream copy",
+        "endSeconds": 215,
+        "keptVideoSha256": "1d586f22e4e1b5f3faafe6c0d95bad767405c81a48264ef5031954da15081342",
+        "keptAudioSha256": "5ed04459fcaa7aa8f71327a7b80a46ee6eb3b04d3fcff20f0e5feab10b42593a",
+        "retainedStreamsMatchSourcePrefix": true,
+        "lastNonSilentSourceSecondsApprox": 213.158937,
+        "silenceThresholdDb": -60,
+        "reason": "Remove long white/standby tail after the final audio, retaining a short white hold."
+      },
+      "verification": {
+        "fullAudioVideoDecode": true
+      }
+    },
+    {
+      "file": "ria.mp4",
+      "source": {
+        "filename": "ria.mp4",
+        "bytes": 75295026,
+        "durationSeconds": 176.6333,
+        "sha256": "b0b58882bccea5107e1fe968384cce54744ccb9c82119b3c714f8b0370ff99b2"
+      },
+      "output": {
+        "bytes": 75295026,
+        "durationSeconds": 176.6333,
+        "sha256": "b0b58882bccea5107e1fe968384cce54744ccb9c82119b3c714f8b0370ff99b2",
+        "streams": [
+          {
+            "codec_name": "h264",
+            "codec_type": "video",
+            "width": 1010,
+            "height": 1078,
+            "r_frame_rate": "30/1",
+            "duration": "176.633300"
+          },
+          {
+            "codec_name": "aac",
+            "codec_type": "audio",
+            "sample_rate": "48000",
+            "channels": 2,
+            "r_frame_rate": "0/0",
+            "duration": "176.618646"
+          }
+        ]
+      },
+      "processing": {
+        "method": "unchanged source bytes"
+      },
+      "verification": {
+        "fullAudioVideoDecode": true
+      }
+    },
+    {
+      "file": "massimo.mp4",
+      "source": {
+        "filename": "massimo.mp4",
+        "bytes": 67720005,
+        "durationSeconds": 163.9,
+        "sha256": "730fd909e93ecc5baab07075178b70915a05d3bbef3be68949fc9b120673a0bb"
+      },
+      "output": {
+        "bytes": 67720005,
+        "durationSeconds": 163.9,
+        "sha256": "730fd909e93ecc5baab07075178b70915a05d3bbef3be68949fc9b120673a0bb",
+        "streams": [
+          {
+            "codec_name": "h264",
+            "codec_type": "video",
+            "width": 1012,
+            "height": 1078,
+            "r_frame_rate": "30/1",
+            "duration": "163.900000"
+          },
+          {
+            "codec_name": "aac",
+            "codec_type": "audio",
+            "sample_rate": "48000",
+            "channels": 2,
+            "r_frame_rate": "0/0",
+            "duration": "163.861312"
+          }
+        ]
+      },
+      "processing": {
+        "method": "unchanged source bytes"
+      },
+      "verification": {
+        "fullAudioVideoDecode": true
+      }
+    },
+    {
+      "file": "mags.mp4",
+      "source": {
+        "filename": "mags.mp4",
+        "bytes": 72955037,
+        "durationSeconds": 182.8333,
+        "sha256": "5ada4088cc1c12c199f1bccb56a4bd068bd21b379f3fc6f75ecb5c980b4dcfde"
+      },
+      "output": {
+        "bytes": 72955037,
+        "durationSeconds": 182.8333,
+        "sha256": "5ada4088cc1c12c199f1bccb56a4bd068bd21b379f3fc6f75ecb5c980b4dcfde",
+        "streams": [
+          {
+            "codec_name": "h264",
+            "codec_type": "video",
+            "width": 1006,
+            "height": 1010,
+            "r_frame_rate": "30/1",
+            "duration": "182.833300"
+          },
+          {
+            "codec_name": "aac",
+            "codec_type": "audio",
+            "sample_rate": "48000",
+            "channels": 2,
+            "r_frame_rate": "0/0",
+            "duration": "182.762646"
+          }
+        ]
+      },
+      "processing": {
+        "method": "unchanged source bytes"
+      },
+      "verification": {
+        "fullAudioVideoDecode": true
+      }
+    },
+    {
+      "file": "iris.mp4",
+      "source": {
+        "filename": "iris.mp4",
+        "bytes": 93053008,
+        "durationSeconds": 231.7,
+        "sha256": "0f1663bd330c0f6097df133083e577f15ebf66b0cd37e20736c5314f090256b6"
+      },
+      "output": {
+        "bytes": 93053008,
+        "durationSeconds": 231.7,
+        "sha256": "0f1663bd330c0f6097df133083e577f15ebf66b0cd37e20736c5314f090256b6",
+        "streams": [
+          {
+            "codec_name": "h264",
+            "codec_type": "video",
+            "width": 1008,
+            "height": 1078,
+            "r_frame_rate": "30/1",
+            "duration": "231.700000"
+          },
+          {
+            "codec_name": "aac",
+            "codec_type": "audio",
+            "sample_rate": "48000",
+            "channels": 2,
+            "r_frame_rate": "0/0",
+            "duration": "231.658646"
+          }
+        ]
+      },
+      "processing": {
+        "method": "unchanged source bytes"
+      },
+      "verification": {
+        "fullAudioVideoDecode": true
+      }
+    },
+    {
+      "file": "max.mp4",
+      "source": {
+        "filename": "max.mp4",
+        "bytes": 41506077,
+        "durationSeconds": 104.5,
+        "sha256": "edaa02febf1847df17e8be96901c76d8cdd5083c4acb8f16d9345a803cfd5980"
+      },
+      "output": {
+        "bytes": 41506077,
+        "durationSeconds": 104.5,
+        "sha256": "edaa02febf1847df17e8be96901c76d8cdd5083c4acb8f16d9345a803cfd5980",
+        "streams": [
+          {
+            "codec_name": "h264",
+            "codec_type": "video",
+            "width": 1010,
+            "height": 1078,
+            "r_frame_rate": "30/1",
+            "duration": "104.500000"
+          },
+          {
+            "codec_name": "aac",
+            "codec_type": "audio",
+            "sample_rate": "48000",
+            "channels": 2,
+            "r_frame_rate": "0/0",
+            "duration": "104.490646"
+          }
+        ]
+      },
+      "processing": {
+        "method": "unchanged source bytes"
+      },
+      "verification": {
+        "fullAudioVideoDecode": true
+      }
+    }
+  ]
+}
