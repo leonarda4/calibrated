@@ -11,12 +11,13 @@ export function bindVoicePanel(callbacks: {
     boxSizing: 'border-box', padding: '10px 12px', color: '#dbe3ec', background: 'rgba(13,18,24,.94)',
     border: '1px solid #526274', borderRadius: '8px', font: '12px/1.4 monospace',
   });
-  panel.innerHTML = '<summary style="cursor:pointer">VOICES / LOCAL AUDIO</summary>' +
+  panel.innerHTML = '<summary style="cursor:pointer">MUSIC / SOUND / SPEECH</summary>' +
     '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">' +
-    '<button type="button" data-action="unlock">ENABLE VOICES</button>' +
-    '<button type="button" data-action="preview">PREVIEW VOICE</button>' +
+    '<button type="button" data-action="unlock">ENABLE AUDIO</button>' +
+    '<button type="button" data-action="preview">PREVIEW SPEECH</button>' +
     '<label><input type="checkbox" data-action="mute">Mute</label></div>' +
-    '<p data-role="status" aria-live="polite">Enable voices after generating local clips.</p>' +
+    '<p data-role="status" aria-live="polite">Local soundtrack and supplied speech. Enable audio before calibration.</p>' +
+    '<p data-role="music">Music waits for calibration or a desktop preview.</p>' +
     '<p data-role="caption"></p>';
   document.body.appendChild(panel);
   const unlock = panel.querySelector<HTMLButtonElement>('[data-action="unlock"]')!;
@@ -24,6 +25,7 @@ export function bindVoicePanel(callbacks: {
   const mute = panel.querySelector<HTMLInputElement>('[data-action="mute"]')!;
   const status = panel.querySelector<HTMLParagraphElement>('[data-role="status"]')!;
   const caption = panel.querySelector<HTMLParagraphElement>('[data-role="caption"]')!;
+  const music = panel.querySelector<HTMLParagraphElement>('[data-role="music"]')!;
   unlock.onclick = callbacks.onUnlock;
   mute.onchange = () => callbacks.onMute(mute.checked);
   preview.onclick = callbacks.onPreview ?? null;
@@ -31,6 +33,7 @@ export function bindVoicePanel(callbacks: {
   return {
     setStatus(text: string) { status.textContent = text; },
     setCaption(text: string) { caption.textContent = text; },
+    setMusic(text: string) { music.textContent = text; },
     dispose() { panel.remove(); },
   };
 }

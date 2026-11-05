@@ -24,7 +24,8 @@ export function patchHallwayLighting(material: SplatMaterial, brightness: number
 
 /** RGB-only lighting, with operator override and the guarded second-box cue. */
 export function createHallwayLighting(options: { scanRoot: DropInViewer; blockReason(): string | null;
-  onFlickerStart?(): void; onFlickerStop?(): void }) {
+  secondBoxDelaySeconds?: number; anticipationSeconds?: number;
+  onFlickerAnticipate?(): void; onFlickerStart?(): void; onFlickerStop?(): void }) {
   let ready = false;
   let lightsOut = false;
   let lightsOutBrightness = LIGHTS_OUT_BRIGHTNESS;
@@ -32,13 +33,15 @@ export function createHallwayLighting(options: { scanRoot: DropInViewer; blockRe
   let from = 1;
   let elapsed = LIGHTS_FADE_SECONDS;
   let flickerFrom = 1;
-  const cue = new SecondBoxLights();
+  let presentationBrightness: number | null = null;
+  const cue = new SecondBoxLights(options.secondBoxDelaySeconds);
+  let anticipated = false;
   const cancelAutomatic = () => { cue.cancel(); options.onFlickerStop?.(); };
   const material = () => options.scanRoot.viewer.splatMesh.material as unknown as SplatMaterial;
   const write = () => {
     if (!ready) return;
     const uniform = material().uniforms.uHallwayBrightness;
-    if (uniform) uniform.value = brightness;
+    if (uniform) uniform.value = presentationBrightness ?? brightness;
   };
   const setLightsOut = (enabled: boolean): boolean => {
     if (typeof enabled !== 'boolean') return false;
@@ -52,10 +55,16 @@ export function createHallwayLighting(options: { scanRoot: DropInViewer; blockRe
     return true;
   };
   return {
+    setPresentationBrightness(value:number|null) {
+      if(value!==null&&(!Number.isFinite(value)||value<0||value>1))return false;
+      presentationBrightness=value;write();return true;
+    },
     setLightsOut,
     observeSecondBox(visible: boolean) {
-      const wasFlickering = cue.snapshot().phase === 'flickering';
+      const previous = cue.snapshot().phase;
+      const wasFlickering = previous === 'flickering';
       cue.observe(visible);
+      if (cue.snapshot().phase === 'waiting' && previous !== 'waiting') anticipated = false;
       if (wasFlickering && cue.snapshot().phase === 'cancelled') {
         lightsOut = false; brightness = from = 1; elapsed = LIGHTS_FADE_SECONDS;
         options.onFlickerStop?.(); write();
@@ -80,6 +89,7 @@ export function createHallwayLighting(options: { scanRoot: DropInViewer; blockRe
     },
     reset() {
       cancelAutomatic();
+      presentationBrightness=null;
       lightsOut = false; brightness = from = 1; elapsed = LIGHTS_FADE_SECONDS;
       write();
     },
@@ -88,6 +98,10 @@ export function createHallwayLighting(options: { scanRoot: DropInViewer; blockRe
       const previous = cue.snapshot().phase;
       cue.update(deltaSeconds);
       let state = cue.snapshot();
+      if (state.phase === 'waiting' && !anticipated && state.remainingSeconds !== null &&
+        state.remainingSeconds <= (options.anticipationSeconds ?? 0) + 1e-9 && options.blockReason() === null) {
+        anticipated = true; options.onFlickerAnticipate?.();
+      }
       if (state.phase === 'flickering' && previous !== 'flickering') {
         if (options.blockReason() !== null) { cancelAutomatic(); state = cue.snapshot(); }
         else {
@@ -113,7 +127,8 @@ export function createHallwayLighting(options: { scanRoot: DropInViewer; blockRe
       brightness = elapsed === LIGHTS_FADE_SECONDS ? target : from + (target - from) * eased;
       write();
     },
-    snapshot: () => ({ ready, lightsOut, lightsOutBrightness, brightness, fading: elapsed < LIGHTS_FADE_SECONDS,
+    snapshot: () => ({ ready, lightsOut:presentationBrightness===null?lightsOut:false, lightsOutBrightness,
+      brightness:presentationBrightness??brightness, fading: elapsed < LIGHTS_FADE_SECONDS,
       flickering: cue.snapshot().phase === 'flickering', cuePhase: cue.snapshot().phase }),
   };
 }

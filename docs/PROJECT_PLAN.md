@@ -1,5 +1,12 @@
 # Project plan
 
+Exposed world and void pixels are opaque white on desktop and in VR, including
+loading, gaps, clipped floor and disintegrated added-corridor regions. Output
+alpha remains 1; this background-color change does not alter source splat colors,
+lighting, effects, geometry or the tracked rig.
+
+The supplied v3 floor fog stretches to half the captured hallway height (1.3 m for the 2.6 m corridor), retaining its added-hallway 5-33 m interval, one metre beyond the broom at its four-metre station. Full-height supplied mist occupies that same added corridor; the original hallway has no mist. Both share the captured opening, turn/return, wall/mouth clipping and local collapse, and follow opacity/lighting without movement-boundary dependencies. Source textures remain unchanged. See [atmosphere placement and validation](FOG.md); headset appearance/performance remain separate checks.
+
 Planning baseline: 2026-10-29. Working name: **Calibrated**.
 
 ## Outcome
@@ -46,15 +53,17 @@ Recommend Ethernet from the PC to the access point where available, with a clear
 
 Later work: automatic registration, persistent spatial anchors, passthrough overlays, multiple users/headsets, larger buildings, native applications, and remote asset hosting. No backend/account system is needed for the MVP.
 
-**Current installation (2026-11-04):** a narrated test starts immediately after successful VR calibration: welcome at +0 s, first box at +10 s, four-second hallway turn when the headset enters the shown first box footprint, second box five seconds after turn onset. The four local ElevenLabs cues accompany those actions; included cached clips require no API key; optional regeneration requires private API access. Disable **Narrated test after calibration** for the separate Chrome **Show box**, **Rotate hallway 180°** and **Show second box** controls. Show box fits opposing scan walls near screenshot raw station [2,21.1,-1.45], places a centred step box on existing local-floor Y=0 and uses that point as the turn pivot. The first box, hands, tracked rig and floor plane stay fixed. Other props follow current rotated/offset hallway sections at explicit world-Z stations; the second box refits a whole footprint edge against the selected wall. The current tracked headset position inside or above the first box triggers one turn; there is no hand-contact requirement. Desktop preview needs no headset and grants no calibration authority; live XR retains the current calibration/tracking requirement. See [INTERACTION_PLAN.md](INTERACTION_PLAN.md). Estimated scan-wall centring and an artistic turn do not establish continued physical wall alignment.
+**Current installation (2026-11-04):** every successful live calibration reenables and restarts the full game and supplied local soundtrack. Ambience 1 starts after the fit; welcome plays at +1 s and the first box rises at +8 s with its step-on instruction. After a five-second announcement minimum, current valid headset entry into/above the raised box starts Transition 1; the four-second visual turn follows 2 s later. Desktop autoplay starts Transition 1 at +20 s, turns at +22 s and reveals the second box at +27 s. The second box always follows actual turn onset by 5 s. Turn commentary plays on completion; SitDownOnTheBox.wav is requested after the second box finishes rising. The headset-above-box trigger arms the wall, and GoBackToTheClassRoom.wav is requested five seconds after its actual unseen appearance. Complete speech takes queue without cutting each other off. Recalibration cancels previous audio, actions and effects before restarting from zero. Both box placements must succeed before revealing the first box; an action failure stops and disarms the game. Supplied WAV music, speech and effects replace the earlier generated voices without an API dependency. Disable the gameplay option after the fit for the current run's manual diagnostics; the next calibration restores it. Show box fits opposing walls near raw [2,21.1,-1.45], places a metric floor-standing box and uses its base as the fixed turn pivot. The tracked rig, hands and first box stay fixed. The second box retains its prepared hallway-route station and physical wall side while refitting wall contact; the broom shares this calibrated frame. The wall freezes its route before entry, and the hole freezes its fitted bounds when opened. Desktop preview grants no calibration authority. See [gameplay flow](GAMEPLAY_FLOW.md) and [interaction plan](INTERACTION_PLAN.md). Estimated scan centring and the artistic turn do not establish continued physical wall alignment.
 
 The supplied real box measures 36 x 36 cm and 43 cm high; the virtual box uses 0.36 x 0.36 x 0.43 metres. Its centre/floor placement still requires on-site checks.
 
-Two seconds after the second box finishes rising, the hallway lights flicker for one second with the quiet local light-flicker sound and hold at30% brightness. This follows actual visibility for both manual and narrated reveals. Manual lighting controls override the cue; all existing disarm/recovery paths cancel timing/sound and restore normal brightness. See [lighting behavior](INTERACTION_PLAN.md#lights-out).
+The second box's completed rise starts a 6.5-second wait before the one-second flicker and 30% brightness hold. Transition 2 starts 2 s before the flicker; the short local light-flicker sound remains synchronized with the actual light change. This follows settled visibility for both manual and gameplay reveals. Manual lighting commands override the cue; recovery cancels audio/timing and restores normal brightness. See [lighting behavior](INTERACTION_PLAN.md#lights-out).
 
-The current trial adds a +10 cm lateral scan correction blended through the turn, adjustable in **Flipped hallway wall alignment** before/after turning. Positive is right facing down the original hallway; the first box remains fixed and the unturned calibration is unchanged. The broom centres on the current section at Z6, the wall spans the current passage, the opening fits both walls at Z3/5.6, and the second box preserves its prepared station/physical wall side while refitting wall contact. Translation cannot reconcile differing wall widths/angles throughout the scan, so physical reversed-wall alignment still needs checking. Both box splat bases now sit on the floor with no extra visual lift.
+The turn defaults to **0 cm** lateral correction. **Flipped hallway wall alignment** remains available for optional manual adjustment. Positive is right facing down the original hallway; the first box remains fixed and unturned calibration is unchanged. The broom centres at hallway Z6, and the second box preserves its prepared station/physical wall side while refitting contact. Before wall reveal, capture its route from Z=-8 to the first box's hallway station, approximately Z=2.5, with its endpoint centred between the fitted scan walls. Later corrections do not alter its frozen trajectory. Prepare the hole's near edge 1 m beyond the captured final wall position opposite approach, before player passage. Fit both walls there, extend 2.60 m and freeze the hidden opening, connected cutout and later hinge. When the actual opaque wall conceals all four fitted corners, glitch the floor and cutout in over 0.4 s, possibly during approach. Player position and crossing direction never relocate it. The second box does not move. Translation cannot reconcile differing scan wall widths/angles, so reversed-wall alignment still needs physical checks. Both box splat bases sit on the floor without extra lift.
 
-Narrative playback follows the test clock; clip durations do not drive installation actions. Calibration and interruption/recovery instructions remain in-headset. Voice setup and generation access are documented in [VOICE_SETUP.md](VOICE_SETUP.md).
+Music follows Ambience 1 ? Transition 1 ? Ambience 2 ? Transition 2 ? Ambience 3 ? Transition 3 ? Ambience 4, using the selected 9/6/7-second transition excerpts and 1.2-second fades. Before the final solo ending, an active unmuted game keeps either ambience or a transition playing at its nominal gain under speech, wall movement and other effects. Native media playback is independent of long rendering frames; desktop visual clocks skip those stalled frames instead of cancelling music. The outgoing bed remains audible until its incoming replacement actually starts, with crossfades and background-loop recovery preventing silent gaps. Explicit Stop/reset/mute and calibration/tracking/session recovery still cancel playback. The third cue uses the current headset over the open hole's captured fitted footprint. After its 2 s anticipation, the complete visual environment eases through 90 degrees over 4 s about the cutout's floor edge, bringing that corridor horizontal with a level floor and unchanged tracked viewpoint. The final pose holds for physical walking; recovery restores the baseline. Speech queues so complete supplied lines are not truncated. After the five-second minimum, live box entry also waits for actual scheduled/playing first-box speech, while pending/failed downloads, suspended audio or mute do not block the turn. Successful buffers are reused, failed loads can retry, and cancellation prevents stale playback. Initial audio permission needs a gesture; explicit mute persists. Calibration/recovery instructions remain in-headset. See [audio setup](VOICE_SETUP.md).
+
+At the held 90-degree pose, the hole is a vertical fitted trapezoid. A swept head crossing through it from the cutout interior toward the original side, with 8 cm side hysteresis, starts a four-second eased return about the same frozen hinge to the exact pre-quarter-turn presentation. A head starting outside must first enter the interior. Before the collapse-armed ending return, clearing the returned horizontal footprint expanded by 10 cm and reentering repeats the two-second lead and four-second turn; subsequent outward crossings return again. Once that ending return starts, further entry is blocked. The original 180-degree scan sequence remains in place, and Ambience 4 continues without story or Transition 3 replay until the final solo ending. Prop/source authoring remains locked after the first hole turn until Reset. Closing the hole, STOP, reset, recalibration or tracking/session recovery cancels either direction and clears crossing/reentry history. The tracked rig, metric scale and captured geometry remain unchanged. These physical passages and their headset comfort still need hardware validation.
 
 PC passthrough is not an MVP dependency. Chromium's Windows AR path is not enabled by default; Meta's browser mixed-reality documentation concerns Quest Browser and does not establish the same features through PC Link. If passthrough becomes essential, evaluate a separate Quest Browser branch and retest its rendering budget. [Chromium support](https://chromium.googlesource.com/chromium/src/+/main/device/vr/), [Meta browser MR](https://developers.meta.com/vr/documentation/web/webxr-mixed-reality/)
 
@@ -64,9 +73,76 @@ TypeScript ES modules, Vite, Three.js 0.180, with Node's test runner — no UI f
 
 The active Git LFS export is the original public/splats/hallway3/hallway3_0.ply (143,446,489 bytes, 2,109,500 splats), loaded directly without compression. Empty companion PLYs are ignored; all quality profiles and legacy bookmarks use the original export. The manually adjusted placement in scanAsset.ts is protected: do not modify it without explicit user permission. User-supplied A [2.99, 19.14, -1.41] and B [2.90, 18.16, -1.26] load from calibration/landmarks.ts; EDIT A/B can replace them for a page session. Physical calibration and independent floor, scale and box checks remain required. See [new scan setup](CALIBRATION.md). Source SH is degree 0; the pinned renderer has no supported distance-based LoD. See [RENDER_QUALITY.md](RENDER_QUALITY.md) before a renderer migration or higher-detail claim.
 
-The extracted wall loads hidden in the initial splat build and its shader is warmed before readiness. Gameplay reveals it two seconds after the actual rotation finishes, at hallway route Z=-8, then slowly approaches Z=-2 at 0.30 m/s. Five supported sections are fitted before entry to lock one straight centreline, fixed heading and constant width covering both walls along the route. Movement performs no section queries or realignment, including after a later scan correction. Only the source crop's X scale is set, once; height and depth are preserved. Its actual rendered footprint pauses for a nearby player, resumes when clear and never retreats or crosses the route bounds. The second-box cue does not force arrival. Manual testing controls remain available. Show/Hide reuse the shared render data, and recovery immediately cancels both pending reveals and motion. See [interaction plan](INTERACTION_PLAN.md).
+The extracted wall preloads hidden and warms its shader in the initial shared build. A valid headset above the fully raised second-box footprint arms gameplay appearance; the wall waits for a look away and a clear footprint, then appears instantly at hallway Z=-8 without a slide-in. It immediately moves unseen at **1 m/s**, toward the first box's captured station, approximately Z=2.5. Looking back allows **0.7 s** before stopping; there is no watched 2 m intro. Show/Run, desktop preview and VR use the same current headset/camera gaze cone, with 45-degree entry and 50-degree retention; invalid gaze blocks movement. Five supported sections lock a straight trajectory through the final-section normalized wall-distance midpoint and a constant covering width for the full slab. Width, height, depth and heading remain fixed throughout motion and waits, with no later section queries or realignment. Its 75 cm player clearance and 15 cm release margin override gaze, and it never retreats, catches up or exceeds route bounds. The player may pass through the visual wall. `/audio/SoundFX/RumblingSound02.wav` loops at 35% gain with a 0.2-second fade-in and a 0.7-second look-back fade-out synchronized with stopping; other waits and recovery silence it. **Check wall start/end** statically inspect the canonical endpoints without arming disappearance. The floor opening is prepared once 1 m beyond the final wall endpoint opposite approach, independently of player passage. As soon as the actual opaque wall fully conceals its four fitted corners, the floor and connected hallway glitch in over **0.4 s**, including during approach. **Five continuous seconds looking after final arrival**, or a genuine player passage through the finite wall footprint at any route position, only freezes the wall and immediately glitches it away over **0.55 s**; it never relocates the prepared opening. Show/Hide reuse existing render resources; reset, calibration and tracking/session recovery cancel all pending reveals, motion, effects and audio and close the opening. See [interaction plan](INTERACTION_PLAN.md).
 
-The supplied `public/splats/broooooommm.ply` also preloads hidden in that shared build. **Show broom / Hide broom** reveals it upright, bristles-down, at the current fitted hallway centre/floor Y/world Z6. It follows the corrected hallway laterally at that station. The original 9,676-splat asset is shared through Git LFS and remains unchanged; physical dimensions and floor contact still need checking.
+The supplied `public/splats/broooooommm.ply` also preloads hidden in that shared build. **Show broom / Hide broom** reveals it upright, bristles-down, at the current fitted hallway centre/floor Y/hallway Z6. It follows the corrected hallway laterally at that station. The original 9,676-splat asset is shared through Git LFS and remains unchanged; physical dimensions and floor contact still need checking.
+
+Successful broom reveals request the supplied complete `CLEANTHEROOM.wav`
+speech: on the automatic encounter's first glitch-in frame, or a manual
+hidden-to-visible Show. Repeated visible frames and failed placement do not
+cue speech; the existing queue preserves complete lines without lowering
+music. `RoomTilting.wav` supports actual angular movement during both
+four-second directions of the hole turn, including later cycles and manual
+open-hole mode. Anticipation and held endpoints stay silent in this effect
+layer. Mute, close, STOP, reset and calibration/tracking/session recovery
+cancel active/pending tilt playback. Audible balance and headset routing
+still require an actual-route audition.
+
+The first completed hole quarter-turn also starts one broom encounter per game.
+Two seconds later, the same preloaded broom glitches in over 0.55 s, centred
+four metres inside the added upright hallway with its bristles on that floor.
+A valid headset above its invisible 36 x 36 cm footprint starts a latched
+two-second delay, followed by a 0.55 s glitch out. Return/re-entry preserves
+the encounter without replay; proximity applies only while that hallway is
+fully upright. Close, Hide, STOP or tracking/calibration recovery cancels it;
+a fresh game/recalibration rearms it. Source data and tracked poses stay fixed.
+
+Only completion of that automatic broom glitch out starts the next cue: ten
+semi-random fracture spots, five on each side of the added hallway, progressing
+from far to near. A fresh per-game seed fixes varied positions, patch shapes
+and 0.6–1.1 s gaps for reproducible playback. Each 1.8 s source-animation burst
+starts one supplied `RumblingSound01.wav` excerpt and a local patch of splat/fog
+loss that grows over about three seconds. Irregular cavities retain scattered
+Gaussian detail between them instead of forming a planar cutoff or uniform
+whole-volume void. Use the actual crop length and captured opening frame,
+independent of tracking yaw or floor side.
+Keep at least the first 6 m intact and permanently enlarge this return prefix
+to the greatest user depth plus 2 m; optional current boundary points can
+enlarge it to their farthest depth plus 1 m. Protection restores approached
+space and overrides authored loss. Missing boundary data does not gate the
+effect or fixed fog. Original scene0 remains intact until the ending return;
+the near area and opening/return trigger remain protected. The clock pauses
+through return/original poses while local damage persists; earlier visits do
+not replay the broom or story, and the ending return blocks another entry.
+Preloaded source assets, render buffers/materials and the shared sorter are
+reused. Close, STOP, reset, recalibration, tracking/session recovery or invalid
+frames cancel it; Reset/fresh game rearms. Numerical settings are first-trial
+visual choices; hardware rendering, physical registration and comfort remain
+unvalidated.
+
+After actual automatic collapse arms the ending, the existing physical portal
+crossing starts its usual four-second return with both ends of the original
+hallway already organically damaged during motion. Protect a longitudinal
+interval at least 4 m either side of the user, including the opening and
+available physical bounds, and enlarge it as the user moves. Actual return
+completion starts a new dimension clock: reverse irregular relighting from
+current brightness to full during its first second with the same
+`light_flicker.mp3`, hold until five seconds, then glitch every authored object
+away over one second with that sound. At six seconds the scene is opaque white;
+`finishReality` stops all previous audio and plays the complete 6.710979 s
+`WhatIsReality.wav` once alone at normal speed. That finale intentionally
+removes the protected area too. STOP/reset/calibration/tracking/session recovery
+cancels the ending without stale revival, and a new game rearms. This authored
+branch preserves source assets, calibrated metric geometry and the identity
+tracked rig; headset rendering, audible delivery and comfort remain pending.
+
+The separate hallway crop also preloads hidden in that build. Opening the fitted
+floor hole exposes it as a downward continuation: its floor meets the edge
+toward the second box, ceiling meets the opposite edge and walls meet the sides.
+The cutout reads the hole's captured corners and calibrated frame directly,
+including taper, so later scan edits cannot separate their mouths. Only this
+new scene is deformed/clipped; closing or recovery hides it with the opening.
+The original scan, hole interval, boxes and tracked rig keep their coordinates.
 
 Planned module boundaries, to be created during implementation:
 
@@ -77,7 +153,7 @@ Planned module boundaries, to be created during implementation:
 | `src/calibration/` | Pure transform math (yaw+translation solver), predefined landmarks |
 | `src/ui/` | PC Enter VR/calibration and operator controls, in-headset title/countdown/recovery HUD |
 | `src/experience/` | Pure sequence/rotation, fixed first-box pivot, current-section prop placement, lifecycle orchestration |
-| `src/audio/` | Local cached voice cues, layered playback and cancellation; offline ElevenLabs generation under `scripts/` |
+| `src/audio/` | Supplied local music, crossfades, queued speech, effects and cancellation |
 | ~~`src/storage/`~~ | **Removed at the user's request** with the auto-recalibration machinery — calibration state is per-session; local persistence is a debugging record only |
 | `tests/` | Solver, interaction, hand-contact, audio and conversion tests; `npm run check` runs type checking and bounded Playwright desktop checks |
 

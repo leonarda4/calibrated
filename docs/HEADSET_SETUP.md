@@ -58,6 +58,12 @@ The app can still render real WebXR hands if Steam Link/Chrome exposes their joi
 
 ## See movement boundaries on the PC
 
+The normal world view has no cyan origin/pivot ring, landmark witnesses or 3D
+movement outlines. Movement information remains in the desktop top-view panel.
+For deliberate desktop inspection, add `worldGuides=1` to the page URL; these
+guides stay hidden in immersive VR. Explicit EDIT A/B temporarily displays picks
+until editing ends. This does not change SteamVR/Quest system boundaries.
+
 Open **Movement boundaries** in the desktop page. Cyan shows the play-area polygon reported by the active runtime, when WebXR exposes it. The app requests a separate bounded-floor reference and keeps the working local-floor calibration space unchanged. Before a VR session there is no live runtime boundary to read; unsupported or empty data is reported explicitly.
 
 Amber is an optional manual installation outline. Open **Manual dimensions · metres**, enter its centre/width/depth/floor/rotation, click **Apply manual area**, and tick **Show manual area**. Its initial 2.10 x 2.10 m values are a draft square; the depth has not been measured. The checkbox and fields change only the desktop outline, not SteamVR/Quest settings or physical movement.
@@ -65,6 +71,24 @@ Amber is an optional manual installation outline. Open **Manual dimensions · me
 The top view updates on the PC during VR with a white live head marker and a grey installation-box marker. Desktop 3D floor outlines are hidden from immersive rendering. A retained cyan outline after session end is labelled a last-session snapshot, with no live head marker; a new session clears it. These diagnostics do not replace the headset's own boundary display or establish a collision-free area. [WebXR boundary geometry](https://www.w3.org/TR/webxr/#xrboundedreferencespace)
 
 ## SteamVR classic-layer implementation
+
+The application renders an opaque black world. Unscanned space, floor clipping,
+loading and calibration fades must reveal black, with no SteamVR environment
+visible through the application's pixels. The WebGL context/renderer disable
+canvas transparency, and both the clear colour and scene background are opaque
+black. Three.js r180 otherwise creates an alpha-capable classic XR framebuffer,
+so the app scopes its layer constructor to the exact session/context and forces
+`alpha:false`. The native constructor is restored before construction and on
+all failure paths; no prototype or installed dependency is patched. This also
+works across the asynchronous XR-compatibility step. Clear alpha remains 1 as
+an independent safeguard. Diagnostic projection layers disable source-alpha
+blending too.
+Gaussian transparency stays enabled for soft splat edges and fades inside the
+world. Session startup rejects `alpha-blend` and `additive` environment modes
+before attaching the renderer; the supported SteamVR route requires `opaque`.
+Reload the page and start a fresh VR session after changing this configuration.
+The [WebXR layer specification](https://www.w3.org/TR/webxr/#xrwebgllayer-interface)
+defines the layer framebuffer's alpha channel separately from the canvas.
 
 The established PC route uses the classic `XRWebGLLayer` path in `src/xr/enterVR.ts`. The user identified that Three.js r180 and r187 otherwise choose projection layers when `XRWebGLBinding` is exposed; those sessions did not deliver frames on the tested PCVR setup.
 

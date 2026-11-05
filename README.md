@@ -4,6 +4,11 @@ A PC-rendered WebXR project for Meta Quest 3: view a Gaussian splat of a hallway
 
 **Status: implementation running. Single active delivery route: SteamVR / Steam Link (user decision 2026-11-03).**
 
+Uncovered world space uses an opaque white background on desktop and in VR,
+including loading, scan gaps, floor openings and disintegrated corridor areas.
+This changes only the background color; source splats, geometry and tracking
+retain their existing behavior.
+
 - **The route — PCVR via SteamVR / Steam Link:** the PC renders and streams to Quest 3 over Wi-Fi. Chrome runs on the PC with **SteamVR as the active OpenXR runtime**, using the classic `XRWebGLLayer` path (fix in `src/xr/enterVR.ts`). **This is the only route the project works on from now on.**
 - **Meta Link — parked:** blocked by an upstream bug (three.js sessions never present over Horizon Link 208). Retry only after a Horizon Link/Chrome update.
 - **Quest Browser route — development history only:** the headset renders itself while opening the PC-served page. The calibration UX was built and hardware-tested there first, but it is **not part of the current working path** and receives no further work.
@@ -12,8 +17,9 @@ A PC-rendered WebXR project for Meta Quest 3: view a Gaussian splat of a hallway
 
 Install **Node.js 22.18 or newer**, Git and [Git LFS](https://git-lfs.com/).
 Clone this repository with GitHub Desktop or Git after installing LFS. The four
-runtime splats use LFS (about 151 MB total); the voice clips and hand models are
-also included. **No API key or `.env.local` is needed to run or build.**
+runtime splats use LFS (about 151 MB total); the supplied soundtrack, voices,
+fog/mist density assets, fracture source and hand models are also included.
+**No API key or `.env.local` is needed to run or build.**
 
 From the cloned repository folder:
 
@@ -21,11 +27,13 @@ From the cloned repository folder:
 git lfs install --local
 git lfs checkout
 npm ci
+node scripts/extract-hallway.mjs
+node scripts/prepare-fracture.mjs
 npm run dev:http
 ```
 
 Open **http://localhost:5174** in desktop Chrome. The hallway should load and
-**Preview narrated test on desktop** works without a headset. Click a page
+**Preview gameplay on desktop** works without a headset. Click a page
 control to unlock audio. On Windows PowerShell, use `npm.cmd` if `npm.ps1` is
 blocked, for example `npm.cmd ci` and `npm.cmd run dev:http`.
 
@@ -53,7 +61,10 @@ installed by `npm ci`. Tests are optional when building: `npm test` checks logic
 `npm run check` runs the desktop browser checks (requires installed Chrome).
 Test source is included; generated `.check/` reports/screenshots, `dist/`,
 `node_modules/`, local credentials and calibration captures stay excluded.
-Historical exports and the separate experimental hallway cut also stay local.
+Historical exports and the generated hallway cut/fracture derivatives stay local.
+The two preparation commands above recreate those required runtime derivatives
+from the included original hallway and fracture source on a fresh clone. Run
+them before building as well as before the first development startup.
 See the [asset inventory](public/splats/README.md) for the exact shared files.
 
 ## First experience
@@ -62,9 +73,9 @@ See the [asset inventory](public/splats/README.md) for the exact shared files.
 2. Wear the headset with Steam Link connected, wake both controllers and click **Enter VR** on the PC page or through SteamVR Desktop. Keep hand tracking enabled.
 3. From the HALLWAY PROJECT title, pull a controller's front/index trigger once, or click **CALIBRATE**, to start seven seconds for placing LEFT on marked floor point A and RIGHT on B. Both belong to the same placement attempt; real controller positions are buffered for hand takeover.
 4. The yaw+translation fit changes only the scan root. After success the scan fades in over one second; if controller measurements are missing, the CONFIRM prompt explains how to wake, place and confirm them. Hands can confirm available measurements but never supply controller landmarks. See [headset setup](docs/HEADSET_SETUP.md).
-5. **Narrated test after calibration** is enabled by default. It welcomes you immediately, shows the first box at +10 seconds, starts the four-second hallway turn when the headset enters/stands above that box, and reveals the second box five seconds later. Desktop preview retains the 10/15/20-second sequence. Each action uses the included local narration; optional regeneration is described in [voice setup](docs/VOICE_SETUP.md).
-6. For manual review, disable that option before calibration. Click **Show box** to fit the centre near raw [2, 21.1, -1.45] on **local-floor Y = 0**; use **Pick two floor edges** if the estimate is weak. Before entering VR you can refine the second box's guide with **Pick second-box floor line**. Both boxes default to 36 x 36 x 43 cm.
-7. In manual mode click **Rotate hallway 180°**, then **Show second box** after the four-second turn. The first box remains the fixed pivot; the second box keeps its prepared world-Z station and physical wall side, with a whole edge refitted to the current splat wall. Both box bases sit on the floor without extra visual lift. **Preview narrated test on desktop** runs the complete timed test without granting a headset fit.
+5. The gameplay sequence is enabled after each fresh calibration. Ambience 1 starts immediately, welcome plays at +1 s and the first box appears at +8 s with "Try to step on the box." Live headset entry starts Transition 1 after the announcement slot, then the four-second turn begins 2 s later. Desktop autoplay explores for about 20 s, turns at +22 s and shows the second box at +27 s. The supplied local soundtrack and effects replace the earlier generated voices. See [gameplay flow](docs/GAMEPLAY_FLOW.md) and [audio setup](docs/VOICE_SETUP.md). Throughout an active game, ambience or a transition keeps playing underneath wall movement, speech and other effects; a long render frame does not pause that background bed. Explicit Stop/reset/mute and calibration/tracking/session recovery still apply.
+6. For manual review, disable the gameplay option after calibration; a new calibration reenables it. Click **Show box** to fit the centre near raw [2, 21.1, -1.45] on **local-floor Y = 0**; use **Pick two floor edges** if the estimate is weak. Before entering VR you can refine the second box guide with **Pick second-box floor line**. Both boxes default to 36 x 36 x 43 cm.
+7. In manual mode click **Rotate hallway 180°**, then **Show second box** after the four-second turn. The first box remains the fixed pivot; the second box keeps its prepared world-Z station and physical wall side, with a whole edge refitted to the current splat wall. Both box bases sit on the floor without extra visual lift. **Preview gameplay on desktop** runs the complete timed test without granting a headset fit.
 8. **STOP** freezes the turn and invalidates alignment; **Reset baseline** restores the saved visual pose. Reset, calibration, stop and session changes clear the second box. After a tracking/boundary interruption, recalibrate; after a session end, click **Enter VR** first. Independently check alignment before a supervised physical run.
 
 The Chrome controls also work on the desktop without a headset. Live XR requires a current calibration fit. The narrated test locks individual action/placement controls while running; STOP and Reset remain available. Disabling the test restores manual controls. The second reveal requires a completed turn and prepared placement. SteamVR Desktop provides access to the PC controls while wearing the headset.
@@ -77,13 +88,14 @@ The desktop **Movement boundaries** panel can show a cyan headset-reported play-
 
 Hallway3 uses the manually adjusted placement in [scanAsset.ts](src/viewer/scanAsset.ts). Do not modify that file without explicit user permission. User-supplied raw PLY landmarks are configured separately in [landmarks.ts](src/calibration/landmarks.ts); their committed defaults survive reload, while EDIT A/B replacements last for the current page session. The box is placed from the local wall-centre estimate or explicit floor-edge picks, remains upright on local-floor Y = 0, and stays fixed during the artistic turn. The raw seed identifies the cross-section to inspect; it does not establish the whole hallway's measured midpoint.
 
-The second box uses the approximate screenshot guide [2.8, 23.3, -1.45], a local wall fit and a draft floor-colour seam near raw Y = 22.99. This appearance-based guide chooses the longitudinal station and physical wall side, not a surveyed seam. The box refits its lateral position and heading against the current selected wall after the turn, at reveal and after alignment-offset changes. **Flipped hallway wall alignment** starts at a signed +10 cm correction blended during the turn; positive is right facing down the original hallway. The broom, opening and second box follow current corrected sections while the first box/rig stay fixed. The moving wall fits its whole route before entry and then keeps that trajectory fixed. See the [interaction plan](docs/INTERACTION_PLAN.md) for placement review.
+The second box uses the approximate screenshot guide [2.8, 23.3, -1.45], a local wall fit and a draft floor-colour seam near raw Y = 22.99. This appearance-based guide chooses the longitudinal station and physical wall side, not a surveyed seam. The box refits its lateral position and heading against the current selected wall after the turn, at reveal and after alignment-offset changes. **Flipped hallway wall alignment** defaults to **0 cm**, with no sideways correction during the turn. Optional manual values blend during the turn; positive is right facing down the original hallway. The broom, opening and second box follow current corrected sections while the first box/rig stay fixed. The moving wall fits its whole route before entry and then keeps that trajectory fixed. See the [interaction plan](docs/INTERACTION_PLAN.md) for placement review.
 
 | File | Purpose |
 | --- | --- |
 | [Project plan](docs/PROJECT_PLAN.md) | Scope, architecture, milestones, and open inputs |
 | [Interaction plan](docs/INTERACTION_PLAN.md) | Narrated test and manual box / turn / seat controls, placement and recovery |
-| [Voices and hands](docs/VOICE_SETUP.md) | Offline ElevenLabs setup, timed narration and WebXR hand capability |
+| [Gameplay audio and hands](docs/VOICE_SETUP.md) | Supplied local soundtrack, playback and WebXR hand capability |
+| [Gameplay flow](docs/GAMEPLAY_FLOW.md) | Phase timers, automatic/user triggers, sound mapping and tuning |
 | [Render quality](docs/RENDER_QUALITY.md) | Source-detail audit and current rendering quality controls |
 | [Calibration design](docs/CALIBRATION.md) | Metric scale, landmark capture, transforms, and recovery |
 | [Validation protocol](docs/VALIDATION.md) | PC/Quest checks and physical acceptance criteria |
@@ -95,9 +107,9 @@ The second box uses the approximate screenshot guide [2.8, 23.3, -1.45], a local
 
 The agent workflow is adapted from [Photolipsia](https://github.com/leonarda4/photolipsia-agentic-kit). `CLAUDE.md` points to the same rules. Tool accounts, model choices, and permissions remain in the user's existing configuration.
 
-**Show wall / Hide wall** slides a separate door-free graffiti wall across the passage, with the good face on both sides. Its 2.10 m source crop scales once to cover both hallway walls over its fitted route; its 2.60 m height and 50 cm depth stay unchanged. It preloads hidden with the hallway and uses1.25-second side slides. Gameplay waits until **two seconds after the rotation finishes**, then reveals it at **world Z=-8** and approaches **Z=-2** at **0.30 m/s**, along one locked straight centreline with constant heading and width, pausing near the player and resuming once clear. No scan refitting or geometry adjustment occurs during movement; a new reveal fits a fresh route. It never retreats or catches up after waiting. **Wall position & motion** retains editable XYZ and manual Move/Back/loop/Stop controls; explicit manual commands override the scripted route. The original-resolution wall PLY is included through Git LFS and can be recreated with `npm run scan:extract-wall`; see the [interaction plan](docs/INTERACTION_PLAN.md). Reset and recalibration cancel pending reveals, hide it and cancel motion.
+**Show wall / Hide wall** controls a separate door-free graffiti wall with the good face on both sides. It preloads hidden with the hallway; appearance and Hide are instant, without side slides. In gameplay, a valid headset above the fully raised second-box footprint arms the wall, and it stays hidden until the player looks away from its hallway direction and the standing footprint is clear. It appears at **hallway Z=-8** and immediately moves unseen at **1 m/s**, toward the first box's captured hallway station, approximately **Z=2.5**, centred between the fitted scan walls. Looking back permits exactly **0.7 s** before stopping; the rumbling sound fades out during those same 0.7 s and fades in over **0.2 s** when motion starts. **Five continuous seconds looking at its final standing position**, or a genuine player passage through it at any route position, starts the stationary **0.55-second glitch disappearance**. Show/Run, desktop preview and VR share the route and gaze model; endpoint inspection buttons hold it still. Current valid headset direction or the desktop camera supplies gaze, with a 45-degree cone to begin looking and 50-degree retention. The fixed trajectory, width and heading never refit during movement. Its 75 cm player buffer and 15 cm release margin take precedence; the wall never retreats or catches up, while the player can walk through this visual object. **Wall position & motion** retains deliberate XYZ and motion overrides. The original-resolution PLY is included through Git LFS and can be recreated with `npm run scan:extract-wall`; see the [interaction plan](docs/INTERACTION_PLAN.md). Reset, recalibration and interruption cancel the sequence and sound.
 
-**Show broom / Hide broom** reveals the supplied scanned straw broom, standing bristles-down at the current fitted hallway centre and floor Y, with **world Z = 6 m**. It follows the hallway's rotation/offset correction at that station. Keep `public/splats/broooooommm.ply` locally alongside the hallway/wall assets; it preloads hidden in the same renderer. **Open floor hole / Close floor hole** cuts a wall-to-wall floor trapezoid between world Z3 and 5.6, using both current walls instead of a fixed width. Reset, calibration and tracking/session interruptions hide the broom and close the opening.
+**Show broom / Hide broom** reveals the supplied scanned straw broom, bristles-down at the current fitted hallway centre and floor Y, with **hallway Z=6 m**. Its local asset preloads hidden in the shared renderer. **Open floor hole / Close floor hole** uses the same wall-to-wall opening as the wall sequence. Prepare its near edge **1 m beyond the wall's captured final position**, opposite the approach direction, and extend it **2.60 m**. This position is fixed before the player passes; passage never moves it to the player. Once the actual opaque wall completely conceals all four fitted corners, the floor opening and connected downward hallway glitch in over **0.4 s**, possibly before final arrival. They remain fixed when the wall later disappears after final gaze or passage. Floor Y stays zero, both boxes keep their positions, and the captured corners also define the later turn hinge. Reset, calibration and tracking/session interruptions hide the broom and close the opening.
 
 ## Repository
 
@@ -107,4 +119,4 @@ Run: `npm install`, then `npm run dev` (HTTPS, port 5173; open on PC Chrome for 
 
 Desktop browser checks launch with `--force-webxr-runtime=no-xr-runtime` and synthetic XR fixtures to avoid replacing the live Chrome application's SteamVR registration. This isolation and the compact session-error display with expandable technical details are retained independently of the calibration rollback.
 
-The operator panel provides **Show box**, **Rotate hallway 180°**, **Show second box**, STOP, baseline reset and collapsed placement details. The approximately 2.10 m hallway width is a comparison input; it does not stretch the scan. Check both real box placements and independent alignment before a physical run. For detailed rendering use `https://localhost:5173/?quality=detail`; this still loads the original PLY. Existing voice-generation tools remain documented in [VOICE_SETUP.md](docs/VOICE_SETUP.md), with credentials kept outside browser code. The 180-degree turn intentionally changes wall alignment and requires independent physical checks before further wall touch.
+The operator panel provides **Show box**, **Rotate hallway 180°**, **Show second box**, STOP, baseline reset and collapsed placement details. The approximately 2.10 m hallway width is a comparison input; it does not stretch the scan. Check both real box placements and independent alignment before a physical run. For detailed rendering use `https://localhost:5173/?quality=detail`; this still loads the original PLY. The supplied soundtrack requires no speech service or credentials; see [audio setup](docs/VOICE_SETUP.md). The 180-degree turn intentionally changes wall alignment and requires independent physical checks before further wall touch.

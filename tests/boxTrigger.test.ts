@@ -40,6 +40,40 @@ test('only a shown calibrated live box accepts headset triggering, once per turn
   installation.dispose();
 });
 
+test('second-box trigger accepts a yawed desktop preview only after its rise and revokes on hide/reset', () => {
+  const installation = createInstallation({ scene: new THREE.Scene(), scanRoot: new THREE.Group(), defaultPlyCenter: null });
+  const yaw = Math.PI / 3, base = [3, .4, -2] as const;
+  const point = (x = 0, z = 0, y = 1.7): readonly [number, number, number] =>
+    [base[0] + Math.cos(yaw) * x + Math.sin(yaw) * z, y,
+      base[2] - Math.sin(yaw) * x + Math.cos(yaw) * z];
+  try {
+    installation.configure({ ...DEFAULT_INSTALLATION_CONFIG });
+    assert.ok(installation.setSecondBoxPlacement(base, [Math.sin(yaw), 0, Math.cos(yaw)]));
+    assert.equal(installation.headsetAboveSecondBox(point()), false);
+    assert.ok(installation.showBox(true)); installation.update(1.5);
+    assert.ok(installation.rotateHallway()); installation.update(4);
+    assert.equal(installation.headsetAboveSecondBox(point()), false, 'a prepared hidden box cannot arm the wall');
+    assert.ok(installation.showSecondBox()); installation.update(.75);
+    assert.equal(installation.headsetAboveSecondBox(point()), false, 'rising box cannot arm the wall');
+    installation.update(.75);
+    assert.equal(installation.snapshot().calibrated, false);
+    assert.equal(installation.snapshot().preview, true);
+    assert.ok(installation.headsetAboveSecondBox(point(.17, .17)));
+    assert.ok(installation.headsetAboveSecondBox(point(0, 0, 10)), 'headset may be above the complete box');
+    for (const p of [point(.181, 0), point(0, -.181), point(0, 0, .399), [NaN, 2, 0], [3, Infinity, -2]] as const) {
+      assert.equal(installation.headsetAboveSecondBox(p), false);
+    }
+    assert.ok(installation.hideSecondBox());
+    assert.equal(installation.headsetAboveSecondBox(point()), false, 'descending box immediately revokes overlap');
+    installation.update(1.5); assert.ok(installation.showSecondBox()); installation.update(1.5);
+    assert.ok(installation.headsetAboveSecondBox(point()));
+    installation.reset();
+    assert.equal(installation.headsetAboveSecondBox(point()), false);
+    installation.invalidate('Tracking lost');
+    assert.equal(installation.headsetAboveSecondBox(point()), false);
+  } finally { installation.dispose(); }
+});
+
 test('turn eases in and out symmetrically and ends at exactly 180 degrees', () => {
   const angle = (t: number) => rotationYaw(t, 4);
   assert.equal(angle(0), 0); assert.equal(angle(4), Math.PI);

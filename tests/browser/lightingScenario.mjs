@@ -3,15 +3,27 @@ import path from 'node:path';
 import { runLightingRecoveryScenario } from './lightingRecoveryScenario.mjs';
 
 async function pixels(page, save = false) {
-  return page.evaluate(save => {
+  return page.evaluate(async save => {
+    const THREE = await import('/node_modules/.vite/deps/three.js');
     const { renderer, scene, camera, spawnMarker, splats } = window.__debug;
-    const visible = spawnMarker.visible;
-    spawnMarker.visible = false;
-    renderer.render(scene, camera);
-    spawnMarker.visible = visible;
-    const gl = renderer.getContext();
-    const bytes = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
-    gl.readPixels(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+    const visible = spawnMarker.visible, background = scene.background;
+    const previousTarget = renderer.getRenderTarget(), viewport = renderer.getViewport(new THREE.Vector4());
+    const scissor = renderer.getScissor(new THREE.Vector4()), scissorTest = renderer.getScissorTest();
+    const size = renderer.getDrawingBufferSize(new THREE.Vector2());
+    const target = new THREE.WebGLRenderTarget(size.x, size.y, { format: THREE.RGBAFormat, type: THREE.UnsignedByteType });
+    const bytes = new Uint8Array(size.x * size.y * 4);
+    try {
+      // Measure only emitted scene RGB. The production white void must not
+      // contribute a constant term to the unchanged 30% lighting assertion.
+      spawnMarker.visible = false; scene.background = new THREE.Color(0);
+      renderer.setRenderTarget(target); renderer.setScissorTest(false);
+      renderer.render(scene, camera);
+      renderer.readRenderTargetPixels(target, 0, 0, size.x, size.y, bytes);
+    } finally {
+      spawnMarker.visible = visible; scene.background = background;
+      renderer.setRenderTarget(previousTarget); renderer.setViewport(viewport);
+      renderer.setScissor(scissor); renderer.setScissorTest(scissorTest); target.dispose();
+    }
     let rgb = 0, alpha = 0, alphaDifferences = 0;
     for (let i = 0; i < bytes.length; i += 4) {
       rgb += bytes[i] + bytes[i + 1] + bytes[i + 2];
@@ -19,11 +31,25 @@ async function pixels(page, save = false) {
       if (!save && bytes[i + 3] !== window.__lightingPixels[i + 3]) alphaDifferences++;
     }
     if (save) window.__lightingPixels = bytes;
-    return { rgb, alpha, alphaDifferences, opacity: splats.viewer.splatMesh.material.uniforms.uGlobalOpacity.value };
+    return { rgb, alpha, alphaDifferences, opacity: splats.viewer.splatMesh.material.uniforms.uGlobalOpacity.value,
+      isolatedLightingTarget: true, productionBackground: background?.isColor ? background.getHex() : null };
   }, save);
 }
 
 export async function runLightingScenario(page, output) {
+  // Compare identical animated-density samples while changing only lighting.
+  // Fog motion itself is exercised by the separate 30-second render check.
+  await page.evaluate(() => {
+    const fog=window.__debug.hallwayFog;
+    window.__lightingFogUpdate=fog.update;fog.update=()=>window.__lightingFogUpdate(0);
+  });
+  try { return await runFrozenLightingScenario(page, output); }
+  finally { await page.evaluate(() => {
+    window.__debug.hallwayFog.update=window.__lightingFogUpdate;delete window.__lightingFogUpdate;
+  }); }
+}
+
+async function runFrozenLightingScenario(page, output) {
   const button = page.locator('#experience-lights-out');
   const slider = page.getByRole('slider', { name: 'Dark-mode brightness' });
   assert.equal(await button.isDisabled(), false);

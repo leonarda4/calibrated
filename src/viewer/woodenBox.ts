@@ -35,6 +35,7 @@ function clipBoxFloors(material: THREE.ShaderMaterial): void {
     throw new Error('The installed splat shader cannot clip the wooden boxes at the floor.');
   }
   material.vertexShader = `uniform vec2 uBoxFloors;
+    uniform mat4 uBoxWorldToContent;
     uniform float uPivotBoxGlitch;
     uniform vec3 uPivotBoxGlitchRight;
     varying float vPivotBoxDrop;
@@ -54,7 +55,7 @@ function clipBoxFloors(material: THREE.ShaderMaterial): void {
       ${vertex}
       vBoxFloorDistance = 1.0;
       if (int(sceneIndex) == 3 || int(sceneIndex) == 4) {
-        vec4 boxFragmentWorld = inverse(viewMatrix) * inverse(projectionMatrix) * quadPos;
+        vec4 boxFragmentWorld = uBoxWorldToContent * inverse(viewMatrix) * inverse(projectionMatrix) * quadPos;
         float boxFloor = int(sceneIndex) == 3 ? uBoxFloors.x : uBoxFloors.y;
         vBoxFloorDistance = boxFragmentWorld.y / boxFragmentWorld.w - boxFloor;
       }
@@ -62,6 +63,7 @@ function clipBoxFloors(material: THREE.ShaderMaterial): void {
   material.fragmentShader = 'varying float vBoxFloorDistance; varying float vPivotBoxDrop;\n' + material.fragmentShader.replace(fragment,
     `${fragment}\n if (vBoxFloorDistance < 0.0 || vPivotBoxDrop > 0.5) discard;`);
   material.uniforms.uBoxFloors = { value: new THREE.Vector2() };
+  material.uniforms.uBoxWorldToContent = { value: new THREE.Matrix4() };
   material.uniforms.uPivotBoxGlitch = { value: 0 };
   material.uniforms.uPivotBoxGlitchRight = { value: new THREE.Vector3(1, 0, 0) };
   material.needsUpdate = true;

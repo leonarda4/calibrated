@@ -20,14 +20,26 @@ class FakeNode {
 class FakeAudio {
   static sources: FakeNode[] = [];
   static clipDuration = 4;
-  state = 'running';
+  static instances: FakeAudio[] = [];
+  static initialState = 'running';
+  static resumeCalls = 0;
+  static resumeHandler: ((audio: FakeAudio) => Promise<void>) | null = null;
+  static decodeHandler: ((data: ArrayBuffer) => Promise<{ duration: number }>) | null = null;
+  state = FakeAudio.initialState;
   currentTime = 10;
   destination = new FakeNode();
+  constructor() { FakeAudio.instances.push(this); }
   createGain() { return new FakeNode(); }
   createStereoPanner() { return new FakeNode(); }
   createBufferSource() { const n = new FakeNode(); FakeAudio.sources.push(n); return n; }
-  async decodeAudioData() { return { duration: FakeAudio.clipDuration }; }
-  async resume() {}
+  async decodeAudioData(data: ArrayBuffer) {
+    return FakeAudio.decodeHandler ? await FakeAudio.decodeHandler(data) : { duration: FakeAudio.clipDuration };
+  }
+  async resume() {
+    FakeAudio.resumeCalls++;
+    if (FakeAudio.resumeHandler) await FakeAudio.resumeHandler(this);
+    else this.state = 'running';
+  }
   async close() {}
 }
 
@@ -36,6 +48,8 @@ async function fakeAudio<T>(run: () => Promise<T>, fetcher?: typeof fetch, clipD
   const savedFetch = globalThis.fetch;
   FakeAudio.sources = [];
   FakeAudio.clipDuration = clipDuration;
+  FakeAudio.instances = []; FakeAudio.initialState = 'running'; FakeAudio.resumeCalls = 0;
+  FakeAudio.resumeHandler = null; FakeAudio.decodeHandler = null;
   Object.defineProperty(globalThis, 'AudioContext', { value: FakeAudio, configurable: true });
   globalThis.fetch = fetcher ?? (async () => new Response(new Uint8Array(100), { headers: { 'content-type': 'audio/mpeg' } })) as typeof fetch;
   try { return await run(); }
@@ -82,6 +96,7 @@ test('missing lead suppresses whisper-only playback while retaining the PC trans
     await guide.play('badge');
     assert.match(caption, /Get your badge/);
     assert.equal(FakeAudio.sources.length, 0);
+    assert.equal(guide.isCuePlaying('badge'), false);
     guide.dispose();
   }, (async (path: string) => path.includes('-lead')
     ? new Response('<html>SPA fallback</html>', { headers: { 'content-type': 'text/html' } })
@@ -153,4 +168,162 @@ test('long box narration fits the five-second cue gap without changing other cue
     assert.ok(FakeAudio.sources.every((source) => source.stopped));
     guide.dispose();
   }, undefined, 7.05);
+});
+
+test('fresh games retry a transient missing lead while retaining successfully decoded whisper buffers', async () => {
+  for (const failure of ['fetch', 'html']) {
+    const requests: string[] = [];
+    let failLead = true;
+    await fakeAudio(async () => {
+      const guide = createVoiceGuide();
+      await guide.preload(['scenarioBox']);
+      assert.equal(FakeAudio.sources.length, 0);
+      failLead = false;
+      await guide.play('scenarioBox');
+      assert.equal(FakeAudio.sources.length, 3, `${failure}: a failed cached lead must be retried in a fresh game`);
+      assert.equal(requests.filter(path => path.endsWith('-lead.mp3')).length, 2);
+      assert.equal(requests.filter(path => path.endsWith('-left.mp3')).length, 1);
+      assert.equal(requests.filter(path => path.endsWith('-right.mp3')).length, 1);
+      await guide.play('scenarioBox');
+      assert.equal(requests.length, 4, 'successful lead and whispers remain cached for subsequent games');
+      guide.dispose();
+    }, (async (path: string) => {
+      requests.push(path);
+      if (failLead && path.endsWith('-lead.mp3')) {
+        if (failure === 'fetch') throw new Error('Temporary local asset failure');
+        return new Response('<html>temporarily unavailable</html>', { headers: { 'content-type': 'text/html' } });
+      }
+      return new Response(new Uint8Array(100), { headers: { 'content-type': 'audio/mpeg' } });
+    }) as typeof fetch);
+  }
+});
+
+test('a transient decoder failure is retried without a page reload', async () => {
+  let requests = 0;
+  await fakeAudio(async () => {
+    FakeAudio.decodeHandler = async () => { throw new Error('Temporary decoder interruption'); };
+    const guide = createVoiceGuide();
+    await guide.preload(['scenarioBox']);
+    FakeAudio.decodeHandler = null;
+    await guide.play('scenarioBox');
+    assert.equal(FakeAudio.sources.length, 3);
+    assert.equal(requests, 6);
+    guide.dispose();
+  }, (async () => {
+    requests++;
+    return new Response(new Uint8Array(100), { headers: { 'content-type': 'audio/mpeg' } });
+  }) as typeof fetch);
+});
+
+test('previously enabled audio resumes after suspension, while initial gesture permission and mute remain explicit', async () => {
+  await fakeAudio(async () => {
+    FakeAudio.initialState = 'suspended';
+    const guide = createVoiceGuide();
+    await guide.play('scenarioBox');
+    assert.equal(FakeAudio.sources.length, 0); assert.equal(FakeAudio.resumeCalls, 0);
+    assert.equal(await guide.unlock(), true);
+    FakeAudio.instances[0].state = 'interrupted';
+    await guide.play('scenarioBox');
+    assert.equal(FakeAudio.resumeCalls, 2, 'a new cue should resume its already authorized context');
+    assert.equal(FakeAudio.sources.length, 3);
+    guide.setMuted(true); FakeAudio.instances[0].state = 'suspended';
+    await guide.play('scenarioBox');
+    assert.equal(FakeAudio.resumeCalls, 2, 'muted cues must not resume the context');
+    assert.ok(FakeAudio.sources.every(source => source.stopped));
+    guide.dispose();
+  });
+});
+
+test('STOP and a fresh cue during resume never let the old cue consume the new playback generation', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const requests: string[] = [];
+  await fakeAudio(async () => {
+    const guide = createVoiceGuide();
+    await guide.unlock();
+    FakeAudio.instances[0].state = 'suspended';
+    FakeAudio.resumeHandler = async audio => { await gate; audio.state = 'running'; };
+    const old = guide.play('scenarioBox');
+    assert.equal(guide.isCuePlaying('scenarioBox'), false, 'a cue awaiting resume has no scheduled lead');
+    guide.stop();
+    const fresh = guide.play('scenarioWelcome');
+    release(); await Promise.all([old, fresh]);
+    assert.equal(FakeAudio.sources.length, 3);
+    assert.ok(requests.every(path => path.includes('scenarioWelcome')), 'the cancelled cue may not load or schedule after resume');
+    assert.equal(guide.isCuePlaying('scenarioBox'), false);
+    assert.equal(guide.isCuePlaying('scenarioWelcome'), true);
+    guide.dispose();
+  }, (async (path: string) => {
+    requests.push(path);
+    return new Response(new Uint8Array(100), { headers: { 'content-type': 'audio/mpeg' } });
+  }) as typeof fetch);
+});
+
+test('a resume that never settles cannot queue narration indefinitely or play it after late recovery', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await fakeAudio(async () => {
+    const guide = createVoiceGuide();
+    await guide.unlock();
+    FakeAudio.instances[0].state = 'suspended';
+    FakeAudio.resumeHandler = async audio => { await gate; audio.state = 'running'; };
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        guide.play('scenarioBox'),
+        new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error('Audio resume did not respect its bounded wait.')), 1500); }),
+      ]);
+    } finally { if (deadline !== undefined) clearTimeout(deadline); }
+    assert.equal(FakeAudio.resumeCalls, 2, 'the suspended authorized context must attempt a bounded resume');
+    assert.equal(FakeAudio.sources.length, 0);
+    guide.stop(); release(); await Promise.resolve(); await Promise.resolve();
+    assert.equal(FakeAudio.sources.length, 0);
+    guide.dispose();
+  });
+});
+
+test('cue visibility follows its lead alone and clears on end, stop, mute and disposal', async () => {
+  await fakeAudio(async () => {
+    const guide = createVoiceGuide();
+    assert.equal(guide.isCuePlaying('purpose'), false);
+    await guide.play('purpose');
+    assert.equal(guide.isCuePlaying('purpose'), true);
+    assert.equal(guide.isCuePlaying('scenarioBox'), false);
+    FakeAudio.sources[0].onended?.();
+    assert.equal(guide.isCuePlaying('purpose'), false, 'supporting whispers cannot keep a cue active after its lead');
+    assert.ok(FakeAudio.sources.slice(1).every(source => !source.stopped));
+    await guide.play('scenarioBox');
+    assert.equal(guide.isCuePlaying('scenarioBox'), true);
+    const oldLeadEnded = FakeAudio.sources.at(-3)!.onended!;
+    guide.stop(); assert.equal(guide.isCuePlaying('scenarioBox'), false);
+    await guide.play('scenarioBox');
+    oldLeadEnded();
+    assert.equal(guide.isCuePlaying('scenarioBox'), true, 'a queued old end event cannot clear the next game\'s lead');
+    guide.setMuted(true); assert.equal(guide.isCuePlaying('scenarioBox'), false);
+    guide.setMuted(false); assert.equal(guide.isCuePlaying('scenarioBox'), false, 'unmuting cannot revive an old lead');
+    await guide.play('scenarioBox');
+    assert.equal(guide.isCuePlaying('scenarioBox'), true);
+    guide.dispose(); assert.equal(guide.isCuePlaying('scenarioBox'), false);
+  });
+});
+
+test('resuming a startup cue becomes active only once its lead is scheduled and never blocks while suspended', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await fakeAudio(async () => {
+    const guide = createVoiceGuide();
+    await guide.unlock();
+    const audio = FakeAudio.instances[0];
+    audio.state = 'interrupted';
+    FakeAudio.resumeHandler = async context => { await gate; context.state = 'running'; };
+    const pending = guide.play('scenarioBox');
+    assert.equal(guide.isCuePlaying('scenarioBox'), false);
+    release(); await pending;
+    assert.equal(guide.isCuePlaying('scenarioBox'), true);
+    audio.state = 'suspended';
+    assert.equal(guide.isCuePlaying('scenarioBox'), false, 'a suspended context cannot keep the game waiting indefinitely');
+    guide.stop(); audio.state = 'running';
+    assert.equal(guide.isCuePlaying('scenarioBox'), false, 'later context recovery cannot revive stopped cue identity');
+    guide.dispose();
+  });
 });

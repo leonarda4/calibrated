@@ -15,6 +15,23 @@ function fixture() {
     block(value: string | null) { reason = value; } };
 }
 
+test('ending relight owns displayed brightness without changing calibration alpha, and reset clears it', () => {
+  const {lighting,material}=fixture();lighting.initialize();
+  lighting.setLightsOut(true);lighting.update(LIGHTS_FADE_SECONDS);
+  const resources=material.version;
+  for(const value of [.3,.7,.35,1]) {
+    assert.equal(lighting.setPresentationBrightness(value),true);lighting.update(.1);
+    assert.equal(lighting.snapshot().brightness,value);
+    assert.equal(material.uniforms.uHallwayBrightness.value,value);
+    assert.equal(material.uniforms.uGlobalOpacity.value,.5);
+  }
+  assert.equal(lighting.setPresentationBrightness(NaN),false);
+  assert.equal(material.version,resources);
+  lighting.setPresentationBrightness(null);assert.equal(lighting.snapshot().brightness,.3);
+  lighting.setPresentationBrightness(.4);lighting.reset();
+  assert.equal(lighting.snapshot().brightness,1);assert.equal(material.uniforms.uHallwayBrightness.value,1);
+});
+
 test('lighting patches RGB independently of opacity and compiles only once', () => {
   const { material, lighting } = fixture();
   const version = material.version;

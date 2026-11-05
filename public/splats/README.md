@@ -82,6 +82,18 @@ An orthogonal corridor envelope retains 18 cm beyond the fitted walls, 15 cm
 below the fitted floor and 2.85 m above it, excluding exterior-room scan debris.
 The adjacent `.meta.json` records the source hash, fitted floor/walls and exact
 cut plane. PLY cropping selects centres; Gaussian footprints retain soft edges.
-It is private, ignored by Git and **not loaded into the application**. Run
+The application preloads this crop hidden as scene 5 in its shared splat build.
+It opens downward with the floor hole: source floor toward the second box,
+ceiling opposite, and side walls meeting the other two edges. Mouth geometry
+comes from the hole's actual captured corners, including taper and calibration;
+it has no independent placement. Closing or recovery hides both together.
+Per-eye aperture clipping prevents its Gaussian footprints escaping the rim
+when viewed from outside; the passage remains visible from inside after its
+four-second eased 90-degree world turn. That turn hinges on this cutout's floor
+edge, bringing it level with the runtime floor while preserving the tracked
+viewpoint. Close or recovery restores the original orientation.
+The source PLY bytes and original hallway coordinates remain unchanged.
+Keep this derivative and its metadata local/ignored; regenerate them on a new
+checkout with the command above before starting the application. Run
 `node scripts/check-hallway-crop.mjs` for standalone desktop previews and
 byte-for-byte checks in `.check/hallway-cut/`; this never starts an XR session.

@@ -8,6 +8,7 @@ export interface ExperiencePanelOptions {
   isPlacementPending?(): boolean;
   isScenarioEnabled?(): boolean;
   isScenarioRunning?(): boolean;
+  authoringBlockReason?(): string | null;
   onScenarioEnabled?(enabled: boolean): void;
   onPreviewScenario?(): void;
   onReset?(): void;
@@ -59,12 +60,13 @@ export function bindExperiencePanel(installation: Installation, options: Experie
   panel.setAttribute('aria-label', 'Hallway operator controls');
   panel.innerHTML = `
     <h2>Hallway controls</h2>
-    <label><input id="experience-test-scenario" type="checkbox" checked> Narrated test after calibration</label>
-    <p id="experience-test-scenario-status" aria-live="polite">After calibration: box at 10 s, turn when the headset is inside or above it, second box 5 s later. Desktop preview uses 10/15/20 s.</p>
-    <button id="experience-preview-scenario" type="button">Preview narrated test on desktop</button>
+    <label title="Each fresh VR calibration restores the full game. Uncheck only for manual checks in this run."><input id="experience-test-scenario" type="checkbox" checked> Gameplay after calibration</label>
+    <p id="experience-test-scenario-status" aria-live="polite">Welcome at 1 s; box at 8 s. Desktop exploration lasts 20 s, then music leads the turn by 2 s. Live play waits for headset entry.</p>
+    <button id="experience-preview-scenario" type="button">Preview gameplay on desktop</button>
     <div id="experience-phase">Ready</div>
     <p id="experience-status" class="experience-status" aria-live="polite"></p>
     <div id="experience-lighting-control"></div>
+    <div id="experience-mist-control"></div>
     <div class="experience-row">
       <button id="experience-show-box" type="button">Show box</button>
       <button id="experience-hide-box" type="button">Hide box</button>
@@ -118,7 +120,7 @@ export function bindExperiencePanel(installation: Installation, options: Experie
   let refresh = (): void => {};
   const fields = new Map<keyof InstallationConfig, HTMLInputElement>();
   const rotationOffset = bindRotationOffsetControl(find('experience-flip-offset-control'), installation, {
-    canAdjust: () => options.isScanReady?.() !== false && options.isScenarioRunning?.() !== true &&
+    canAdjust: () => options.authoringBlockReason?.() == null && options.isScanReady?.() !== false && options.isScenarioRunning?.() !== true &&
       options.isRotationOffsetAllowed?.() !== false,
     apply: metres => options.onRotationOffset ? options.onRotationOffset(metres) : installation.setRotationOffset(metres),
   });
@@ -142,6 +144,7 @@ export function bindExperiencePanel(installation: Installation, options: Experie
       input.title = 'The calibrated local-floor plane is y=0. Showing the box uses that floor.';
     }
     input.addEventListener('input', () => {
+      if (options.authoringBlockReason?.() != null) { refresh(); return; }
       configDirty = true;
       refresh();
     }, { signal: events.signal });
@@ -157,24 +160,29 @@ export function bindExperiencePanel(installation: Installation, options: Experie
   const click = (id: string, callback: () => void): void => {
     find(id).addEventListener('click', () => act(callback), { signal: events.signal });
   };
-  click('experience-apply', () => {
+  const clickAuthoring = (id: string, callback: () => void): void => click(id, () => {
+    const reason = options.authoringBlockReason?.();
+    if (reason != null) { error.textContent = reason; return; }
+    callback();
+  });
+  clickAuthoring('experience-apply', () => {
     const config = { ...installation.snapshot().config };
     for (const [key, field] of fields) config[key] = field.value === '' ? Number.NaN : Number(field.value);
     configDirty = false;
     try { installation.configure(config); } catch (cause) { configDirty = true; throw cause; }
   });
-  click('experience-pick-center', () => { if (!options.isPresenting()) options.onPickCenter?.(); });
-  click('experience-pick-second-line', () => {
+  clickAuthoring('experience-pick-center', () => { if (!options.isPresenting()) options.onPickCenter?.(); });
+  clickAuthoring('experience-pick-second-line', () => {
     if (!options.isPresenting()) options.onPickSecondFloorLine?.();
   });
-  click('experience-show-box', () => {
+  clickAuthoring('experience-show-box', () => {
     if (options.isScanReady?.() === false) { error.textContent = 'Wait for the hallway scan to finish loading.'; return; }
     options.onShowBox();
   });
-  click('experience-rotate', () => options.onRotate());
-  click('experience-hide-box', () => options.onHideBox?.());
-  click('experience-hide-second-box', () => options.onHideSecondBox?.());
-  click('experience-show-second-box', () => {
+  clickAuthoring('experience-rotate', () => options.onRotate());
+  clickAuthoring('experience-hide-box', () => options.onHideBox?.());
+  clickAuthoring('experience-hide-second-box', () => options.onHideSecondBox?.());
+  clickAuthoring('experience-show-second-box', () => {
     if (options.isScanReady?.() === false) { error.textContent = 'Wait for the hallway scan to finish loading.'; return; }
     options.onShowSecondBox();
   });
@@ -194,23 +202,25 @@ export function bindExperiencePanel(installation: Installation, options: Experie
     const scanReady = options.isScanReady?.() !== false;
     const placementPending = options.isPlacementPending?.() === true;
     const scenarioRunning = options.isScenarioRunning?.() === true;
+    const authoringReason = options.authoringBlockReason?.() ?? null;
+    const authoringBlocked = authoringReason !== null;
     find<HTMLInputElement>('experience-test-scenario').checked = options.isScenarioEnabled?.() !== false;
     find<HTMLButtonElement>('experience-preview-scenario').disabled = presenting || !scanReady || placementPending || configDirty || scenarioRunning;
     const phaseName: string = snapshot.phase;
     const turning = phaseName === 'rotating';
     const mayShow = ['idle', 'ready', 'box'].includes(phaseName) && snapshot.yaw === 0;
-    const editable = !turning && !['exploring', 'badge', 'reversed'].includes(phaseName) && snapshot.yaw === 0;
+    const editable = !authoringBlocked && !turning && !['exploring', 'badge', 'reversed'].includes(phaseName) && snapshot.yaw === 0;
     const revealLabels = { hidden: 'BOX BELOW FLOOR', entering: 'BOX RISING', visible: 'BOX VISIBLE', exiting: 'BOX LOWERING' };
     phase.textContent = phaseName === 'box' ? revealLabels[snapshot.boxReveal.motion] : phaseName.toUpperCase();
     if (turning) phase.textContent += ` · ${(snapshot.yaw * 180 / Math.PI).toFixed(0)}°`;
-    status.textContent = snapshot.status;
-    showBox.disabled = !scanReady || configDirty || (!mayShow && phaseName !== 'reversed') || placementPending || scenarioRunning || snapshot.boxReveal.animating;
-    find<HTMLButtonElement>('experience-hide-box').disabled = turning || scenarioRunning || snapshot.boxReveal.motion !== 'visible';
+    status.textContent = authoringReason ?? snapshot.status;
+    showBox.disabled = authoringBlocked || !scanReady || configDirty || (!mayShow && phaseName !== 'reversed') || placementPending || scenarioRunning || snapshot.boxReveal.animating;
+    find<HTMLButtonElement>('experience-hide-box').disabled = authoringBlocked || turning || scenarioRunning || snapshot.boxReveal.motion !== 'visible';
     showBox.title = scanReady ? 'Show the box using the current hallway placement' : 'Wait for the hallway scan to finish loading';
-    rotate.disabled = !scanReady || configDirty || phaseName !== 'box' || placementPending || scenarioRunning || snapshot.boxReveal.motion !== 'visible';
+    rotate.disabled = authoringBlocked || !scanReady || configDirty || phaseName !== 'box' || placementPending || scenarioRunning || snapshot.boxReveal.motion !== 'visible';
     rotate.title = phaseName === 'box' ? 'Turn only the visual hallway; keep the real box fixed' : 'Show the box before rotating the hallway';
-    showSecondBox.disabled = !scanReady || phaseName !== 'reversed' || !snapshot.secondBox.placed || snapshot.secondBox.visible || scenarioRunning || snapshot.secondBox.reveal.animating;
-    find<HTMLButtonElement>('experience-hide-second-box').disabled = scenarioRunning || snapshot.secondBox.reveal.motion !== 'visible';
+    showSecondBox.disabled = authoringBlocked || !scanReady || phaseName !== 'reversed' || !snapshot.secondBox.placed || snapshot.secondBox.visible || scenarioRunning || snapshot.secondBox.reveal.animating;
+    find<HTMLButtonElement>('experience-hide-second-box').disabled = authoringBlocked || scenarioRunning || snapshot.secondBox.reveal.motion !== 'visible';
     showSecondBox.title = !scanReady ? 'Wait for the hallway scan to finish loading'
       : phaseName !== 'reversed' ? 'Finish the 180° turn before showing the second box'
       : !snapshot.secondBox.placed ? 'The second box needs a reviewed placement first'
@@ -231,7 +241,7 @@ export function bindExperiencePanel(installation: Installation, options: Experie
         : snapshot.placementSource === 'picked-scan' ? 'Box base from picked scan floor edges.' : 'Manual XR-world placement.';
     apply.disabled = !editable || scenarioRunning;
     pickCenter.disabled = !options.onPickCenter || presenting || !editable || configDirty || scenarioRunning;
-    pickSecondLine.disabled = !options.onPickSecondFloorLine || presenting || !scanReady || !mayShow || configDirty || placementPending || scenarioRunning;
+    pickSecondLine.disabled = authoringBlocked || !options.onPickSecondFloorLine || presenting || !scanReady || !mayShow || configDirty || placementPending || scenarioRunning;
     pickSecondLine.title = presenting ? 'Pick the floor line from the PC view before entering VR'
       : !scanReady ? 'Wait for the hallway scan to finish loading'
       : !mayShow ? 'Pick the floor line before the hallway turns' : 'Click the second box floor line to refine its placement';

@@ -57,7 +57,17 @@ export async function runBoundaryScenario(parentPage) {
         getSession: () => currentSession,
         getReferenceSpace: () => activeReference,
       });
+      const quietScene = new THREE.Scene();
+      const quietBoundary = setupDesktopBoundary({ xr }, quietScene);
+      quietBoundary.setManualVisible(true);
+      quietBoundary.update();
+      ensure(!quietScene.getObjectByName('desktop-movement-boundaries').visible,
+        'default movement diagnostics leaked guides into the world');
+      ensure(quietBoundary.snapshot().manual.visible && quietBoundary.snapshot().manual.points.length === 4,
+        'hiding world guides disabled the manual boundary data/map');
+      quietBoundary.dispose();
       const boundary = setupDesktopBoundary({ xr }, scene, {
+        showWorldGuides: true,
         getBox: () => ({ centerX: box.position.x, centerZ: box.position.z, boxWidth: 0.36, boxDepth: 0.36, floorY: 0.07 }),
       });
       const boundaryRoot = scene.getObjectByName('desktop-movement-boundaries');

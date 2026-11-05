@@ -5,11 +5,14 @@ import type { HallwayWallPlanes } from '../experience/hallwayCenter.ts';
 import { WALL_SECTION } from './wallSectionConfig.ts';
 import { createHallwayPlacementFrame, type HallwayPlacementFrame } from './wallRouteFrame.ts';
 
-/** Lay the wall's face flat, with its near edge at the requested world Z. */
+/** Freeze an opening one metre beyond the planned standing wall. */
 export const FLOOR_HOLE = {
   width: WALL_SECTION.width,
   length: WALL_SECTION.height,
-  startZ: 3,
+  startZ: WALL_SECTION.targetWorldZ - 1 - WALL_SECTION.height,
+  aheadMetres: 1,
+  revealSeconds: .4,
+  wallGap: 0.05,
   floorY: 0,
   // Include the noisy floor surface and below-floor splats, preserving walls.
   surfaceAllowance: 0.15,
@@ -50,6 +53,7 @@ function prepareFloorShader(material: ShaderMaterial): void {
   `);
   material.fragmentShader = `
     uniform float uFloorHoleY;
+    uniform float uFloorHoleReveal;
     uniform vec4 uFloorHoleBounds;
     uniform vec2 uFloorHoleFarBounds;
     varying float vFloorHoleCandidate;
@@ -64,11 +68,15 @@ function prepareFloorShader(material: ShaderMaterial): void {
         float along = (floorPoint.z - uFloorHoleBounds.z) / (uFloorHoleBounds.w - uFloorHoleBounds.z);
         vec2 edges = mix(uFloorHoleBounds.xy, uFloorHoleFarBounds, along);
         if (t >= 0.0 && along >= 0.0 && along <= 1.0 &&
-            floorPoint.x >= edges.x && floorPoint.x <= edges.y) discard;
+            floorPoint.x >= edges.x && floorPoint.x <= edges.y) {
+          float cell = fract(sin(dot(floor(floorPoint.xz * vec2(12.0,22.0)), vec2(12.9898,78.233))) * 43758.5453);
+          if (uFloorHoleReveal >= 1.0 || cell < uFloorHoleReveal) discard;
+        }
       }
     }
   `);
   material.uniforms.uFloorHoleOpen = { value: 0 };
+  material.uniforms.uFloorHoleReveal = { value: 0 };
   material.uniforms.uFloorHoleY = { value: FLOOR_HOLE.floorY };
   material.uniforms.uFloorHoleSurfaceAllowance = { value: FLOOR_HOLE.surfaceAllowance };
   material.uniforms.uFloorHoleBounds = { value: new Vector4() };
@@ -86,6 +94,8 @@ export function createFloorHole(options: {
   blockReason(): string | null;
   getRotationState?(): { phase: string; offsetWorld: readonly [number, number, number] };
   placementFrame?: HallwayPlacementFrame;
+  onChange?(): void;
+  getWallArrival?(): { positionRoute: readonly [number, number, number]; halfDepth: number; direction: 1 | -1 };
 }) {
   const { scanRoot } = options;
   const frame = options.placementFrame ?? createHallwayPlacementFrame(scanRoot);
@@ -97,21 +107,27 @@ export function createFloorHole(options: {
   let width: number = FLOOR_HOLE.width;
   let nearBounds: [number, number] | null = null;
   let farBounds: [number, number] | null = null;
+  let startZ: number = FLOOR_HOLE.startZ;
+  let endZ: number = FLOOR_HOLE.startZ + FLOOR_HOLE.length;
+  let locked = false;
+  let revealProgress = 0;
   let previousOffset: readonly [number, number, number] = [0, 0, 0];
   const sections = createHallwaySections({ scanRoot: frame.root, getCenters: options.getSourceCenters, floorY: FLOOR_HOLE.floorY });
   const material = () => scanRoot.viewer.splatMesh.material as ShaderMaterial;
   const close = () => {
-    open = false; centerX = null; nearBounds = null; farBounds = null;
+    open = false; centerX = null; nearBounds = null; farBounds = null; locked = false; revealProgress = 0;
     const uniform = material()?.uniforms?.uFloorHoleOpen;
     if (uniform) uniform.value = 0;
+    if (material()?.uniforms?.uFloorHoleReveal) material().uniforms.uFloorHoleReveal.value = 0;
     if (phase === 'ready') status = 'Floor closed.';
+    options.onChange?.();
   };
   const writeBounds = () => {
     if (!nearBounds || !farBounds) return;
-    material().uniforms.uFloorHoleBounds.value.set(nearBounds[0], nearBounds[1], FLOOR_HOLE.startZ,
-      FLOOR_HOLE.startZ + FLOOR_HOLE.length);
+    material().uniforms.uFloorHoleBounds.value.set(nearBounds[0], nearBounds[1], startZ, endZ);
     material().uniforms.uFloorHoleFarBounds.value.set(...farBounds);
     material().uniforms.uFloorHoleWorldToRoute.value.fromArray(frame.matrix()).invert();
+    options.onChange?.();
   };
   const wallEdges = (walls: HallwayWallPlanes, z: number): [number, number] => {
     const values = [walls.left, walls.right].map(wall => {
@@ -122,23 +138,29 @@ export function createFloorHole(options: {
     return [values[0], values[1]];
   };
   const fitCurrentSection = () => {
-    const near = sections.at(FLOOR_HOLE.startZ);
-    const far = sections.at(FLOOR_HOLE.startZ + FLOOR_HOLE.length);
-    const middle = sections.at(FLOOR_HOLE.startZ + FLOOR_HOLE.length / 2);
+    const near = sections.at(startZ);
+    const far = sections.at(endZ);
+    const middle = sections.at((startZ + endZ) / 2);
     if (!near.ok) throw new Error(`Floor opening: ${near.reason}`);
     if (!far.ok) throw new Error(`Floor opening: ${far.reason}`);
     if (!middle.ok) throw new Error(`Floor opening: ${middle.reason}`);
-    nearBounds = wallEdges(near.wallPlanes, FLOOR_HOLE.startZ);
-    farBounds = wallEdges(far.wallPlanes, FLOOR_HOLE.startZ + FLOOR_HOLE.length);
+    nearBounds = wallEdges(near.wallPlanes, startZ);
+    farBounds = wallEdges(far.wallPlanes, endZ);
     centerX = middle.centerWorld[0]; width = middle.width;
     previousOffset = offsetInRoute();
     writeBounds();
-    status = `Floor open · hallway width ${width.toFixed(2)} m × ${FLOOR_HOLE.length.toFixed(2)} m · hallway Z = 3–5.6 m`;
+    status = `Floor open · hallway width ${width.toFixed(2)} m × ${FLOOR_HOLE.length.toFixed(2)} m · hallway Z = ${startZ.toFixed(2)}…${endZ.toFixed(2)} m`;
   };
-  const update = () => {
+  const update = (deltaSeconds = 0) => {
     if (!open) return;
+    if (revealProgress < 1 && Number.isFinite(deltaSeconds) && deltaSeconds > 0 && deltaSeconds <= .5) {
+      revealProgress = Math.min(1, revealProgress + deltaSeconds / FLOOR_HOLE.revealSeconds);
+      material().uniforms.uFloorHoleReveal.value = revealProgress;
+      if (revealProgress === 1) status = 'Floor opening revealed beyond the wall.';
+    }
     const rotation = options.getRotationState?.();
     if (rotation?.phase === 'stopped') { close(); return; }
+    if (locked) return;
     try {
       if (rotation?.phase === 'rotating' && nearBounds && farBounds) {
         // Avoid refitting a transverse scan during the artistic turn. The
@@ -156,14 +178,53 @@ export function createFloorHole(options: {
       close(); status = cause instanceof Error ? cause.message : String(cause);
     }
   };
+  const prepareBehindWall = (placement: { positionRoute: readonly [number, number, number]; halfDepth: number; direction: 1 | -1 }): boolean => {
+    if (locked && nearBounds && farBounds) return true;
+    const reason = phase !== 'ready' ? status : options.blockReason();
+    if (reason) { status = reason; return false; }
+    try {
+      if (!placement.positionRoute.every(Number.isFinite) || !Number.isFinite(placement.halfDepth) || placement.halfDepth < 0 ||
+        ![1, -1].includes(placement.direction)) throw new Error('Floor opening needs a finite wall endpoint and approach direction.');
+      const direction = -placement.direction;
+      const edge = placement.positionRoute[2] + direction * Math.max(FLOOR_HOLE.aheadMetres, placement.halfDepth + FLOOR_HOLE.wallGap);
+      const far = edge + direction * FLOOR_HOLE.length;
+      startZ = Math.min(edge, far); endZ = Math.max(edge, far);
+      fitCurrentSection();
+      locked = true; revealProgress = 0; material().uniforms.uFloorHoleOpen.value = 0;
+      material().uniforms.uFloorHoleReveal.value = 0;
+      status = 'Floor opening prepared beyond the standing wall, waiting for concealment.';
+      options.onChange?.();
+      return true;
+    } catch (cause) { close(); status = cause instanceof Error ? cause.message : String(cause); return false; }
+  };
+  const revealPrepared = (glitch = false): boolean => {
+    if (open) return true;
+    const reason = phase !== 'ready' ? status : options.blockReason();
+    if (reason) { status = reason; return false; }
+    if (!locked || !nearBounds || !farBounds) { status = 'Prepare the floor opening first.'; return false; }
+    revealProgress = glitch ? 0 : 1;
+    material().uniforms.uFloorHoleReveal.value = revealProgress;
+    material().uniforms.uFloorHoleOpen.value = 1; open = true;
+    status = glitch ? 'Floor opening glitching in behind the wall.' : 'Floor opening revealed beyond the wall.';
+    options.onChange?.(); return true;
+  };
+  const showBehindWall = (placement: Parameters<typeof prepareBehindWall>[0]): boolean =>
+    prepareBehindWall(placement) && revealPrepared();
   const show = (): boolean => {
     if (open) { update(); return open; }
     const reason = phase !== 'ready' ? status : options.blockReason();
     if (reason) { status = reason; return false; }
+    if (options.getWallArrival) {
+      try { return showBehindWall(options.getWallArrival()); }
+      catch (cause) { status = cause instanceof Error ? cause.message : String(cause); return false; }
+    }
     try {
+      startZ = FLOOR_HOLE.startZ; endZ = startZ + FLOOR_HOLE.length; locked = false;
       fitCurrentSection();
+      revealProgress = 1; material().uniforms.uFloorHoleReveal.value = 1;
       material().uniforms.uFloorHoleOpen.value = 1;
       open = true;
+      options.onChange?.();
       return true;
     } catch (cause) {
       close(); status = cause instanceof Error ? cause.message : String(cause); return false;
@@ -172,7 +233,7 @@ export function createFloorHole(options: {
   return {
     reset: close,
     close,
-    show,
+    show, showBehindWall, prepareBehindWall, revealPrepared,
     update,
     initialize() {
       prepareFloorShader(material());
@@ -183,14 +244,19 @@ export function createFloorHole(options: {
       status = `Floor opening unavailable: ${cause instanceof Error ? cause.message : String(cause)}`;
     },
     toggle(): boolean { if (open) { close(); return true; } return show(); },
-    snapshot() { return { phase, open, status, centerX, ...FLOOR_HOLE, width,
+    snapshot() { return { phase, open, prepared: locked && nearBounds !== null && farBounds !== null,
+      revealProgress, status, centerX, ...FLOOR_HOLE, startZ, width, locked,
       nearBounds: nearBounds ? [...nearBounds] : null, farBounds: farBounds ? [...farBounds] : null,
-      endZ: FLOOR_HOLE.startZ + FLOOR_HOLE.length, routeToWorld: frame.matrix(),
+      endZ, routeToWorld: frame.matrix(),
+      cornersRoute: nearBounds && farBounds ? [
+        [nearBounds[0], FLOOR_HOLE.floorY, startZ], [nearBounds[1], FLOOR_HOLE.floorY, startZ],
+        [farBounds[0], FLOOR_HOLE.floorY, endZ], [farBounds[1], FLOOR_HOLE.floorY, endZ],
+      ] as [number, number, number][] : null,
       worldCorners: nearBounds && farBounds ? [
-        [nearBounds[0], FLOOR_HOLE.floorY, FLOOR_HOLE.startZ],
-        [nearBounds[1], FLOOR_HOLE.floorY, FLOOR_HOLE.startZ],
-        [farBounds[0], FLOOR_HOLE.floorY, FLOOR_HOLE.startZ + FLOOR_HOLE.length],
-        [farBounds[1], FLOOR_HOLE.floorY, FLOOR_HOLE.startZ + FLOOR_HOLE.length],
+        [nearBounds[0], FLOOR_HOLE.floorY, startZ],
+        [nearBounds[1], FLOOR_HOLE.floorY, startZ],
+        [farBounds[0], FLOOR_HOLE.floorY, endZ],
+        [farBounds[1], FLOOR_HOLE.floorY, endZ],
       ].map(p => frame.worldPoint(new Vector3(...p)).toArray()) : null }; },
   };
 }

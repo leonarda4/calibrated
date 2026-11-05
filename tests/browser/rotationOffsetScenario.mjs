@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { Matrix4 } from 'three';
+import { Matrix4, Vector3 } from 'three';
 
 function near(actual, expected, message, tolerance = 1e-8) {
   assert.equal(actual.length, expected.length, message);
@@ -8,7 +8,7 @@ function near(actual, expected, message, tolerance = 1e-8) {
     message + ', component ' + axis + ': ' + value + ' versus ' + expected[axis]));
 }
 
-/** Actual controls: only the physical turn box stays fixed; other props fit the current scan. */
+/** Actual controls: fixed box/wall/hole geometry and current-section seat/broom placement. */
 export async function runRotationOffsetScenario(page, output) {
   const details = page.locator('#experience-flip-alignment');
   const input = page.locator('#experience-flip-offset');
@@ -28,6 +28,9 @@ export async function runRotationOffsetScenario(page, output) {
     const { WOODEN_BOX, woodenBoxSourceRotation } = await import('/src/viewer/woodenBox.ts');
     const { WALL_SECTION } = await import('/src/viewer/wallSectionConfig.ts');
     const { BROOM } = await import('/src/viewer/broomConfig.ts');
+    const { createHallwayPlacementFrame } = await import('/src/viewer/wallRouteFrame.ts');
+    const { createHallwaySections } = await import('/src/experience/hallwaySection.ts');
+    const { getSourceCenters } = await import('/src/viewer/splatViewer.ts');
     const { scene, splats, experience, broom, floorHole, wallBlocker } = window.__debug;
     broom.update(); floorHole.update(); wallBlocker.update(0);
     scene.updateMatrixWorld(true); splats.updateWorldMatrix(true, false);
@@ -57,9 +60,17 @@ export async function runRotationOffsetScenario(page, output) {
     ).applyMatrix4(woodenBoxSourceRotation().invert());
     const broomState = broom.snapshot(), broomFit = section(6);
     const holeState = floorHole.snapshot();
-    const edges = z => Object.values(section(z).wallPlanes).map(wall =>
-      (wall.normal.reduce((sum, n, i) => sum + n * wall.point[i], 0) - wall.normal[1] * holeState.floorY - wall.normal[2] * z) / wall.normal[0]
-    ).sort((a, b) => a - b);
+    const holeFrame = createHallwayPlacementFrame(splats);
+    holeFrame.set(new THREE.Matrix4().fromArray(holeState.routeToWorld));
+    const holeSections = createHallwaySections({ scanRoot: holeFrame.root,
+      getCenters: () => getSourceCenters(splats), floorY: holeState.floorY });
+    const edges = z => {
+      const fit = holeSections.at(z);
+      if (!fit.ok) throw new Error('Offset hole section Z' + z + ': ' + fit.reason);
+      return Object.values(fit.wallPlanes).map(wall =>
+        (wall.normal.reduce((sum, n, i) => sum + n * wall.point[i], 0) - wall.normal[1] * holeState.floorY - wall.normal[2] * z) / wall.normal[0]
+      ).sort((a, b) => a - b);
+    };
     const wallState = wallBlocker.snapshot(), wallWorld = worldMatrix(wallState.sceneIndex);
     const wallFit = section(wallState.baseWorld[2]);
     const spanAtDepth = depth => [-1, 1].map(sign => new THREE.Vector3(sign * WALL_SECTION.width / 2,
@@ -82,7 +93,8 @@ export async function runRotationOffsetScenario(page, output) {
         clearances: measureWallDistances(broomFit.wallPlanes, broomState.baseWorld) },
       hole: { ...holeState, expectedNear: edges(holeState.startZ), expectedFar: edges(holeState.endZ),
         uniformNear: splats.viewer.splatMesh.material.uniforms.uFloorHoleBounds.value.toArray(),
-        uniformFar: splats.viewer.splatMesh.material.uniforms.uFloorHoleFarBounds.value.toArray() },
+        uniformFar: splats.viewer.splatMesh.material.uniforms.uFloorHoleFarBounds.value.toArray(),
+        uniformWorldToRoute: splats.viewer.splatMesh.material.uniforms.uFloorHoleWorldToRoute.value.toArray() },
       wall: { ...wallState, renderedWidth: span[0].distanceTo(span[1]),
         worldMatrix: wallWorld.toArray(),
         centre: wallCenter.toArray(), clearances: measureWallDistances(wallFit.wallPlanes, wallCenter.toArray()),
@@ -97,12 +109,25 @@ export async function runRotationOffsetScenario(page, output) {
     await page.evaluate(() => window.__debug.experience.installation.update(1.5));
     await details.evaluate(element => { element.open = true; });
     if (!original.broom) await page.locator('#experience-show-broom').click();
-    if (!original.hole) await page.locator('#experience-floor-hole').click();
-    if (!original.wall) await page.locator('#experience-show-wall').click();
-    await page.evaluate(async () => {
-      const { WALL_SECTION } = await import('/src/viewer/wallSectionConfig.ts');
-      window.__offsetWallUpdate(window.__debug.wallBlocker.snapshot().motion === 'visible' ? 0 : WALL_SECTION.slideSeconds);
-    });
+    if (!original.wall) {
+      await page.evaluate(async () => {
+        const THREE = await import('/node_modules/.vite/deps/three.js');
+        const { wallBlocker, camera, controls, experience } = window.__debug;
+        const frame = new THREE.Matrix4().fromArray(wallBlocker.snapshot().routeToWorld);
+        // Inspect geometry directly while looking at it; encounter Show now
+        // correctly waits for look-away. Keep the camera clear of the start.
+        controls.enableDamping = false;
+        camera.position.copy(new THREE.Vector3(0, 1.7, 4).applyMatrix4(frame));
+        controls.target.copy(new THREE.Vector3(0, 1.3, -8).applyMatrix4(frame));
+        controls.update(); camera.updateMatrixWorld(true); experience.update(0);
+      });
+      await page.locator('#experience-wall-inspect-start').click();
+    }
+    // Inspecting the fixed wall closes an earlier opening. Preview its hole
+    // only after the diagnostic has captured and frozen the wall trajectory.
+    if (!await page.evaluate(() => window.__debug.floorHole.snapshot().open)) {
+      await page.locator('#experience-floor-hole').click();
+    }
     const before = await capture();
     assert.equal(before.phase, 'reversed'); assert.equal(before.amount, 0);
     assert.equal(before.settled, true, 'both floor reveals must settle before comparing the corrected props');
@@ -132,11 +157,31 @@ export async function runRotationOffsetScenario(page, output) {
       assert.equal(state.broom.visible, true); near(state.broom.baseWorld, state.broom.centre, 'centred broom');
       near(state.broom.actualBase, state.broom.centre, 'actual broom Gaussian base');
       assert.ok(state.broom.clearances.imbalance < 1e-8);
-      assert.equal(state.hole.open, true); assert.equal(state.hole.startZ, 3); assert.equal(state.hole.endZ, 5.6);
-      near(state.hole.nearBounds, state.hole.expectedNear, 'hole near edges meet current walls');
-      near(state.hole.farBounds, state.hole.expectedFar, 'hole far edges meet current walls');
-      near(state.hole.uniformNear, [...state.hole.nearBounds, 3, 5.6], 'actual hole near clip uniform');
-      near(state.hole.uniformFar, state.hole.farBounds, 'actual hole far clip uniform');
+      assert.equal(state.hole.open, true); assert.equal(state.hole.locked, true);
+      near([state.hole.startZ, state.hole.endZ], [before.hole.startZ, before.hole.endZ], 'captured hole interval');
+      if (state === before) {
+        near(state.hole.nearBounds, state.hole.expectedNear, 'initial hole near edges meet fitted route walls');
+        near(state.hole.farBounds, state.hole.expectedFar, 'initial hole far edges meet fitted route walls');
+        near(state.hole.uniformNear, [...state.hole.nearBounds, state.hole.startZ, state.hole.endZ], 'initial hole near clip uniform');
+        near(state.hole.uniformFar, state.hole.farBounds, 'initial hole far clip uniform');
+        const route = new Matrix4().fromArray(state.hole.routeToWorld);
+        near(state.hole.uniformWorldToRoute, route.clone().invert().toArray(), 'hole shader uses the shared route frame');
+        const routeCorners = [
+          [state.hole.nearBounds[0], state.hole.floorY, state.hole.startZ],
+          [state.hole.nearBounds[1], state.hole.floorY, state.hole.startZ],
+          [state.hole.farBounds[0], state.hole.floorY, state.hole.endZ],
+          [state.hole.farBounds[1], state.hole.floorY, state.hole.endZ],
+        ];
+        routeCorners.forEach((corner, index) => near(state.hole.worldCorners[index],
+          new Vector3(...corner).applyMatrix4(route).toArray(), 'initial hole world corner ' + index));
+      }
+      near(state.hole.nearBounds, before.hole.nearBounds, 'locked hole near bounds ignore later correction');
+      near(state.hole.farBounds, before.hole.farBounds, 'locked hole far bounds ignore later correction');
+      near(state.hole.uniformNear, before.hole.uniformNear, 'locked hole near clip uniform');
+      near(state.hole.uniformFar, before.hole.uniformFar, 'locked hole far clip uniform');
+      near(state.hole.uniformWorldToRoute, before.hole.uniformWorldToRoute, 'locked hole shader frame');
+      state.hole.worldCorners.forEach((corner, index) => near(corner, before.hole.worldCorners[index],
+        'locked hole world corner ' + index));
       assert.equal(state.wall.visible, true); assert.equal(state.wall.motion, 'visible');
       assert.ok(Math.abs(state.wall.renderedWidth - state.wall.width) < 1e-8);
       if (state === before) for (const span of state.wall.coverage) {
@@ -178,6 +223,7 @@ export async function runRotationOffsetScenario(page, output) {
       heading: shifted.heading, splatCounts: shifted.props.map(prop => prop.count), physicalTurnBoxFixed: true,
       seatEdgeOnCurrentWall: true, seatLongitudinalStation: shifted.seat.base[2], boxFloorRaiseRemoved: true,
       broomCentredAtZ6: shifted.broom.baseWorld, holeNearBounds: shifted.hole.nearBounds, holeFarBounds: shifted.hole.farBounds,
+      holeLockedWithWall: true, holeInterval: [shifted.hole.startZ, shifted.hole.endZ],
       wallLockedWidth: shifted.wall.width, wallLockedBase: shifted.wall.centre, wallDoesNotRefitAfterCorrection: true,
       repeatedApplyStable: true, oneCentimetreNudges: true, invalid101CentimetresRejected: true,
       zeroRestoresReversedRoot: true, screenshot: 'rotation-offset.png' };

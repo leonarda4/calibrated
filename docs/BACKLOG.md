@@ -20,6 +20,38 @@ Issues 03 and 04 can progress alongside viewer work once their inputs are availa
 
 The [interaction plan](INTERACTION_PLAN.md) now has a first implementation: pure sequence/rotation, editable 2.10 m provisional hallway width, the supplied 36 x 36 cm, 43 cm high box and draft orb placement, scan-edge centreline picker, operator start/preview/STOP/reset, current-frame fingertip contact, optional local hand visuals, PC-only transcripts and offline ElevenLabs generation. Source-detail controls and private KSPLAT conversion are implemented; supported distance-based LoD remains a measured renderer-evaluation follow-up. Independent spatial validation, exact box placement/ceiling measurements, live Steam Link joints, audio audition, stationary turn/step-down and stream timing remain open. Original M0-M5 gates are not closed by the new desktop code.
 
+Current collapse acceptance (2026-11-05): after the automatic broom's completed
+glitch out, use ten seeded semi-random fracture spots, five per side, ordered
+far to near with 0.6–1.1 s gaps. Each supplied 1.8 s fracture and one
+`RumblingSound01.wav` excerpt starts roughly three seconds of growing local
+Gaussian/fog damage. Render irregular cavities with surviving detail at the
+same depths, rather than a planar or whole-volume cutoff. Exposed world/void
+pixels use opaque white with alpha 1, including loading and fully faded scan
+frames. Preserve source colors and original scene0 before the ending return,
+the user surroundings, the full protected return prefix and working physical
+portal; pause clocks through return without replaying cues. The collapse-armed
+ending return blocks later entry. Verify preloaded fixed-resource reuse and
+recovery cancellation. The
+pure plan must reproduce a captured seed while fresh games vary it. Completion
+still requires inspected rendered/audio-scheduling evidence and separate
+headset stereo, audible balance, physical registration and comfort checks.
+
+Current ending acceptance (2026-11-05): only actual automatic broom-completion
+collapse arms it. The unchanged physical crossing starts the same four-second
+return, with organic damage at both original hallway ends visible already
+during motion. Preserve at least 4 m longitudinally on either side of the user,
+the opening and available physical bounds, expanding protection as needed.
+Actual return completion starts time zero: reverse irregular relighting to
+full over 1 s with `light_flicker.mp3`, hold until +5 s, then glitch all authored
+content away over 1 s with that sound. At +6 s hold opaque white and play the
+complete 6.710979 s `WhatIsReality.wav` once alone via `finishReality`, stopping
+all prior audio. The final global removal intentionally includes the protected
+area. Block further entry once the ending return starts. STOP/reset/calibration/
+tracking/session recovery cancels without revival; a fresh game rearms. Require
+inspected timing/render/audio-scheduling evidence and separate hardware
+registration, stereo, audible delivery and comfort checks; those hardware
+checks remain pending.
+
 ## Agent responsibilities
 
 These are working roles, not required separate bots or paid services. One coding agent can perform them sequentially; parallel agents should own distinct files and share the coordinate contract.

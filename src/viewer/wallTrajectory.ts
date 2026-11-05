@@ -2,15 +2,17 @@ import type { HallwayCenterResult } from '../experience/hallwayCenter.ts';
 
 type Section = Extract<HallwayCenterResult, { ok: true }>;
 
-/** Fit once; the returned rigid route owns no scan/cache state. */
+/** Fit once and anchor the final midpoint; the route owns no scan/cache state. */
 export function lockWallTrajectory(sections: readonly Section[], depth: number) {
   if (sections.length < 2 || !Number.isFinite(depth) || depth <= 0) throw new Error('Wall route needs supported sections and full slab depth.');
-  const mean = (axis: number) => sections.reduce((sum, fit) => sum + fit.centerWorld[axis], 0) / sections.length;
-  const meanX = mean(0), meanZ = mean(2);
-  const variance = sections.reduce((sum, fit) => sum + (fit.centerWorld[2] - meanZ) ** 2, 0);
+  // Centre the standing endpoint exactly between its fitted wall planes.
+  // Constrain the least-squares line through that point once, before sizing it.
+  const endpoint = sections[sections.length - 1].centerWorld;
+  const endX = endpoint[0], endZ = endpoint[2];
+  const variance = sections.reduce((sum, fit) => sum + (fit.centerWorld[2] - endZ) ** 2, 0);
   if (!Number.isFinite(variance) || variance < 1e-8) throw new Error('Wall route needs distinct finite stations.');
-  const slope = sections.reduce((sum, fit) => sum + (fit.centerWorld[2] - meanZ) * (fit.centerWorld[0] - meanX), 0) / variance;
-  const xAt = (z: number) => meanX + slope * (z - meanZ);
+  const slope = sections.reduce((sum, fit) => sum + (fit.centerWorld[2] - endZ) * (fit.centerWorld[0] - endX), 0) / variance;
+  const xAt = (z: number) => endX + slope * (z - endZ);
   const sign = sections[0].directionWorld[2] < 0 ? -1 : 1;
   const length = Math.hypot(slope, 1);
   const normal = Object.freeze([-sign * slope / length, 0, -sign / length] as const);
@@ -30,6 +32,6 @@ export function lockWallTrajectory(sections: readonly Section[], depth: number) 
   // A centimetre at each edge hides scan noise at the wall join. Width and
   // orientation never change in response to a later section or root offset.
   const width = halfWidth * 2 + .02;
-  if (![slope, meanX, meanZ, width].every(Number.isFinite)) throw new Error('Wall route must be finite.');
+  if (![slope, endX, endZ, width].every(Number.isFinite)) throw new Error('Wall route must be finite.');
   return Object.freeze({ xAt, slope, normal, across, width });
 }

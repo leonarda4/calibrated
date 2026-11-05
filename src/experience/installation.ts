@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GAMEPLAY_TIMING } from './gameplayTiming.ts';
 import { InstallationFlow, validateInstallationConfig, type ExperienceSnapshot, type FingertipContact, type InstallationConfig, type Position3, type VoiceCue } from './flow.ts';
 import { hallwayTurnOffset, rotateContentAroundPivot, type ContentTransform } from './rotation.ts';
 import { ACTIVE_SCAN } from '../viewer/scanAsset.ts';
@@ -10,6 +11,7 @@ import type { DropInViewer } from '@mkkellogg/gaussian-splats-3d';
 import type { HallwayCenterResult } from './hallwayCenter.ts';
 import { alignBoxToWall } from './wallBoxAlignment.ts';
 import { scanOriginForStart } from '../viewer/scanPlacement.ts';
+import type { HallwayPlacementFrame } from '../viewer/wallRouteFrame.ts';
 
 export type { ExperienceSnapshot, FingertipContact, InstallationConfig, VoiceCue } from './flow.ts';
 
@@ -41,7 +43,9 @@ export interface InstallationSnapshot extends ExperienceSnapshot {
 }
 
 export interface InstallationOptions {
-  getHallwaySection?(worldZ: number): HallwayCenterResult;
+  /** Query and return walls in the placement frame, or world space without one. */
+  getHallwaySection?(stationZ: number): HallwayCenterResult;
+  placementFrame?: HallwayPlacementFrame;
   scene: THREE.Scene;
   camera?: THREE.Camera;
   scanRoot: THREE.Object3D;
@@ -81,12 +85,13 @@ export function createInstallation(options: InstallationOptions) {
   let secondBoxBase: Position3 | null = null;
   let secondBoxYaw = 0;
   let secondBoxShown = false;
+  // Keep the station and selected physical side in the same frame as wall fits.
   let secondAnchor: { reference: Position3; direction: Position3; normal?: Position3 } | null = null;
   let secondAlignmentError: string | null = null;
   let secondSyncKey = '';
   const boxReveal = new FloorReveal();
   const boxGlitch = new BoxGlitch();
-  const secondReveal = new FloorReveal();
+  const secondReveal = new FloorReveal(GAMEPLAY_TIMING.secondBoxRiseSeconds);
   const secondSize = { width: 0.36, depth: 0.36, height: 0.43 } as const;
   const snapshot = (): InstallationSnapshot => {
     const state = flow.snapshot();
@@ -125,7 +130,7 @@ export function createInstallation(options: InstallationOptions) {
   // Invisible metric interaction volumes; appearance comes from WoodenBox.ply.
 
   // The first prop stays fixed; this seat follows the selected current wall
-  // while preserving its authored world-Z station and metric footprint.
+  // while preserving its prepared hallway station and metric footprint.
   const secondBox = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), boxMaterial.clone());
   secondBox.name = 'installation-second-box';
   secondBox.scale.set(secondSize.width, secondSize.height, secondSize.depth);
@@ -180,7 +185,8 @@ export function createInstallation(options: InstallationOptions) {
   const syncSecondBox = (force = false): boolean => {
     if (!options.getHallwaySection || !secondAnchor) return true;
     scanRoot.updateWorldMatrix(true, false);
-    const key = scanRoot.matrixWorld.elements.join(',');
+    const frameMatrix = options.placementFrame?.matrix();
+    const key = `${scanRoot.matrixWorld.elements.join(',')}|${frameMatrix?.join(',') ?? ''}`;
     if (!force && key === secondSyncKey) return secondAlignmentError === null;
     try {
       const fit = options.getHallwaySection(secondAnchor.reference[2]);
@@ -189,13 +195,22 @@ export function createInstallation(options: InstallationOptions) {
         direction: secondAnchor.direction, preferredNormal: secondAnchor.normal,
         width: secondSize.width, depth: secondSize.depth });
       secondAnchor.normal ??= aligned.inwardNormal;
-      secondBoxBase = aligned.base;
-      secondBoxYaw = aligned.yaw;
-      secondBox.position.set(aligned.base[0], aligned.base[1] + secondSize.height / 2, aligned.base[2]);
-      secondBox.rotation.set(0, aligned.yaw, 0);
+      const base = new THREE.Vector3(...aligned.base);
+      const direction = new THREE.Vector3(...aligned.direction);
+      if (options.placementFrame && frameMatrix) {
+        options.placementFrame.worldPoint(base);
+        direction.transformDirection(new THREE.Matrix4().fromArray(frameMatrix));
+      }
+      secondBoxBase = base.toArray() as [number, number, number];
+      secondBoxYaw = hallwayYaw(direction.toArray() as [number, number, number]);
+      secondBox.position.set(base.x, base.y + secondSize.height / 2, base.z);
+      secondBox.rotation.set(0, secondBoxYaw, 0);
       secondAlignmentError = null;
     } catch (cause) {
       secondAlignmentError = `Seat alignment: ${cause instanceof Error ? cause.message : String(cause)}`;
+      secondBoxShown = false;
+      secondReveal.reset();
+      secondBox.visible = false;
     }
     secondSyncKey = key;
     return secondAlignmentError === null;
@@ -374,7 +389,11 @@ export function createInstallation(options: InstallationOptions) {
       if (base.length !== 3 || !base.every(Number.isFinite)) throw new Error('Second box base must contain three finite coordinates.');
       const yaw = hallwayYaw(directionWorld);
       secondBoxBase = [...base];
-      secondAnchor = { reference: [...base], direction: [...directionWorld] };
+      const reference = new THREE.Vector3(...base), direction = new THREE.Vector3(...directionWorld);
+      options.placementFrame?.routePoint(reference);
+      options.placementFrame?.routeVector(direction);
+      secondAnchor = { reference: reference.toArray() as [number, number, number],
+        direction: direction.toArray() as [number, number, number] };
       secondSyncKey = '';
       secondBoxYaw = yaw;
       secondBoxShown = false;
@@ -429,6 +448,14 @@ export function createInstallation(options: InstallationOptions) {
       return state.phase === 'box' && state.calibrated && !state.preview &&
         state.boxReveal.motion === 'visible' &&
         isHeadsetInBox(position, state.config, state.boxYaw);
+    },
+    headsetAboveSecondBox(position: Position3): boolean {
+      const state = snapshot(), second = state.secondBox;
+      return state.phase === 'reversed' && (state.calibrated || state.preview) &&
+        second.visible && second.reveal.motion === 'visible' && second.base !== null &&
+        isHeadsetInBox(position, { ...state.config, centerX: second.base[0],
+          centerZ: second.base[2], floorY: second.base[1], boxWidth: second.width,
+          boxDepth: second.depth }, second.yaw);
     },
     rotateHallway(): boolean {
       if (boxReveal.snapshot().motion === 'hidden' || boxReveal.snapshot().motion === 'exiting') return false;

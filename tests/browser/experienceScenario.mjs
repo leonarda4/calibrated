@@ -100,6 +100,12 @@ export async function runExperienceScenario(page) {
       };
       const state = () => installation.snapshot();
       const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const advanceDesktop = seconds => {
+        ensure(!xr.isPresenting, 'desktop elapsed-time helper cannot bypass XR frame recovery');
+        for (let remaining = seconds; remaining > 1e-9;) {
+          const step = Math.min(.1, remaining); experience.update(step); remaining -= step;
+        }
+      };
       const expectSecondCleared = reason => {
         ensure(!state().secondBox.placed && !state().secondBox.visible,
           `${reason}: second-box placement or reveal authority survived`);
@@ -162,7 +168,9 @@ export async function runExperienceScenario(page) {
           'manual desktop box required a stationary confirmation');
         prepareSyntheticSecond();
         ensure(installation.rotateHallway(), 'manual desktop rotation did not start');
-        experience.update(1);
+        // Simulate one second of delivered frames, rather than a fitting hitch
+        // which now deliberately freezes the desktop presentation/story clock.
+        advanceDesktop(1);
         ensure(!experience.canInspectStartPoint() && !experience.inspectStartPoint([1, 2, 3]),
           'coordinate inspection can interrupt an active hallway turn');
         ensure(!same(scan.matrix.toArray(), baseline), 'preview did not rotate the visual scan');

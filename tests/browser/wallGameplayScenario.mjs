@@ -1,168 +1,203 @@
 import assert from 'node:assert/strict';
 import path from 'node:path';
 
-/** Actual main.ts wiring, scene transforms and current desktop player position. */
+/** Actual coordinator/player callbacks plus the same manual canonical wall path. */
 export async function runWallGameplayScenario(page, output) {
-  const paused = await page.evaluate(async () => {
-    const { experience, wallBlocker, splats, scene, camera, controls } = window.__debug;
-    const experienceUpdate = experience.update, wallUpdate = wallBlocker.update;
-    const savedCamera = camera.position.toArray(), savedTarget = controls.target.toArray(), damping = controls.enableDamping;
-    experience.update = () => {}; wallBlocker.update = () => wallUpdate(0); controls.enableDamping = false;
-    const near = (a, b, name) => { if (Math.abs(a - b) > 1e-7) throw new Error(`${name}: ${a} vs ${b}`); };
-    const ensure = (ok, message) => { if (!ok) throw new Error(message); };
-    const player = (x, z) => {
-      camera.position.set(x, 1.7, z); controls.target.set(x, 1.3, z - 3); controls.update(); camera.updateMatrixWorld(true);
-    };
-    player(0, 2);
-    ensure(experience.startTestScenarioPreview(), 'Gameplay preview could not start.');
-    ensure(!wallBlocker.snapshot().visible && wallBlocker.snapshot().gameplayCue === 'waitingTurn', 'Wall appeared at calibration.');
-    let elapsed = 0, completedAt = null, previousZ = -8, locked = null;
-    const advanceTo = end => {
-      while (elapsed < end - 1e-9) {
-        const dt = Math.min(.05, end - elapsed), phase = experience.installation.snapshot().phase;
-        experienceUpdate(dt); elapsed += dt;
-        if (phase === 'rotating' && experience.installation.snapshot().phase === 'reversed') completedAt = elapsed;
-        wallUpdate(dt);
-        const wall = wallBlocker.snapshot();
-        if (wall.approach.active || wall.visible) {
-          const object = splats.getSplatScene(wall.sceneIndex);
-          const rotation = object.getWorldQuaternion(object.quaternion.clone()).toArray();
-          if (!locked) locked = { queries: wall.alignmentQueries, width: wall.width, rotation };
-          near(wall.alignmentQueries, locked.queries, 'Moving wall queried hallway sections again');
-          near(wall.width, locked.width, 'Moving wall changed width');
-          rotation.forEach((value, i) => near(value, locked.rotation[i], 'Moving wall changed world heading'));
-          ensure(wall.trajectoryLocked, 'Moving wall has no locked trajectory.');
-          near(wall.baseWorld[1], 0, 'Wall floor');
-          ensure(wall.baseWorld[2] >= previousZ - 1e-7 && wall.baseWorld[2] >= -8 - 1e-7 && wall.baseWorld[2] <= -2 + 1e-7,
-            'Wall reversed or crossed its -8..-2 bounds.');
-          previousZ = wall.baseWorld[2];
-        }
-      }
-    };
-    advanceTo(10.1); ensure(!wallBlocker.snapshot().visible, 'First box revealed the wall.');
-    scene.updateMatrixWorld(true);
-    const box = scene.getObjectByName('installation-box'), boxPose = box.matrixWorld.toArray();
-    advanceTo(15.1); ensure(experience.installation.snapshot().phase === 'rotating' && !wallBlocker.snapshot().visible, 'Wall appeared during rotation.');
-    advanceTo(20.2);
-    ensure(completedAt !== null && experience.installation.snapshot().secondBox.visible, 'Turn/second box did not complete.');
-    ensure(!wallBlocker.snapshot().visible, 'Second box revealed or teleported the wall.');
-    advanceTo(completedAt + 1.999); ensure(!wallBlocker.snapshot().visible, 'Wall appeared before two seconds after rotation.');
-    advanceTo(completedAt + 2);
-    ensure(wallBlocker.snapshot().motion === 'entering', 'Wall did not appear at the post-turn deadline.');
-    ensure(wallBlocker.snapshot().status.includes('sliding in'), 'Automatic entry reports the wrong visibility status.');
-    near(wallBlocker.snapshot().baseWorld[2], -8, 'First appearance Z');
-    advanceTo(elapsed + 1.3);
-    ensure(wallBlocker.snapshot().motion === 'visible', 'Wall side entry did not finish.');
-    const initialZ = wallBlocker.snapshot().baseWorld[2];
-    const centerX = wallBlocker.snapshot().baseWorld[0];
-    const [{ createHallwaySections }, { getSourceCenters }, THREE] = await Promise.all([
-      import('/src/experience/hallwaySection.ts'), import('/src/viewer/splatViewer.ts'),
-      import('/node_modules/.vite/deps/three.js'),
-    ]);
-    const section = createHallwaySections({ scanRoot: splats, getCenters: () => getSourceCenters(splats) }).at(initialZ);
-    ensure(section.ok, 'Current hallway walls were not independently available.');
-    near(centerX, section.centerWorld[0], 'Moving wall is off the corrected hallway centre');
-    const wallScene = splats.getSplatScene(wallBlocker.snapshot().sceneIndex);
-    const rendered = new THREE.Matrix4().multiplyMatrices(splats.matrixWorld, wallScene.matrix);
-    const corners = [];
-    for (const x of [-1.05, 1.05]) for (const z of [-.25, .25]) {
-      corners.push(new THREE.Vector3(x, 0, z).applyMatrix4(rendered));
-    }
-    const signed = (plane, p) => plane.normal[0] * (p.x - plane.point[0]) + plane.normal[2] * (p.z - plane.point[2]);
-    for (const plane of [section.wallPlanes.left, section.wallPlanes.right]) {
-      ensure(Math.min(...corners.map(p => signed(plane, p))) <= 1e-7,
-        'Rendered wall leaves a gap before a fitted hallway wall.');
-    }
-    near(wallScene.scale.x * 2.1, wallBlocker.snapshot().width, 'Rendered width differs from clearance footprint');
-    player(centerX, -6.8);
-    advanceTo(elapsed + 2);
-    const held = wallBlocker.snapshot();
-    ensure(held.approach.waitingFor === 'player', 'Wall failed to pause near the player.');
-    near(held.baseWorld[2], -7.8, 'Full-thickness clearance stop');
-    advanceTo(elapsed + 5); near(wallBlocker.snapshot().baseWorld[2], held.baseWorld[2], 'Wall drifted while waiting');
-    player(centerX, -6.7); advanceTo(elapsed + 1);
-    near(wallBlocker.snapshot().baseWorld[2], held.baseWorld[2], 'Wall ignored the resume hysteresis');
-    player(centerX, -6.8);
-    window.__wallGameplay = { experienceUpdate, wallUpdate, savedCamera, savedTarget, damping, advanceTo,
-      now: () => elapsed, completedAt, initialZ, centerX, boxPose, near, ensure, player, held, locked };
-    return { completedTurnSeconds: completedAt, firstAppearanceSeconds: completedAt + 2, initialZ: -8,
-      waitingZ: held.baseWorld[2], playerZ: -6.8, clearanceFromSurface: .75, secondBoxDidNotForceFinish: true };
-  });
   try {
+    const waiting = await page.evaluate(async () => {
+      const { experience, wallBlocker: wall, splats, scene, camera, controls, floorHole } = window.__debug;
+      const experienceUpdate = experience.update, wallUpdate = wall.update;
+      const saved = { experienceUpdate, wallUpdate, speech:experience.gameplayAudio.speech,
+        camera: camera.position.toArray(), target: controls.target.toArray(), damping: controls.enableDamping };
+      window.__wallGameplay={saved};
+      experience.update = () => {}; wall.update = () => wallUpdate(0); controls.enableDamping = false;
+      const ensure = (ok, message) => { if (!ok) throw new Error(message); };
+      const near = (a, b, name) => ensure(Math.abs(a - b) < 1e-6, `${name}: ${a} versus ${b}`);
+      const look = looking => {
+        const state = wall.snapshot(), base = state.baseWorld ?? state.routeEndpoints?.start ?? [0, 0, -8];
+        controls.target.set(base[0], base[1] + 1.3, base[2]);
+        if (!looking) controls.target.multiplyScalar(-1).addScaledVector(camera.position, 2);
+        if (controls.target.distanceToSquared(camera.position) < 1e-12) {
+          controls.target.set(camera.position.x, camera.position.y, camera.position.z + (looking ? -1 : 1));
+        }
+        controls.update(); camera.updateMatrixWorld(true); experienceUpdate(0);
+      };
+      const player = (x, z, looking = false, height = 1.7) => { camera.position.set(x, height, z); look(looking); };
+      let elapsed = 0, locked = null, previousZ = -8;
+      const speechEvents=[];
+      experience.gameplayAudio.speech=id=>speechEvents.push({id,at:elapsed,wallVisible:wall.snapshot().visible,
+        seatSettled:experience.installation.snapshot().secondBox.reveal.motion==='visible'});
+      const advance = seconds => {
+        for (let remaining = seconds; remaining > 1e-9;) {
+          const dt = Math.min(.05, remaining); elapsed += dt;experienceUpdate(dt); wallUpdate(dt); floorHole.update(dt); remaining -= dt;
+          const state = wall.snapshot();
+          if (state.visible || state.approach.active) {
+            const object = splats.getSplatScene(state.sceneIndex), rotation = object.getWorldQuaternion(object.quaternion.clone()).toArray();
+            if (!locked) locked = { queries: state.alignmentQueries, width: state.width, rotation };
+            near(state.alignmentQueries, locked.queries, 'Visible wall queried hallway sections again');
+            near(state.width, locked.width, 'Visible wall changed width');
+            rotation.forEach((value, i) => near(value, locked.rotation[i], 'Visible wall changed heading'));
+            ensure(state.trajectoryLocked, 'Moving wall lacks its frozen route');
+            ensure(state.baseWorld[2] >= previousZ - 1e-7 && state.baseWorld[2] >= -8 - 1e-7 &&
+              state.baseWorld[2] <= state.routeEndpoints.end[2] + 1e-7, 'Wall retreated or crossed its fixed route');
+            near(state.offset, 0, 'Instant wall has a lateral slide offset'); previousZ = state.baseWorld[2];
+          }
+        }
+      };
+      const resetAssertions = () => { locked = null; previousZ = -8; };
+      player(0, 5, true); ensure(experience.startTestScenarioPreview(), 'Preview could not start');
+      ensure(!wall.snapshot().visible && wall.snapshot().gameplayCue === 'waitingSecondBox', 'Wall did not wait for the second-box trigger');
+      advance(8.1); ensure(!wall.snapshot().visible, 'First box revealed the wall');
+      scene.updateMatrixWorld(true); const boxPose = scene.getObjectByName('installation-box').matrixWorld.toArray();
+      advance(14); ensure(experience.installation.snapshot().phase === 'rotating' && !wall.snapshot().visible, 'Wall appeared during the turn');
+      advance(15);
+      const second = experience.installation.snapshot().secondBox;
+      ensure(second.visible && second.reveal.motion === 'visible' && second.base, 'Second box did not finish appearing');
+      ensure(!wall.snapshot().visible && wall.snapshot().gameplayCue === 'waitingSecondBox', 'Elapsed time alone revealed the wall');
+      ensure(speechEvents.filter(e=>e.id==='sitOnBox').length===1 && speechEvents.find(e=>e.id==='sitOnBox').seatSettled,
+        'The supplied sit instruction must occur once after the second box finishes rising');
+      ensure(!speechEvents.some(e=>e.id==='classroom'),'The classroom instruction played before wall appearance');
+      player(second.base[0], second.base[2], true); advance(.1);
+      ensure(!wall.snapshot().visible && wall.snapshot().gameplayCue === 'waitingLookAway', 'Above-second-box trigger did not arm a hidden wall');
+      advance(1); ensure(!wall.snapshot().visible, 'Armed wall appeared while watched');
+      ensure(!speechEvents.some(e=>e.id==='classroom'),'Waiting for look-away started the classroom prompt');
+      look(false); advance(.05);
+      const appeared = wall.snapshot();
+      const appearedAt=elapsed;
+      ensure(appeared.visible && appeared.motion === 'visible' && appeared.offset === 0, 'Look-away did not reveal the full wall instantly');
+      ensure(appeared.baseWorld[2] >= -8 && appeared.baseWorld[2] < -7.9, 'Instant appearance skipped the start');
+      near(appeared.approach.speed, 1, 'New wall speed');
+      const firstBox = experience.installation.snapshot();
+      near(appeared.routeEndpoints.end[2], firstBox.config.centerZ, 'Final station is not approximately the fixed first box');
+      advance(1); const beforeLook = wall.snapshot().baseWorld[2];
+      const preparedHole = floorHole.snapshot();
+      ensure(preparedHole.prepared && preparedHole.locked && !preparedHole.open,
+        'The future wall-relative opening must be prepared while still hidden.');
+      near(preparedHole.endZ, appeared.routeEndpoints.end[2] - 1, 'Prepared hole is not1m beyond the final wall');
+      look(true); advance(.35); const halfLook = wall.snapshot().baseWorld[2];
+      near(halfLook - beforeLook, .35, 'First half of0.7s stop delay');
+      advance(.35); const stoppedZ = wall.snapshot().baseWorld[2];
+      near(stoppedZ - beforeLook, .7, 'Full0.7s stop delay');
+      advance(.5); near(wall.snapshot().baseWorld[2], stoppedZ, 'Watched wall kept moving after0.7s');
+      look(false); advance(.5); near(wall.snapshot().baseWorld[2], stoppedZ + .5, 'Unseen wall did not resume at1m/s');
+      const centerX = wall.snapshot().baseWorld[0];
+      player(centerX, -3.6, false); advance(2.299);
+      ensure(!speechEvents.some(e=>e.id==='classroom'),'Classroom prompt arrived before five seconds of actual appearance');
+      advance(.001);
+      const classroom=speechEvents.filter(e=>e.id==='classroom');
+      ensure(classroom.length===1 && classroom[0].wallVisible,'Wall appearance did not trigger the classroom instruction once');
+      near(classroom[0].at-appearedAt,5,'Classroom instruction delay from actual wall appearance');
+      advance(.7);
+      const held = wall.snapshot();
+      ensure(held.approach.waitingFor === 'player', 'Player clearance did not override gaze permission');
+      near(held.baseWorld[2], -4.6, 'Full-thickness player clearance');
+      advance(2); near(wall.snapshot().baseWorld[2], held.baseWorld[2], 'Waiting wall drifted');
+      player(centerX, -3.5, false); advance(1); near(wall.snapshot().baseWorld[2], held.baseWorld[2], 'Player release ignored hysteresis');
+      look(true); advance(5.2);
+      ensure(wall.snapshot().visible && wall.snapshot().arrival.phase === 'idle' && !floorHole.snapshot().open,
+        'Five seconds looking before the final position incorrectly removed the wall');
+      look(false);
+      window.__wallGameplay = { saved, ensure, near, look, player, advance, resetAssertions, centerX, boxPose, held, speechEvents,
+        preparedCorners: preparedHole.worldCorners, now: () => elapsed };
+      return { secondBoxAboveArms: true, timeAloneCannotReveal: true, watchedRevealWaits: true,
+        instantUnseenReveal: true, lookBackStopSeconds: .7, waitingZ: held.baseWorld[2], clearanceFromSurface: .75,
+        approachSpeed: appeared.approach.speed, firstBoxEndpoint: appeared.routeEndpoints.end[2],
+        sitPromptAfterRise:true,classroomDelaySeconds:classroom[0].at-appearedAt };
+    });
     await page.screenshot({ path: path.join(output, 'wall-player-wait.png'), fullPage: true });
     const finished = await page.evaluate(() => {
-      const { experience, wallBlocker, splats, scene } = window.__debug;
-      const t = window.__wallGameplay;
-      t.player(t.centerX, 2); t.advanceTo(t.now() + 1);
-      t.near(wallBlocker.snapshot().baseWorld[2], -7.5, 'Resume speed/catch-up');
-      const resumedZ = wallBlocker.snapshot().baseWorld[2];
-      t.player(t.centerX, resumedZ - .5); t.advanceTo(t.now() + 1);
-      t.near(wallBlocker.snapshot().baseWorld[2], resumedZ, 'Close player behind caused a retreat');
-      t.player(t.centerX, 2); t.advanceTo(t.now() + 25);
-      const final = wallBlocker.snapshot();
-      t.near(final.baseWorld[2], -2, 'Final world Z'); t.near(final.positionWorld[2], -2, 'Rendered final Z');
-      t.ensure(!final.approach.active, 'Wall did not hold at -2.');
+      const { experience, wallBlocker: wall, floorHole, splats, scene, camera } = window.__debug, t = window.__wallGameplay;
+      t.player(t.centerX, 5, false); t.advance(1);
+      t.near(wall.snapshot().baseWorld[2], t.held.baseWorld[2] + 1, 'Resume speed/catch-up');
+      t.advance(12);
+      const arrived = wall.snapshot(), end = arrived.routeEndpoints.end[2];
+      t.near(arrived.baseWorld[2], end, 'Final fixed first-box station');
+      const beforePass = floorHole.snapshot();
+      t.ensure(arrived.visible && beforePass.open && arrived.arrival.phase === 'idle',
+        'The arriving opaque wall must conceal an already revealed opening before passage or final gaze.');
+      t.ensure(JSON.stringify(beforePass.worldCorners) === JSON.stringify(t.preparedCorners),
+        'The prepared hole moved with the approaching wall.');
+      t.look(true); t.advance(2); t.ensure(wall.snapshot().arrival.phase === 'idle' && floorHole.snapshot().open,
+        'Wall disappeared at the obsolete2s gaze limit');
+      t.look(false); t.advance(.1); t.near(wall.snapshot().gaze.lookSeconds, 0, 'Look-away did not reset disappearance dwell');
+      t.look(true); t.advance(4.95); t.ensure(wall.snapshot().arrival.phase === 'idle', 'Interrupted looks accumulated toward5s');
+      t.advance(.05); t.ensure(floorHole.snapshot().open && wall.snapshot().arrival.phase === 'glitching', 'Five continuous seconds did not begin glitch disappearance');
+      const gazeHole = floorHole.snapshot();
+      t.near(gazeHole.endZ, end - 1, 'Gaze hole edge must be1m past the standing wall');
+      t.ensure(JSON.stringify(gazeHole.worldCorners) === JSON.stringify(beforePass.worldCorners), 'Final gaze relocated the hidden opening');
+      t.advance(.6); t.ensure(!wall.snapshot().visible && floorHole.snapshot().open, 'Glitch failed to leave the fitted hole');
       scene.updateMatrixWorld(true);
-      t.ensure(JSON.stringify(scene.getObjectByName('installation-box').matrixWorld.toArray()) === JSON.stringify(t.boxPose), 'Wall moved the fixed box.');
+      t.ensure(JSON.stringify(scene.getObjectByName('installation-box').matrixWorld.toArray()) === JSON.stringify(t.boxPose), 'Wall moved the fixed first box');
       const mesh = splats.viewer.splatMesh, saved = window.__wallResources;
-      t.ensure(mesh.material === saved.material && mesh.geometry === saved.geometry && splats.viewer.sortWorker === saved.worker, 'Gameplay rebuilt shared resources.');
-      // The pictured Show/Hide button must replay the same default action as
-      // the completed desktop preview, not inherit its last position as a draft.
-      document.getElementById('experience-show-wall').click(); t.wallUpdate(1.25);
-      t.ensure(wallBlocker.snapshot().placementSource === 'fitted', 'Hide silently authored a legacy wall position.');
-      document.getElementById('experience-show-wall').click();
-      t.near(wallBlocker.snapshot().baseWorld[2], -8, 'Manual button differs from preview start');
-      t.ensure(wallBlocker.snapshot().approach.active && wallBlocker.snapshot().trajectoryLocked, 'Manual button skipped the preview movement.');
-      t.near(wallBlocker.snapshot().width, final.width, 'Manual button differs from preview width');
-      // Queue another completed-turn cue, occupy its entry, then clear it.
-      experience.prepareForCalibration(); wallBlocker.startGameplay(); wallBlocker.turnCompleted(); t.wallUpdate(0);
-      t.player(t.centerX, -8); t.experienceUpdate(.05); t.wallUpdate(2);
-      t.ensure(!wallBlocker.snapshot().visible && wallBlocker.snapshot().gameplayCue === 'waitingPlayer', 'Entry crossed the player.');
-      const entryQueries = wallBlocker.snapshot().alignmentQueries;
-      t.wallUpdate(10); t.ensure(!wallBlocker.snapshot().visible, 'Occupied entry timed out into visibility.');
-      t.near(wallBlocker.snapshot().alignmentQueries, entryQueries, 'Waiting entry refitted its route.');
-      t.player(t.centerX, 2); t.experienceUpdate(.05); t.wallUpdate(.05);
-      t.ensure(wallBlocker.snapshot().visible, 'Entry did not resume once clear.');
-      t.near(wallBlocker.snapshot().baseWorld[2], -8, 'Deferred entry changed start Z');
-      experience.prepareForCalibration(); t.wallUpdate(100);
-      t.ensure(!wallBlocker.snapshot().visible && !wallBlocker.snapshot().approach.active, 'Recovery revived the wall.');
-      wallBlocker.startGameplay(); wallBlocker.turnCompleted(); t.wallUpdate(0); t.wallUpdate(1);
-      experience.prepareForCalibration(); t.wallUpdate(100);
-      t.ensure(!wallBlocker.snapshot().visible && wallBlocker.snapshot().gameplayCue === null, 'Recovery revived a pending delay.');
-      wallBlocker.startGameplay(); wallBlocker.turnCompleted(); wallBlocker.stopTravel(); t.wallUpdate(100);
-      t.ensure(!wallBlocker.snapshot().visible && wallBlocker.snapshot().gameplayCue === null, 'Manual Stop failed to cancel the pending cue.');
-      const rootPosition = splats.position.clone(), rootRotation = splats.quaternion.clone();
-      try {
-        const yaw = splats.quaternion.clone().setFromAxisAngle(splats.position.clone().set(0, 1, 0), .25);
-        splats.quaternion.premultiply(yaw); splats.updateMatrixWorld(true);
-        wallBlocker.startGameplay(); wallBlocker.turnCompleted(); t.wallUpdate(0); t.wallUpdate(2);
-        t.ensure(wallBlocker.snapshot().motion === 'entering', 'Oblique wall did not enter.');
-        for (let i = 0; i < 5; i++) {
-          t.wallUpdate(.25); t.near(wallBlocker.snapshot().positionWorld[2], -8, 'Oblique entry crossed the hard start limit');
+      t.ensure(mesh.material === saved.material && mesh.geometry === saved.geometry && splats.viewer.sortWorker === saved.worker, 'Gameplay rebuilt shared resources');
+      // The manual route has identical unseen appearance and no watched intro.
+      t.resetAssertions(); t.look(true); document.getElementById('experience-show-wall').click();
+      t.ensure(!wall.snapshot().visible && wall.snapshot().gameplayCue === 'waitingLookAway', 'Manual Show bypassed unseen appearance');
+      t.look(false); t.advance(.05); t.ensure(wall.snapshot().visible && wall.snapshot().offset === 0, 'Manual Show did not use the instant shared path');
+      t.advance(12); t.near(wall.snapshot().baseWorld[2], end, 'Manual route differs from preview endpoint');
+      const passageHole = floorHole.snapshot();
+      t.ensure(passageHole.open && wall.snapshot().arrival.phase === 'idle', 'The hole must exist before the player passes through.');
+      t.near(passageHole.endZ, end - 1, 'Passage opening must already be1m beyond the wall');
+      // positionWorld follows the actual frozen route directly; baseWorld has
+      // an extra raw-scan round trip that can differ by a floating-point ulp.
+      const passWall = wall.snapshot().positionWorld, passWallZ = passWall[2], passHeight = passWall[1] + 1.3;
+      t.player(passWall[0], passWallZ + 1.2, false, passHeight); t.advance(.05);
+      let crossingPlayerZ = null, coincidentCentreObserved = false;
+      for (const offset of [1, .8, .6, .4, .2, 0, -.2, -.4, -.6, -.8, -1]) {
+        const z = passWallZ + offset;
+        t.player(passWall[0], z, false, passHeight);
+        if (offset === 0) {
+          // Keep the physical sample exactly coincident while retaining the
+          // finite head orientation from the preceding small physical step.
+          camera.position.set(passWall[0], passHeight, passWallZ); camera.updateMatrixWorld(true); t.saved.experienceUpdate(0);
         }
-        wallBlocker.hide();
-        for (let i = 0; i < 4; i++) {
-          t.wallUpdate(.25); t.near(wallBlocker.snapshot().positionWorld[2], -8, 'Oblique exit retreated behind the start');
+        t.advance(.05);
+        if (offset === 0) {
+          t.ensure(wall.snapshot().gaze.looking === null, `Coincident wall-centre gaze must be geometrically undefined: ${JSON.stringify({
+            camera: camera.position.toArray(), routePosition: passWall, actualPosition: wall.snapshot().positionWorld, gaze: wall.snapshot().gaze,
+          })}`);
+          t.ensure(camera.position.x === passWall[0] && camera.position.y === passHeight && camera.position.z === passWallZ,
+            'The current native desktop player sample missed the exact wall centre');
+          coincidentCentreObserved = true;
         }
-      } finally {
-        wallBlocker.reset(); splats.position.copy(rootPosition); splats.quaternion.copy(rootRotation); splats.updateMatrixWorld(true);
+        if (wall.snapshot().arrival.phase === 'glitching') { crossingPlayerZ = z; break; }
       }
-      wallBlocker.useFittedPosition();
-      return { resumedZ, finalZ: final.positionWorld[2], originalSpeed: final.approach.speed,
-        fixedBoxUnchanged: true, resourcesReused: true, occupiedEntryWaits: true,
-        recoveryCancelsPendingAndVisible: true, stopCancelsPending: true, obliqueSideSlidesHoldWorldZ: true,
-        fixedWidthAndHeading: true, noSectionQueriesAfterReveal: true, desktopButtonMatchesPreview: true };
+      t.ensure(crossingPlayerZ !== null, 'Walking through both wall faces did not start the glitch');
+      t.ensure(coincidentCentreObserved, 'Passage did not include the exact centre sample');
+      t.ensure(floorHole.snapshot().open, 'Passing through closed the prepared hole');
+      t.near(floorHole.snapshot().endZ, end - 1, 'Passing through relocated the wall-relative hole');
+      t.ensure(JSON.stringify(floorHole.snapshot().worldCorners) === JSON.stringify(passageHole.worldCorners),
+        'Player passage must not move the captured opening');
+      const passPose = wall.snapshot().baseWorld;
+      t.advance(.6); t.ensure(!wall.snapshot().visible, 'Passage glitch did not hide the wall');
+      wall.snapshot().baseWorld.forEach((v, i) => t.near(v, passPose[i], 'Passage glitch moved/retreated the wall'));
+      experience.prepareForCalibration(); t.resetAssertions();
+      t.player(t.centerX, -8, false); wall.show(); t.advance(.1);
+      t.ensure(!wall.snapshot().visible && wall.snapshot().gameplayCue === 'waitingPlayer', 'Instant appearance crossed an occupied player');
+      const queries = wall.snapshot().alignmentQueries; t.advance(2); t.near(wall.snapshot().alignmentQueries, queries, 'Occupied reveal refitted');
+      t.player(t.centerX, 5, false); t.advance(.05); t.ensure(wall.snapshot().visible, 'Clear unseen entry failed to resume');
+      experience.prepareForCalibration(); t.advance(2); t.ensure(!wall.snapshot().visible && !wall.snapshot().approach.active, 'Recovery revived wall motion');
+      wall.startGameplay(); wall.turnCompleted(); t.advance(5);
+      t.ensure(!wall.snapshot().visible && wall.snapshot().gameplayCue === 'waitingSecondBox', 'Turn callback revived the obsolete timed reveal');
+      wall.triggerSecondBox(); wall.stopTravel(); t.advance(2);
+      t.ensure(!wall.snapshot().visible && wall.snapshot().gameplayCue === null, 'Stop revived an armed hidden wall');
+      return { finalZ: end, gazeSeconds: 5, continuousDwellRequired: true, playerPassageGlitches: true,
+        passagePlayerZ: crossingPlayerZ, passageHoleEdge: passageHole.endZ, gazeHoleEdge: gazeHole.endZ,
+        holePreparedBeforePassage: true, holeConcealedBeforeGlitch: true, passageNeverRelocatesHole: true,
+        exactCentrePassage: coincidentCentreObserved,
+        fixedBoxUnchanged: true, resourcesReused: true, frozenRoute: true, noRetreat: true,
+        manualPreviewParity: true, occupiedEntryWaits: true, stopRecoveryCancel: true };
     });
-    assert.equal(finished.finalZ, -2);
-    return { ...paused, ...finished };
+    assert.equal(finished.gazeSeconds, 5);
+    return { ...waiting, ...finished };
   } finally {
     await page.evaluate(() => {
-      const t = window.__wallGameplay;
-      if (!t) return;
-      const { experience, wallBlocker, camera, controls } = window.__debug;
-      experience.update = t.experienceUpdate; wallBlocker.update = t.wallUpdate;
-      camera.position.set(...t.savedCamera); controls.target.set(...t.savedTarget); controls.update(); controls.enableDamping = t.damping;
-      delete window.__wallGameplay;
+      const t = window.__wallGameplay; if (!t) return;
+      const { experience, wallBlocker: wall, camera, controls } = window.__debug;
+      experience.prepareForCalibration(); experience.update = t.saved.experienceUpdate; wall.update = t.saved.wallUpdate;
+      experience.gameplayAudio.speech=t.saved.speech;
+      camera.position.fromArray(t.saved.camera); controls.target.fromArray(t.saved.target); controls.update(); controls.enableDamping = t.saved.damping;
+      wall.useFittedPosition(); delete window.__wallGameplay;
     });
   }
 }

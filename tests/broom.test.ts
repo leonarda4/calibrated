@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Group, Matrix4, Quaternion, Scene, Vector3 } from 'three';
+import { Group, Matrix4, MeshBasicMaterial, Quaternion, Scene, ShaderMaterial, Vector3 } from 'three';
 import type { DropInViewer } from '@mkkellogg/gaussian-splats-3d';
 import { createBroom } from '../src/viewer/broom.ts';
 import { BROOM } from '../src/viewer/broomConfig.ts';
@@ -8,7 +8,9 @@ import { BROOM } from '../src/viewer/broomConfig.ts';
 function fixture() {
   const scene = new Scene(), scan = new Group(), rawObject = new Group();
   Object.assign(rawObject, { updateTransform() { rawObject.updateMatrix(); } });
-  Object.assign(scan, { getSceneCount: () => 3, getSplatScene: () => rawObject });
+  // Transform-only double; browser checks compile/render the full pinned shader.
+  const material = new ShaderMaterial({ vertexShader: 'void main () { gl_Position = quadPos; }', fragmentShader: 'void main () {}' });
+  Object.assign(scan, { getSceneCount: () => 3, getSplatScene: () => rawObject, viewer: { splatMesh: { material } } });
   scene.add(scan);
   scan.rotation.x = Math.PI / 2; scan.updateMatrixWorld(true);
   const points: number[] = [];
@@ -60,6 +62,18 @@ test('broom respects calibration gates, rejects changed scale, and fails hidden'
   broom.loadingFailed(new Error('Asset unavailable.'));
   assert.equal(broom.snapshot().phase, 'error'); assert.equal(rawObject.visible, false);
   assert.equal(broom.show(), false);
+});
+
+test('Reset during loading tolerates the renderer placeholder material before glitch uniforms exist', () => {
+  const { scan, broom, rawObject } = fixture();
+  const placeholder = new MeshBasicMaterial();
+  Object.assign(scan, { viewer: { splatMesh: { material: placeholder } } });
+  assert.doesNotThrow(() => broom.reset());
+  assert.equal(rawObject.visible, false);
+  assert.equal(broom.snapshot().phase, 'loading');
+  assert.doesNotThrow(() => broom.loadingFailed(new Error('Interrupted load.')));
+  assert.equal(broom.snapshot().visible, false);
+  placeholder.dispose();
 });
 
 test('broom projects a calibrated sideways correction onto its unchanged world-Z station', () => {

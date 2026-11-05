@@ -1,4 +1,4 @@
-import { VOICE_CUES, voiceClipPath, type VoiceCue } from './voiceCues.ts';
+import { VOICE_CUES, voiceClipPath, type VoiceCue, type VoiceRole } from './voiceCues.ts';
 
 export interface VoiceGuideOptions {
   onCaption?: (caption: string) => void;
@@ -6,6 +6,8 @@ export interface VoiceGuideOptions {
 }
 
 interface PlayingLayer {
+  cue: VoiceCue;
+  role: VoiceRole;
   source: AudioBufferSourceNode;
   gain: GainNode;
   pan: StereoPannerNode;
@@ -17,6 +19,7 @@ export function createVoiceGuide(options: VoiceGuideOptions = {}) {
   let master: GainNode | null = null;
   let muted = false;
   let disposed = false;
+  let unlocked = false;
   let generation = 0;
   const playing = new Set<PlayingLayer>();
   const buffers = new Map<string, Promise<AudioBuffer | null>>();
@@ -45,13 +48,19 @@ export function createVoiceGuide(options: VoiceGuideOptions = {}) {
     if (!audio) return Promise.resolve(null);
     const controller = new AbortController();
     pending.add(controller);
-    const result = fetch(path, { signal: controller.signal })
+    const result: Promise<AudioBuffer | null> = fetch(path, { signal: controller.signal })
       .then(async (response) => {
         // Vite's SPA fallback can return index.html for a missing MP3.
         if (!response.ok || !response.headers.get('content-type')?.startsWith('audio/')) return null;
         return await audio.decodeAudioData(await response.arrayBuffer());
       })
       .catch(() => null)
+      .then(buffer => {
+        // A transient fetch/decode failure must not silence every later game.
+        // Retain successful buffers, and never evict a newer request's entry.
+        if (!buffer && buffers.get(path) === result) buffers.delete(path);
+        return buffer;
+      })
       .finally(() => pending.delete(controller));
     buffers.set(path, result);
     return result;
@@ -70,6 +79,17 @@ export function createVoiceGuide(options: VoiceGuideOptions = {}) {
     options.onCaption?.('');
   };
 
+  const resumeAuthorized = async (audio: AudioContext): Promise<boolean> => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        audio.resume().then(() => audio.state === 'running'),
+        new Promise<boolean>(resolve => { timeout = setTimeout(() => resolve(false), 500); }),
+      ]);
+    } catch { return false; }
+    finally { if (timeout !== undefined) clearTimeout(timeout); }
+  };
+
   return {
     /** Call directly from an operator click, before awaiting any other work. */
     async unlock(): Promise<boolean> {
@@ -77,7 +97,9 @@ export function createVoiceGuide(options: VoiceGuideOptions = {}) {
       if (!audio) return false;
       try {
         await audio.resume();
+        if (disposed) return false;
         const ready = audio.state === 'running';
+        if (ready) unlocked = true;
         status(ready ? (muted ? 'Audio ready; muted.' : 'Audio ready. Local clips only.') : 'Click ENABLE VOICES to allow audio.');
         return ready;
       } catch {
@@ -96,6 +118,9 @@ export function createVoiceGuide(options: VoiceGuideOptions = {}) {
     },
     async play(cue: VoiceCue): Promise<void> {
       stop();
+      // Capture before resuming or loading: recovery/new cues invalidate this
+      // exact request, even when a shared resume resolves for several callers.
+      const token = generation;
       if (disposed) return;
       const definition = VOICE_CUES[cue];
       options.onCaption?.(definition.caption);
@@ -103,10 +128,13 @@ export function createVoiceGuide(options: VoiceGuideOptions = {}) {
       const audio = getContext();
       if (!audio) return;
       if (audio.state !== 'running') {
-        status('Click ENABLE VOICES to allow audio.');
-        return;
+        // Initial permission still requires an explicit operator gesture.
+        // A context already enabled by that gesture can recover suspension.
+        if (!unlocked) { status('Click ENABLE VOICES to allow audio.'); return; }
+        const ready = await resumeAuthorized(audio);
+        if (disposed || muted || token !== generation) return;
+        if (!ready) { status('Click ENABLE VOICES to allow audio.'); return; }
       }
-      const token = generation;
       const loaded = await Promise.all(definition.layers.map((layer) => load(voiceClipPath(cue, layer.role))));
       if (disposed || muted || token !== generation) return;
       // Preserve the instruction: skip whisper-only playback if lead is absent.
@@ -131,7 +159,7 @@ export function createVoiceGuide(options: VoiceGuideOptions = {}) {
         gain.gain.value = layer.gain;
         pan.pan.value = layer.pan;
         source.connect(gain).connect(pan).connect(master!);
-        const active: PlayingLayer = { source, gain, pan };
+        const active: PlayingLayer = { cue, role: layer.role, source, gain, pan };
         playing.add(active);
         source.onended = () => {
           playing.delete(active);
@@ -141,6 +169,12 @@ export function createVoiceGuide(options: VoiceGuideOptions = {}) {
       });
       status(definition.layers.length === 1 ? 'Narration playing.'
         : loaded.every(Boolean) ? 'Voices playing: lead + layered whispers.' : 'Lead playing; some whisper clips are missing.');
+    },
+    /** Only a scheduled/playing lead can delay a live action; loading cannot. */
+    isCuePlaying(cue: VoiceCue): boolean {
+      if (disposed || muted || context?.state !== 'running') return false;
+      for (const layer of playing) if (layer.cue === cue && layer.role === 'lead') return true;
+      return false;
     },
     stop,
     setMuted(value: boolean): void {

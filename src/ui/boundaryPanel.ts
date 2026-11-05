@@ -21,6 +21,7 @@ export function bindBoundaryPanel(initial: ManualRectangleConfig, callbacks: {
   panel.innerHTML = `
     <summary style="cursor:pointer;font-weight:600">Movement boundaries</summary>
     <p id="movement-boundary-status" aria-live="polite"></p>
+    <p id="movement-boundary-voice-status" aria-live="polite">Boundary voice: waiting for live headset outline.</p>
     <canvas id="movement-boundary-map" width="480" height="320" aria-label="Top view of headset boundary and manual movement area" style="width:100%;height:160px;border:1px solid #344453;border-radius:4px"></canvas>
     <p style="margin:5px 0"><span style="color:#63dce9">Cyan: headset</span> · <span style="color:#ffc46c">Amber: manual</span><br>White dot: head · grey square: box</p>
     <label style="display:block"><input id="movement-runtime-visible" type="checkbox" checked> Show headset outline</label>
@@ -30,7 +31,7 @@ export function bindBoundaryPanel(initial: ManualRectangleConfig, callbacks: {
       <div id="movement-manual-fields"></div>
       <button id="movement-manual-apply" type="button">Apply manual area</button>
     </details>
-    <p style="color:#9daebb;margin-bottom:0">Desktop reference only. Headset system boundaries stay enabled.</p>
+    <p style="color:#9daebb;margin-bottom:0">Map is an operator reference. Voice uses live headset bounds only. System boundaries stay enabled.</p>
     <p id="movement-boundary-error" role="alert" style="color:#ffaab2;margin-bottom:0"></p>`;
   document.body.appendChild(panel);
   const find = <T extends HTMLElement>(id: string) => panel.querySelector<T>(`#${id}`)!;
@@ -65,6 +66,7 @@ export function bindBoundaryPanel(initial: ManualRectangleConfig, callbacks: {
   const canvas = find<HTMLCanvasElement>('movement-boundary-map');
   const context = canvas.getContext('2d')!;
   return {
+    setVoiceStatus(text: string) { find('movement-boundary-voice-status').textContent = text; },
     setManual(config: ManualRectangleConfig, visible: boolean) {
       manualVisible.checked = visible;
       for (const [key, input] of fields) input.value = String(config[key]);

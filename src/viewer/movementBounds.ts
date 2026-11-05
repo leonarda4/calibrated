@@ -2,9 +2,10 @@ import * as THREE from 'three';
 import type { Point3 } from '../boundary/geometry.ts';
 
 /** Operator diagnostics remain outside the scan and never enter the headset. */
-export function createMovementBounds(scene: THREE.Scene) {
+export function createMovementBounds(scene: THREE.Scene, showWorldGuides = false) {
   const root = new THREE.Group();
   root.name = 'desktop-movement-boundaries';
+  root.visible = false;
   scene.add(root);
   const makeLine = (name: string, color: number) => {
     const line = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({
@@ -40,7 +41,7 @@ export function createMovementBounds(scene: THREE.Scene) {
     update(runtimePoints: readonly Point3[], manualPoints: readonly Point3[], presenting: boolean) {
       updateLine(headset, runtimePoints);
       updateLine(manual, manualPoints);
-      root.visible = !presenting;
+      root.visible = showWorldGuides && !presenting;
     },
     dispose() {
       scene.remove(root);

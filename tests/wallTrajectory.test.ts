@@ -2,16 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Euler, Group } from 'three';
 import { createHallwaySections } from '../src/experience/hallwaySection.ts';
+import { measureWallDistances } from '../src/experience/hallwayCenter.ts';
 import { lockWallTrajectory } from '../src/viewer/wallTrajectory.ts';
 
-function sections() {
+function sections(curve = 0) {
   const points: number[] = [];
-  for (let z = -10; z <= .01; z += .05) for (let y = .45; y <= 1.751; y += .1) {
-    points.push(-1.05 + .035 * z, z, y, 1.05 + .015 * z, z, y);
+  for (let z = -10; z <= 2.01; z += .05) for (let y = .45; y <= 1.751; y += .1) {
+    points.push(-1.05 + .035 * z + curve * z * z, z, y, 1.05 + .015 * z + curve * z * z, z, y);
   }
   const root = new Group(); root.quaternion.setFromEuler(new Euler(Math.PI / 2, Math.PI, 0)); root.updateMatrixWorld(true);
   const source = new Float32Array(points), helper = createHallwaySections({ scanRoot: root, getCenters: () => source });
-  return [-8, -6.5, -5, -3.5, -2].map(z => {
+  return [-8, -6, -4, -2, 0].map(z => {
     const fit = helper.at(z); if (!fit.ok) assert.fail(fit.reason); return fit;
   });
 }
@@ -20,6 +21,10 @@ test('one fixed straight trajectory and constant full-depth width cover the samp
   const fits = sections(), route = lockWallTrajectory(fits, .5);
   assert.ok(Object.isFrozen(route) && Object.isFrozen(route.normal));
   assert.ok(Math.abs(route.slope) > .015, 'Fixture must exercise lateral trajectory movement.');
+  const endpoint = fits[fits.length - 1];
+  assert.equal(route.xAt(0), endpoint.centerWorld[0]);
+  const distances = measureWallDistances(endpoint.wallPlanes, [route.xAt(0), 0, 0]);
+  assert.ok(distances.imbalance < 1e-12, 'Final wall must be centred between independently fitted planes.');
   for (const fit of fits) {
     const z = fit.centerWorld[2], x = route.xAt(z);
     for (const wall of Object.values(fit.wallPlanes)) {
@@ -49,4 +54,19 @@ test('a frozen trajectory rejects missing or degenerate support', () => {
   assert.throws(() => lockWallTrajectory([], .5));
   assert.throws(() => lockWallTrajectory([fits[0], fits[0]], .5));
   assert.throws(() => lockWallTrajectory(fits, 0));
+});
+
+test('nonlinear hallway samples keep the new final station exactly centred without realignment', () => {
+  const fits = sections(.004), route = lockWallTrajectory(fits, .5), end = fits[fits.length - 1];
+  const meanX = fits.reduce((sum, fit) => sum + fit.centerWorld[0], 0) / fits.length;
+  const meanZ = fits.reduce((sum, fit) => sum + fit.centerWorld[2], 0) / fits.length;
+  const slope = fits.reduce((sum, fit) => sum + (fit.centerWorld[0] - meanX) * (fit.centerWorld[2] - meanZ), 0) /
+    fits.reduce((sum, fit) => sum + (fit.centerWorld[2] - meanZ) ** 2, 0);
+  assert.ok(Math.abs(meanX + slope * (end.centerWorld[2] - meanZ) - end.centerWorld[0]) > .005,
+    'Fixture must expose the old unconstrained endpoint offset.');
+  assert.equal(route.xAt(end.centerWorld[2]), end.centerWorld[0]);
+  assert.ok(measureWallDistances(end.wallPlanes, [route.xAt(0), 0, 0]).imbalance < 1e-12);
+  const before = route.xAt(0);
+  (end.centerWorld as unknown as number[])[0] += 1;
+  assert.equal(route.xAt(0), before, 'A later fit mutation changed the frozen endpoint.');
 });

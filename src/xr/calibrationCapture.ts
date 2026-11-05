@@ -61,6 +61,8 @@ export type LandmarkPickCallback = (which: 'A' | 'B', point: Vec3) => void;
 export interface CalibrationCaptureOptions {
   /** Explicit scan annotation metadata; never measured poses or fit acceptance. */
   landmarks?: ScanLandmarkPair | null;
+  /** Optional desktop annotation/fit witnesses; never participant-world overlays. */
+  showWorldGuides?: boolean;
 }
 
 export function setupCalibrationCapture(
@@ -198,8 +200,9 @@ export function setupCalibrationCapture(
   physA.visible = physB.visible = false;
   markerA.position.copy(activeA);
   markerB.position.copy(activeB);
-  markerA.visible = hasScanA;
-  markerB.visible = hasScanB;
+  const showLandmarkGuides = () => options.showWorldGuides === true && !renderer.xr.isPresenting;
+  markerA.visible = showLandmarkGuides() && hasScanA;
+  markerB.visible = showLandmarkGuides() && hasScanB;
   // scan markers live inside the splats group; measured markers in world space
   splats.add(markerA, markerB);
   scene.add(physA, physB);
@@ -426,8 +429,8 @@ export function setupCalibrationCapture(
 
     physA.position.copy(leftPos);
     physB.position.copy(rightPos);
-    physA.visible = physB.visible = true;
-    markerA.visible = markerB.visible = true; // verification: on the remotes
+    physA.visible = physB.visible = showLandmarkGuides();
+    markerA.visible = markerB.visible = showLandmarkGuides();
 
     const a = (solution.residuals[0] * 100).toFixed(1);
     const b = (solution.residuals[1] * 100).toFixed(1);
@@ -499,6 +502,8 @@ export function setupCalibrationCapture(
       lastRemotePos.left = lastRemotePos.right = null;
       onStatus?.(`landmark edit ON — previous pair cleared\nClick the scan: 1st click = A, 2nd = B\nBoth picks required; auto-off after B`);
     } else {
+      markerA.visible = showLandmarkGuides() && hasScanA;
+      markerB.visible = showLandmarkGuides() && hasScanB;
       onStatus?.('landmark edit OFF\nIdle clicks do not modify A/B');
     }
   };

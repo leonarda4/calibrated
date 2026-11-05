@@ -1,6 +1,7 @@
 // Bounded desktop evidence. This never starts or emulates an immersive session.
 import fs from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
+import { createServer as createPortProbe } from 'node:net';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -13,6 +14,10 @@ import { WALL_SECTION } from '../src/viewer/wallSectionConfig.ts';
 import { scanOriginForStart } from '../src/viewer/scanPlacement.ts';
 import { BROOM } from '../src/viewer/broomConfig.ts';
 import { runBroomScenario } from '../tests/browser/broomScenario.mjs';
+import { runBroomEncounterScenario } from '../tests/browser/broomEncounterScenario.mjs';
+import { runHallwayCollapseScenario } from '../tests/browser/hallwayCollapseScenario.mjs';
+import { runRealityEndingScenario } from '../tests/browser/realityEndingScenario.mjs';
+import { runFractureRumbleScenario } from '../tests/browser/fractureRumbleScenario.mjs';
 import { runLightingScenario } from '../tests/browser/lightingScenario.mjs';
 import { runSecondBoxLightsScenario } from '../tests/browser/secondBoxLightsScenario.mjs';
 import { runFloorHoleScenario, capturePrivateFloorHole } from '../tests/browser/floorHoleScenario.mjs';
@@ -21,8 +26,21 @@ import { runWoodenBoxScenario } from '../tests/browser/woodenBoxScenario.mjs';
 import { captureWallFaces } from '../tests/browser/wallFacesScenario.mjs';
 import { runWallGameplayScenario } from '../tests/browser/wallGameplayScenario.mjs';
 import { runWallRouteFrameScenario } from '../tests/browser/wallRouteFrameScenario.mjs';
+import { runWallMovementScenario } from '../tests/browser/wallMovementScenario.mjs';
+import { runWallRevealScenario, capturePrivateWallReveal } from '../tests/browser/wallRevealScenario.mjs';
+import { runGameRestartScenario } from '../tests/browser/gameRestartScenario.mjs';
+import { runGameplayAudioScenario } from '../tests/browser/gameplayAudioScenario.mjs';
+import { runBoundaryVoiceScenario } from '../tests/browser/boundaryVoiceScenario.mjs';
+import { runGameplayTriggerScenario } from '../tests/browser/gameplayTriggerScenario.mjs';
 import { runRotationOffsetScenario } from '../tests/browser/rotationOffsetScenario.mjs';
 import { runSpawnPanelScenario } from '../tests/browser/spawnPanelScenario.mjs';
+import { HALLWAY_CUT } from '../src/viewer/hallwayCutPlacement.ts';
+import { hallwayCutMetadata, hallwayCutPoints } from '../tests/fixtures/hallwayCutFixture.mjs';
+import { runHallwayCutScenario } from '../tests/browser/hallwayCutScenario.mjs';
+import { runHoleWorldTurnScenario } from '../tests/browser/holeWorldTurnScenario.mjs';
+import { runOpaqueFrameScenario } from '../tests/browser/opaqueFrameScenario.mjs';
+import { runVolumeFogScenario, runPrivateFogScenario } from '../tests/browser/volumeFogScenario.mjs';
+import { runRoomMistScenario } from '../tests/browser/roomMistScenario.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const reportName = process.env.CHECK_REPORT_NAME ?? '';
@@ -32,7 +50,18 @@ await fs.mkdir(output, { recursive: true });
 // CHECK_WALL_ONLY=1 runs source/wall checks; CHECK_REAL_SCAN=1 adds the private wall image.
 const wallOnly = process.env.CHECK_WALL_ONLY === '1';
 const startPanelOnly = process.env.CHECK_START_PANEL_ONLY === '1';
-const report = { date: new Date().toISOString(), environment: `${startPanelOnly ? 'Focused start-panel checks; ' : wallOnly ? 'Focused wall checks; ' : ''}Desktop Chrome; synthetic public corridor; no XR/hardware acceptance`, checks: [], consoleErrors: [], passed: false };
+const fogOnly = process.env.CHECK_FOG_ONLY === '1';
+const endingOnly = process.env.CHECK_ENDING_ONLY === '1';
+const realMain = process.env.CHECK_REAL_MAIN === '1';
+if(realMain&&!endingOnly)throw Error('CHECK_REAL_MAIN is supported only with CHECK_ENDING_ONLY=1.');
+const collapseOnly = process.env.CHECK_COLLAPSE_ONLY === '1' || endingOnly;
+const broomAudioOnly = process.env.CHECK_BROOM_AUDIO_ONLY === '1';
+const boundaryVoiceOnly = process.env.CHECK_BOUNDARY_VOICE_ONLY === '1';
+const audioOnly = process.env.CHECK_AUDIO_ONLY === '1';
+const cutOnly = process.env.CHECK_HALLWAY_CUT_ONLY === '1' || collapseOnly || broomAudioOnly;
+const privateCut = process.env.CHECK_REAL_CUT === '1';
+const desktopGpu = process.env.CHECK_DESKTOP_GPU === '1';
+const report = { date: new Date().toISOString(), environment: `${boundaryVoiceOnly ? 'Focused headset boundary voice checks; ' : broomAudioOnly ? 'Focused broom/tilt audio checks; ' : cutOnly ? 'Focused hallway-cutout checks; ' : startPanelOnly ? 'Focused start-panel checks; ' : wallOnly ? 'Focused wall checks; ' : ''}Desktop Chrome; ${realMain?'private original corridor':'synthetic public corridor'}${privateCut ? ' with private cutout' : ''}; ${desktopGpu ? 'desktop D3D11 requested' : 'SwiftShader'}; no XR/hardware acceptance`, checks: [], consoleErrors: [], passed: false };
 let server;
 let browser;
 let page;
@@ -40,6 +69,17 @@ let releaseModel;
 let releaseWall;
 let releaseBroom;
 let releaseBox;
+const corePixelFogIsolations = [];
+/** Geometry/light pixel probes remain separate from the dedicated fog checks. */
+async function isolateCorePixels(targetPage) {
+  const visible = await targetPage.evaluate(() => {
+    const {hallwayFog:fog,hallwayMist:mist}=window.__debug;
+    const visible={fog:fog.snapshot().visibleRequested,mist:mist.snapshot().visibleRequested};
+    fog.setVisible(false);mist.setVisible(false);return visible;
+  });
+  corePixelFogIsolations.push({ targetPage, visible });
+  report.corePixelFogIsolation = 'Fog/mist hidden only in legacy geometry/light captures; dedicated atmosphere scenarios retain the supplied effects.';
+}
 const check = async (name, action) => {
   const details = await action();
   report.checks.push({ name, passed: true, ...(details === undefined ? {} : { details }) });
@@ -114,7 +154,7 @@ function corridorPly() {
     points.push([...raw.toArray(), ...color]);
   };
   // Include the fitting windows for -8 m before and after the pivoted turn.
-  for (let z = -10; z <= 16; z += 0.12) {
+  for (let z = -24; z <= 24; z += 0.12) {
     for (let y = 0; y <= 2.5; y += 0.12) {
       const stripe = Math.floor((z + 10) / 1.5) % 2;
       add(-1.05, y, z, stripe ? [0.56, 0.67, 0.72] : [0.38, 0.48, 0.55]);
@@ -176,11 +216,19 @@ async function sha256File(file) {
 }
 
 try {
+  // Pinned Vite interprets port 0 as 5173. Ask the OS for a free nonzero
+  // port first so a blocked/default user port cannot prevent isolated checks.
+  const portProbe = createPortProbe();
+  const checkPort = await new Promise((resolve, reject) => {
+    portProbe.once('error', reject);
+    portProbe.listen(0, '127.0.0.1', () => resolve(portProbe.address().port));
+  });
+  await new Promise((resolve, reject) => portProbe.close(error => error ? reject(error) : resolve()));
   // IDE edits must not reload this isolated browser part-way through a check.
   // Keep test-only watch:null out of the development config's watch-object
   // merge, which can re-enable watching locked generated scan binaries.
   server = await createServer({ configFile: false, root,
-    server: { host: '127.0.0.1', port: 0, strictPort: false, watch: null, hmr: false } });
+    server: { host: '127.0.0.1', port: checkPort, strictPort: false, watch: null, hmr: false } });
   await server.listen();
   const address = server.httpServer.address();
   assert.ok(address && typeof address !== 'string', 'The isolated check server did not bind a TCP port.');
@@ -190,7 +238,7 @@ try {
   // Chromium's explicit no-runtime selector also covers xrCompatible WebGL.
   const noHardwareXr = '--force-webxr-runtime=no-xr-runtime';
   browser = await chromium.launch({ channel: 'chrome', headless: true,
-    args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--enable-automation', '--mute-audio', noHardwareXr] });
+    args: [desktopGpu ? '--use-angle=d3d11' : '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--enable-automation', '--mute-audio', noHardwareXr] });
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   // Applied before application scripts on every page/navigation. Detached
   // regression factories may replace this with their own fake XRSystem.
@@ -218,9 +266,14 @@ try {
       syntheticXrOnly: true, applicationBrowserChanged: false };
   });
   const modelGate = new Promise(resolve => { releaseModel = resolve; });
+  if(realMain){
+    const sourcePath=path.join(root,'public',ACTIVE_SCAN.plyUrl.slice(1)),metadata=await fs.stat(sourcePath);
+    report.privateOriginal={asset:ACTIVE_SCAN.plyUrl,bytes:metadata.size,sha256:await sha256File(sourcePath),transport:'Local Vite stream after the startup gate'};
+  }
   await page.route('**/splats/hallway3/*.ply', async route => {
     await modelGate;
-    await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: corridorPly() });
+    if(realMain)await route.continue();
+    else await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: corridorPly() });
   });
   let wallRequests = 0;
   const wallGate = new Promise(resolve => { releaseWall = resolve; });
@@ -244,6 +297,10 @@ try {
     await boxGate;
     await route.fulfill({ status: 200, contentType: 'application/octet-stream', body: boxData });
   });
+  const cutMetadata = privateCut ? JSON.parse(await fs.readFile(path.join(root,'public',HALLWAY_CUT.metadataUrl.slice(1)),'utf8')) : hallwayCutMetadata;
+  const cutData = privateCut ? await fs.readFile(path.join(root,'public',HALLWAY_CUT.modelUrl.slice(1))) : pointsPly(hallwayCutPoints(),.07);
+  await page.route(`**${HALLWAY_CUT.metadataUrl}`, route => route.fulfill({ json: cutMetadata }));
+  await page.route(`**${HALLWAY_CUT.modelUrl}`, route => route.fulfill({ status: 200, contentType: 'application/octet-stream', body: cutData }));
   // Missing clips report on the PC; they must never create headset captions.
   await page.route('**/audio/generated/*.mp3', route => route.fulfill({ status: 200, contentType: 'text/html', body: '<html>clips not generated</html>' }));
   const startupWallRequest = page.waitForRequest('**/splats/wall-section/wall-section.ply');
@@ -252,6 +309,8 @@ try {
   await page.waitForFunction(() => !!window.__debug);
   await startupWallRequest;
   await startupBroomRequest;
+  await check('loading clears an opaque white frame instead of exposing the XR environment',
+    () => runOpaqueFrameScenario(page, output));
   // The public fixture uses a known corridor view for pointer/prop checks.
   // The separate actual-asset smoke below retains the production overview.
   await page.evaluate(() => {
@@ -295,7 +354,7 @@ try {
     releaseBroom();
     assert.equal(await page.evaluate(() => window.__debug.splats.getSceneCount()), 0);
     releaseBox();
-    await page.waitForFunction(() => document.getElementById('status')?.textContent?.includes('loaded'));
+    await page.waitForFunction(() => document.getElementById('status')?.textContent?.includes('loaded'),undefined,{timeout:realMain?180000:15000});
     return await page.evaluate(() => {
       const { splats, wallBlocker } = window.__debug;
       const state = wallBlocker.snapshot();
@@ -309,22 +368,25 @@ try {
       return { ...state, sceneCount: splats.getSceneCount(), preparedBeforeReady: true };
     });
   });
-  await page.waitForFunction(() => document.getElementById('status')?.textContent?.includes('loaded'));
+  await page.waitForFunction(() => document.getElementById('status')?.textContent?.includes('loaded'),undefined,{timeout:realMain?180000:15000});
   await page.waitForTimeout(1000); // allow the asynchronous splat sort to present
-  await page.screenshot({ path: path.join(output, 'loaded.png'), fullPage: true });
-  await check('10 cm flipped-hallway draft preserves the original alignment before the turn', async () => {
+  await page.screenshot({ path: path.join(output, 'loaded.png'), fullPage: true, timeout: privateCut||realMain ? 60000 : 15000 });
+  // Focused cutout/prop captures isolate fog from the first loaded-frame probe.
+  // The default suite retains its actual-scene opacity and dedicated fog checks.
+  if (cutOnly) await isolateCorePixels(page);
+  await check('splat edges and calibration fades remain opaque to the compositor in an RGBA framebuffer',
+    () => runOpaqueFrameScenario(page, output, true));
+  await check('flipped hallway defaults to zero lateral correction', async () => {
     const original = await page.evaluate(() => {
       const { splats, experience } = window.__debug;
       splats.updateMatrix();
       return { matrix: splats.matrix.toArray(), state: experience.installation.snapshot() };
     });
-    assert.equal(original.state.rotationOffsetMetres, .1);
+    assert.equal(original.state.rotationOffsetMetres, 0);
     assert.deepEqual(original.state.rotationOffsetWorld, [0, 0, 0]);
     await page.locator('#experience-flip-alignment').evaluate(element => { element.open = true; });
-    assert.equal(await page.locator('#experience-flip-offset').inputValue(), '10');
-    // The established zero-offset checks below retain their explicit baseline.
-    await page.locator('#experience-flip-offset').fill('0');
-    await page.locator('#experience-flip-apply').click();
+    assert.equal(await page.locator('#experience-flip-offset').inputValue(), '0');
+    // Continue the turn/prop checks with the actual production default.
     const after = await page.evaluate(() => {
       const { splats, experience } = window.__debug;
       splats.updateMatrix();
@@ -333,7 +395,7 @@ try {
     assert.deepEqual(after.matrix, original.matrix);
     assert.equal(after.offset, 0);
     await page.locator('#experience-flip-alignment').evaluate(element => { element.open = false; });
-    return { productionDraftMetres: .1, originalAlignmentUnchanged: true };
+    return { productionDraftMetres: 0, originalAlignmentUnchanged: true };
   });
   await check('scan preserves manual placement and loads the supplied A/B pair', async () => {
     return await page.evaluate(async () => {
@@ -371,8 +433,8 @@ try {
       const pixels = new Uint8Array(gl.drawingBufferWidth * gl.drawingBufferHeight * 4);
       gl.readPixels(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
       let lit = 0;
-      for (let i = 0; i < pixels.length; i += 16) if (pixels[i] + pixels[i + 1] + pixels[i + 2] > 30) lit++;
-      if (lit < 100) throw new Error(`Synthetic corridor canvas is blank (${lit} lit samples).`);
+      for (let i = 0; i < pixels.length; i += 16) if (765 - pixels[i] - pixels[i + 1] - pixels[i + 2] > 30) lit++;
+      if (lit < 100) throw new Error(`Synthetic corridor canvas is blank (${lit} contrasting samples).`);
       return { litSamples: lit, experienceOpacity: splats.viewer.splatMesh.material.uniforms.uGlobalOpacity.value };
     });
   });
@@ -397,7 +459,52 @@ try {
     assert.equal(wallRequests, 1);
     return { ...state, requests: wallRequests, hiddenAfterStartupReset: true };
   });
-  if (startPanelOnly) {
+  if (!audioOnly && !boundaryVoiceOnly && !cutOnly && !startPanelOnly && !wallOnly) {
+    await check('mist occupies only the added hallway alongside half-height fog and follows both turn directions',
+      () => runRoomMistScenario(page, output));
+    await check('fixed fog retains its five-metre start in the downward hallway and remains throughout turning',
+      () => runVolumeFogScenario(page, output));
+  }
+  if (!fogOnly && !cutOnly) await isolateCorePixels(page);
+  if (audioOnly) {
+    report.environment = `Focused native gameplay audio checks; ${report.environment}`;
+    await check('supplied audio preserves the bed, randomized passing walkers and all speech/effect cancellation',
+      () => runGameplayAudioScenario(page));
+  } else if (boundaryVoiceOnly) {
+    await check('live headset perimeter approach plays priority danger speech at half a metre with cooldown and recovery',
+      () => runBoundaryVoiceScenario(page, output));
+  } else if (fogOnly) {
+    if (process.env.CHECK_REAL_FOG === '1') {
+      await page.evaluate(() => window.__debug.renderer.setAnimationLoop(null));
+      await check('original cutout keeps fixed fog before, during and after the turn, with clear original hallway ends',
+        () => runPrivateFogScenario(page, output));
+    }
+  } else if (cutOnly) {
+    if (!collapseOnly) {
+    await check('hallway cutout joins all hole corners and renders only through the aperture',
+      () => runHallwayCutScenario(page, output, { privateAsset: privateCut }));
+    await check('entering the hole eases the whole world horizontal with fixed viewpoint, a level floor and recovery',
+      () => runHoleWorldTurnScenario(page, output, { privateAsset: privateCut }));
+    await check('first upright cutout turn reveals the broom once, then proximity glitches it away after two seconds',
+      () => runBroomEncounterScenario(page, output));
+    }
+    if (broomAudioOnly) {
+      await check('supplied audio decodes, queues cleaning speech and reuses tilt sources without changing the music',
+        () => runGameplayAudioScenario(page));
+      await check('supplied speech captions remain on the PC through mute, queues and recovery', async () => {
+        const { runVoiceCaptionScenario } = await import('../tests/browser/voiceCaptionScenario.mjs');
+        return await runVoiceCaptionScenario(page);
+      });
+    } else {
+    await check('each supplied fracture rumble uses one shared silent-tested audio context and cancels on recovery',
+      () => runFractureRumbleScenario(page));
+    if(endingOnly)await check('supplied final narration decodes and schedules its full duration once per game',
+      () => runGameplayAudioScenario(page));
+    await check(endingOnly?'actual physical return relights the damaged original world, glitches to opaque white and narrates once'
+      :'completed broom glitch triggers local organic fractures and preserves the return corridor',
+      () => (endingOnly?runRealityEndingScenario:runHallwayCollapseScenario)(page, output, { privateAsset: privateCut }));
+    }
+  } else if (startPanelOnly) {
     await check('raw start panel edits preserve the original view and survive later frames',
       () => runSpawnPanelScenario(page, output, 'idle'));
     await page.locator('#experience-test-scenario').uncheck();
@@ -422,138 +529,112 @@ try {
   });
   await check('operator/system lights-out darkens RGB with unchanged alpha and restores on recovery',
     () => runLightingScenario(page, output));
-  await check('floor button cuts a wall-sized void at Z3, restores pixels and closes on recovery',
+  await check('floor button cuts the relocated void behind the wall endpoint, restores pixels and closes on recovery',
     () => runFloorHoleScenario(page, output));
+  await check('hallway cutout joins the hole with floor toward the second box and a clipped downward passage',
+    () => runHallwayCutScenario(page, output));
+  await check('entering the hole eases the whole world horizontal with fixed viewpoint, a level floor and recovery',
+    () => runHoleWorldTurnScenario(page, output));
+  await check('first upright cutout turn reveals the broom once, then proximity glitches it away after two seconds',
+    () => runBroomEncounterScenario(page, output));
+  await check('each supplied fracture rumble uses one shared silent-tested audio context and cancels on recovery',
+    () => runFractureRumbleScenario(page));
+  await check('actual physical return relights the damaged original world, glitches to opaque white and narrates once',
+    () => runRealityEndingScenario(page, output));
   }
-  await check('Show and Hide slide left to right using the existing startup resources', async () => {
+  await check('wall rumble fades during its0.7s look-back movement and cancels on recovery',
+    () => runWallMovementScenario(page, output));
+  await check('Show arms an instant unseen wall and Hide preserves startup resources', async () => {
     const original = await page.evaluate(() => {
-      const { splats, camera, controls, wallBlocker } = window.__debug;
+      const { splats, camera, controls, wallBlocker, experience } = window.__debug;
+      const savedCamera = camera.position.toArray(), savedTarget = controls.target.toArray(), savedDamping = controls.enableDamping;
       window.__wallUpdate = wallBlocker.update;
-      // Keep the actual render loop running, but step wall time explicitly so
-      // screenshots and signed world positions describe the same known pose.
       wallBlocker.update = () => window.__wallUpdate(0);
-      splats.updateMatrixWorld(true);
-      return { scan: splats.matrixWorld.toArray(), camera: camera.position.toArray(), target: controls.target.toArray(),
+      controls.enableDamping = false;
+      camera.position.set(0, 1.6, 5); controls.target.set(0, 1.3, -8); controls.update();
+      camera.updateMatrixWorld(true); experience.update(0); splats.updateMatrixWorld(true);
+      return { scan: splats.matrixWorld.toArray(), camera: savedCamera, target: savedTarget, damping: savedDamping,
+        armedCamera: camera.position.toArray(), armedTarget: controls.target.toArray(),
         cameraParent: camera.parent?.uuid, scanCount: splats.viewer.getSceneCount() };
     });
     await page.locator('#experience-show-wall').click();
-    const entering = await page.evaluate(() => {
+    const armed = await page.evaluate(() => {
       const { wallBlocker, splats, camera, controls } = window.__debug;
-      return { ...wallBlocker.snapshot(), camera: camera.position.toArray(), target: controls.target.toArray(),
-        scan: splats.matrixWorld.toArray() };
+      return { ...wallBlocker.snapshot(), camera: camera.position.toArray(), target: controls.target.toArray(), scan: splats.matrixWorld.toArray() };
     });
-    assert.deepEqual(entering.camera, original.camera);
-    assert.deepEqual(entering.target, original.target);
-    assert.deepEqual(entering.scan, original.scan);
-    assert.equal(entering.motion, 'entering');
-    assert.ok(entering.offset < -WALL_SECTION.width);
-    assert.equal(await page.locator('#experience-show-wall').isDisabled(), true);
-    assert.equal(await page.evaluate(() => window.__debug.wallBlocker.toggle()), false);
-    await page.evaluate(seconds => window.__wallUpdate(seconds / 2), WALL_SECTION.slideSeconds);
-    const halfwayIn = await page.evaluate(async () => {
-      const THREE = await import('/node_modules/.vite/deps/three.js');
-      const { camera, controls, splats, wallBlocker } = window.__debug;
-      const state = wallBlocker.snapshot();
-      const base = new THREE.Vector3(...state.baseRaw).applyMatrix4(splats.matrixWorld);
-      const corridor = new THREE.Vector3(0, 1, 0).transformDirection(splats.matrixWorld);
-      camera.position.copy(base).addScaledVector(corridor, -3.8); camera.position.y = base.y + 1.5;
-      controls.target.copy(base); controls.target.y += state.height / 2; controls.update();
-      const wall = splats.getSplatScene(state.sceneIndex);
-      wall.updateWorldMatrix(true, false);
-      const right = new THREE.Vector3(1, 0, 0).transformDirection(wall.matrixWorld);
-      return { ...state, measuredOffset: wall.getWorldPosition(new THREE.Vector3()).sub(base).dot(right) };
+    assert.deepEqual(armed.camera, original.armedCamera); assert.deepEqual(armed.target, original.armedTarget); assert.deepEqual(armed.scan, original.scan);
+    assert.equal(armed.visible, false); assert.equal(armed.gameplayCue, 'waitingLookAway'); assert.equal(armed.offset, 0);
+    assert.equal(await page.locator('#experience-show-wall').isDisabled(), false);
+    await page.evaluate(() => {
+      const { camera, controls, experience } = window.__debug;
+      controls.target.set(camera.position.x, camera.position.y, camera.position.z + 5); controls.update(); camera.updateMatrixWorld(true);
+      experience.update(0); window.__wallUpdate(.05);
     });
-    assert.ok(halfwayIn.offset > entering.offset && halfwayIn.offset < 0);
-    assert.ok(Math.abs(halfwayIn.measuredOffset - halfwayIn.offset) < 1e-7);
-    await page.waitForTimeout(250);
-    await page.screenshot({ path: path.join(output, 'wall-slide-in.png'), fullPage: true });
-    await page.evaluate(seconds => window.__wallUpdate(seconds / 2), WALL_SECTION.slideSeconds);
-    assert.equal(await page.evaluate(() => window.__debug.wallBlocker.snapshot().motion), 'visible');
+    const appeared = await page.evaluate(() => window.__debug.wallBlocker.snapshot());
+    assert.equal(appeared.motion, 'visible'); assert.equal(appeared.visible, true); assert.equal(appeared.offset, 0);
     const details = await page.evaluate(async () => {
       const THREE = await import('/node_modules/.vite/deps/three.js');
       const { WALL_SECTION } = await import('/src/viewer/wallSectionConfig.ts');
       const { renderer, scene, splats, wallBlocker, camera, controls } = window.__debug;
-      const snapshot = wallBlocker.snapshot();
-      const wall = splats.getSplatScene(snapshot.sceneIndex);
+      const snapshot = wallBlocker.snapshot(), wall = splats.getSplatScene(snapshot.sceneIndex);
       wall.updateWorldMatrix(true, false);
-      const objectToWorld = wall.matrixWorld;
-      const edge = new THREE.Vector3(WALL_SECTION.width / 2, 0, 0).applyMatrix4(objectToWorld)
-        .sub(new THREE.Vector3(-WALL_SECTION.width / 2, 0, 0).applyMatrix4(objectToWorld));
-      const vertical = new THREE.Vector3(0, snapshot.height, 0).applyMatrix4(objectToWorld)
-        .sub(new THREE.Vector3().applyMatrix4(objectToWorld));
-      const corridor = new THREE.Vector3(0, 1, 0).transformDirection(splats.matrixWorld);
-      const base = new THREE.Vector3(...snapshot.baseRaw).applyMatrix4(splats.matrixWorld);
-      const unchanged = { scan: splats.matrixWorld.toArray(), camera: camera.position.toArray(), target: controls.target.toArray(),
-        cameraParent: camera.parent?.uuid, scanCount: splats.viewer.getSceneCount() };
-      // Face the panel down the corridor for readable, useful visual evidence.
-      camera.position.copy(base).addScaledVector(corridor, -3.8); camera.position.y = base.y + 1.5;
-      controls.target.copy(base); controls.target.y += snapshot.height / 2; controls.update();
-      splats.viewer.update(renderer, camera); renderer.render(scene, camera);
+      const edge = new THREE.Vector3(WALL_SECTION.width / 2, 0, 0).applyMatrix4(wall.matrixWorld)
+        .sub(new THREE.Vector3(-WALL_SECTION.width / 2, 0, 0).applyMatrix4(wall.matrixWorld));
+      const vertical = new THREE.Vector3(0, snapshot.height, 0).applyMatrix4(wall.matrixWorld)
+        .sub(new THREE.Vector3().applyMatrix4(wall.matrixWorld));
+      const base = new THREE.Vector3(...snapshot.baseWorld);
+      camera.position.copy(base).add(new THREE.Vector3(0, 1.5, 3.8));
+      controls.target.copy(base).add(new THREE.Vector3(0, snapshot.height / 2, 0)); controls.update();
+      camera.updateMatrixWorld(true); scene.updateMatrixWorld(true); splats.viewer.update(renderer, camera); renderer.render(scene, camera);
       return { ...snapshot, sceneVisible: wall.visible, metricWidth: edge.length(), metricHeight: vertical.length(),
-        transverseDot: edge.clone().normalize().dot(corridor), uprightDot: vertical.clone().normalize().y,
-        baseWorld: base.toArray(), scale: wall.scale.toArray(), unchanged };
+        transverseDot: edge.clone().normalize().z, uprightDot: vertical.clone().normalize().y, scale: wall.scale.toArray(),
+        scan: splats.matrixWorld.toArray(), cameraParent: camera.parent?.uuid, scanCount: splats.viewer.getSceneCount() };
     });
-    assert.equal(details.visible, true);
-    assert.equal(details.sceneVisible, true);
+    assert.equal(details.sceneVisible, true); assert.equal(details.offset, 0);
     assert.ok(Math.abs(details.metricWidth - details.width) < 1e-7);
     assert.ok(Math.abs(details.metricHeight - WALL_SECTION.height) < 1e-7);
-    assert.ok(Math.abs(details.transverseDot) < 1e-7);
-    assert.ok(Math.abs(details.uprightDot - 1) < 1e-7);
+    assert.ok(Math.abs(details.transverseDot) < 1e-7); assert.ok(Math.abs(details.uprightDot - 1) < 1e-7);
     assert.ok(Math.abs(details.scale[0] - details.width / WALL_SECTION.width) < 1e-7);
     assert.equal(details.scale[1], 1); assert.equal(details.scale[2], 1);
-    assert.deepEqual(details.unchanged.scan, original.scan);
-    assert.equal(details.unchanged.cameraParent, original.cameraParent);
-    assert.equal(details.unchanged.scanCount, original.scanCount);
-    assert.equal(await page.locator('#experience-show-wall').textContent(), 'Hide wall');
-    await page.waitForTimeout(500); // global splat sorting is asynchronous
+    assert.deepEqual(details.scan, original.scan); assert.equal(details.cameraParent, original.cameraParent); assert.equal(details.scanCount, original.scanCount);
+    await page.waitForTimeout(500);
     await page.screenshot({ path: path.join(output, 'wall-blocker.png'), fullPage: true });
     const doubleFaces = await captureWallFaces(page, output);
     await page.locator('#experience-show-wall').click();
-    assert.equal(await page.evaluate(() => window.__debug.wallBlocker.snapshot().motion), 'exiting');
-    assert.equal(await page.locator('#experience-show-wall').isDisabled(), true);
-    await page.evaluate(seconds => window.__wallUpdate(seconds / 2), WALL_SECTION.slideSeconds);
-    const halfwayOut = await page.evaluate(() => window.__debug.wallBlocker.snapshot());
-    assert.ok(halfwayOut.offset > 0);
-    await page.waitForTimeout(250);
-    await page.screenshot({ path: path.join(output, 'wall-slide-out.png'), fullPage: true });
-    await page.evaluate(seconds => window.__wallUpdate(seconds / 2), WALL_SECTION.slideSeconds);
-    assert.equal(await page.evaluate(() => window.__debug.wallBlocker.snapshot().visible), false);
+    const hidden = await page.evaluate(() => window.__debug.wallBlocker.snapshot());
+    assert.equal(hidden.visible, false); assert.equal(hidden.motion, 'hidden'); assert.equal(hidden.offset, 0);
     assert.equal(await page.locator('#experience-show-wall').textContent(), 'Show wall');
-    assert.equal(wallRequests, 1);
-    await page.locator('#experience-show-wall').click();
-    assert.ok(await page.evaluate(() => window.__debug.wallBlocker.snapshot().offset < 0));
     const disarmed = await page.evaluate(() => {
-      const { experience, splats, wallBlocker } = window.__debug;
-      experience.prepareForCalibration();
-      window.__wallUpdate(10);
-      const snapshot = wallBlocker.snapshot();
-      return { visible: snapshot.visible, motion: snapshot.motion,
-        sceneVisible: splats.getSplatScene(snapshot.sceneIndex).visible };
+      const { experience, splats, wallBlocker, camera, controls } = window.__debug;
+      controls.target.set(camera.position.x, camera.position.y, camera.position.z + 5); controls.update(); experience.update(0);
+      wallBlocker.show(); experience.prepareForCalibration(); window.__wallUpdate(.5);
+      const state = wallBlocker.snapshot(), mesh = splats.viewer.splatMesh, saved = window.__wallResources;
+      return { visible: state.visible, motion: state.motion, sceneVisible: splats.getSplatScene(state.sceneIndex).visible,
+        resourcesStable: mesh.material === saved.material && mesh.geometry === saved.geometry &&
+          mesh.splatDataTextures === saved.textures && splats.viewer.sortWorker === saved.worker };
     });
-    assert.deepEqual(disarmed, { visible: false, motion: 'hidden', sceneVisible: false });
-    const resourcesStable = await page.evaluate(() => {
-      const { splats } = window.__debug;
-      const mesh = splats.viewer.splatMesh, saved = window.__wallResources;
-      return mesh.material === saved.material && mesh.geometry === saved.geometry &&
-        mesh.splatDataTextures === saved.textures && splats.viewer.sortWorker === saved.worker;
-    });
-    assert.equal(resourcesStable, true, 'A toggle rebuilt shared render data or replaced the sorter.');
+    assert.deepEqual(disarmed, { visible: false, motion: 'hidden', sceneVisible: false, resourcesStable: true });
     await page.evaluate(original => {
       const { camera, controls, wallBlocker } = window.__debug;
-      camera.position.set(...original.camera); controls.target.set(...original.target); controls.update();
+      camera.position.fromArray(original.camera); controls.target.fromArray(original.target); controls.update();
+      controls.enableDamping = original.damping;
       wallBlocker.update = window.__wallUpdate;
     }, original);
-    return { ...details, requests: wallRequests, sharedDepthSort: true, cameraAndScanUnchanged: true,
-      calibrationPreparationClearsReveal: true, halfwayIn, halfwayOut, resourcesStable, doubleFaces };
+    assert.equal(wallRequests, 1);
+    return { ...details, requests: wallRequests, watchedArming: true, instantUnseenReveal: true,
+      immediateHide: true, resourcesStable: true, calibrationPreparationClearsReveal: true, doubleFaces };
   });
   await check('wall coordinates and forward/back controls preserve authored placement and shared resources', async () => {
     await page.evaluate(() => {
-      const { wallBlocker } = window.__debug;
+      const { wallBlocker, camera, controls, experience } = window.__debug;
+      window.__wallCoordinateCamera = { position: camera.position.toArray(), target: controls.target.toArray(), damping: controls.enableDamping };
       window.__wallUpdate = wallBlocker.update;
       wallBlocker.update = () => window.__wallUpdate(0);
+      camera.position.set(0, 1.7, 10); controls.target.set(0, 1.7, 15); controls.update(); camera.updateMatrixWorld(true);
+      experience.update(0);
     });
     await page.locator('#experience-show-wall').click();
-    await page.evaluate(seconds => window.__wallUpdate(seconds), WALL_SECTION.slideSeconds);
+    await page.evaluate(() => window.__wallUpdate(.05));
     await page.locator('#experience-wall-settings summary').click();
     for (const [axis, value] of [['x', '.2'], ['y', '.05'], ['z', '5.5']]) {
       await page.locator(`#experience-wall-${axis}`).fill(value);
@@ -596,9 +677,9 @@ try {
     assert.ok(Math.abs(near.baseWorld[2] - 4.9) < 1e-8);
     await page.locator('#experience-wall-stop').click();
     await page.locator('#experience-show-wall').click();
-    await page.evaluate(seconds => window.__wallUpdate(seconds), WALL_SECTION.slideSeconds);
+    await page.evaluate(() => window.__wallUpdate(.05));
     await page.locator('#experience-show-wall').click();
-    await page.evaluate(seconds => window.__wallUpdate(seconds), WALL_SECTION.slideSeconds);
+    await page.evaluate(() => window.__wallUpdate(.05));
     const restored = await page.evaluate(() => window.__debug.wallBlocker.snapshot());
     assert.ok(new Vector3(...restored.baseWorld).distanceTo(new Vector3(...near.baseWorld)) < 1e-8,
       'Hide/show must retain the wall anchor through scan-frame round trips.');
@@ -606,7 +687,7 @@ try {
     await page.screenshot({ path: path.join(output, 'wall-position-motion.png'), fullPage: true });
     const reprojected = await page.evaluate(async () => {
       const THREE = await import('/node_modules/.vite/deps/three.js');
-      const { splats, wallBlocker, experience } = window.__debug;
+      const { splats, wallBlocker, experience, camera, controls } = window.__debug;
       const position = splats.position.clone(), rotation = splats.quaternion.clone();
       const raw = new THREE.Vector3(...wallBlocker.snapshot().baseRaw);
       wallBlocker.reset();
@@ -627,6 +708,9 @@ try {
       splats.position.copy(position); splats.quaternion.copy(rotation); splats.updateMatrixWorld(true);
       wallBlocker.useFittedPosition();
       wallBlocker.update = window.__wallUpdate;
+      const savedCamera = window.__wallCoordinateCamera;
+      camera.position.fromArray(savedCamera.position); controls.target.fromArray(savedCamera.target); controls.update(); controls.enableDamping = savedCamera.damping;
+      delete window.__wallCoordinateCamera;
       const mesh = splats.viewer.splatMesh, saved = window.__wallResources;
       return { delta: delta.toArray(), anchorReprojected: true, recoveryCancelled: true,
         resourcesStable: mesh.material === saved.material && mesh.geometry === saved.geometry &&
@@ -638,11 +722,15 @@ try {
       backward: backward.baseWorld, loopFar: far.baseWorld, loopNear: near.baseWorld,
       hideShowRetainsPosition: true, invalidCommandRetainsPosition: true, ...reprojected };
   });
-  await check('post-turn wall approaches from -8 to -2, waits for the player and never retreats',
+  await check(`second-box wall reveals unseen, approaches the first box and supports player passage`,
     () => runWallGameplayScenario(page, output));
   await check('live calibration preserves the desktop wall side and physical player clearance across XR axes',
     () => runWallRouteFrameScenario(page));
+  await check('wall endpoint buttons and arrival glitch reveal the concealed hole in desktop and calibrated VR frames',
+    () => runWallRevealScenario(page, output));
   if (wallOnly) {
+    await check('supplied sit/classroom speech queues complete WAV takes without changing the background music',
+      () => runGameplayAudioScenario(page));
     await check('headset-triggered coordinator publishes current viewer positions and actual turn completion', async () => {
       const { runTestScenarioScenario } = await import('../tests/browser/testScenarioScenario.mjs');
       return await runTestScenarioScenario(page);
@@ -784,7 +872,8 @@ try {
       const THREE = await import('/node_modules/.vite/deps/three.js');
       const { renderer, camera } = window.__debug;
       const rect = renderer.domElement.getBoundingClientRect();
-      const p = new THREE.Vector3(-.8, 0, -20).project(camera);
+      // Keep this miss beyond the public corridor's extended [-24,24] range.
+      const p = new THREE.Vector3(-.8, 0, -40).project(camera);
       return { x: rect.left + (p.x + 1) / 2 * rect.width, y: rect.top + (1 - p.y) / 2 * rect.height };
     });
     await page.mouse.click(unsupportedPoint.x, unsupportedPoint.y);
@@ -843,11 +932,11 @@ try {
         measureWallDistances(section.wallPlanes, p.toArray())[side])));
       return { scan: splats.matrix.toArray(), first: scene.getObjectByName('installation-box').matrixWorld.toArray(), contact,
         second: experience.installation.snapshot().secondBox, position: box.getWorldPosition(new THREE.Vector3()).toArray(),
-        visible: box.visible, parentIsScene: box.parent === scene, scale: box.scale.toArray() };
+        visible: box.visible, parentIsWorld: box.parent === splats.parent && box.parent?.name === 'hallway-world-presentation', scale: box.scale.toArray() };
     });
     assert.equal(after.visible, true);
     assert.equal(after.second.visible, true);
-    assert.equal(after.parentIsScene, true);
+    assert.equal(after.parentIsWorld, true);
     assert.equal(after.second.base[2], before.prepared.base[2]);
     assert.equal(after.second.base[1], before.prepared.base[1]);
     assert.ok(Math.abs(Math.min(...after.contact)) < 1e-6, 'a whole footprint edge must meet a current wall');
@@ -861,7 +950,7 @@ try {
     await page.screenshot({ path: path.join(output, 'second-box.png'), fullPage: true });
     return { prepared: before.prepared, revealed: after.second, pixel };
   });
-  await check('second-box appearance waits two seconds then flickers with quiet local audio and holds 30 percent',
+  await check('second-box appearance waits 6.5 seconds, anticipates flicker music by two seconds and holds 30 percent',
     () => runSecondBoxLightsScenario(page, output));
   await check('flipped-hallway controls keep the first box fixed and align other props with current walls',
     () => runRotationOffsetScenario(page, output));
@@ -898,6 +987,10 @@ try {
     const { runSessionStartScenario } = await import('../tests/browser/sessionStartScenario.mjs');
     return await runSessionStartScenario(page);
   });
+  await check('the pinned Three.js manager creates opaque classic XR layers and restores native constructors', async () => {
+    const { runOpaqueLayerScenario } = await import('../tests/browser/opaqueLayerScenario.mjs');
+    return await runOpaqueLayerScenario(page);
+  });
   await check('restored trigger/countdown calibration uses buffered controller placements', async () => {
     const { runCalibrationScenario } = await import('../tests/browser/calibrationScenario.mjs');
     return await runCalibrationScenario(page);
@@ -910,6 +1003,12 @@ try {
     const { runTestScenarioScenario } = await import('../tests/browser/testScenarioScenario.mjs');
     return await runTestScenarioScenario(page);
   });
+  await check('every fresh calibration restarts the full game with complete box narration across prior states and tracking axes',
+    () => runGameRestartScenario(page));
+  await check('supplied soundtrack streams all seven parts and native speech/effects queue and cancel without generated voices',
+    () => runGameplayAudioScenario(page));
+  await check('main gameplay hooks anticipate spin and flicker, and headset above the fitted hole triggers the third cue once',
+    () => runGameplayTriggerScenario(page, output));
   await check('narrative transcripts stay on PC for muted, missing, blocked and playing audio', async () => {
     const { runVoiceCaptionScenario } = await import('../tests/browser/voiceCaptionScenario.mjs');
     return await runVoiceCaptionScenario(page);
@@ -922,6 +1021,8 @@ try {
     const { runBoundaryScenario } = await import('../tests/browser/boundaryScenario.mjs');
     return await runBoundaryScenario(page);
   });
+  await check('live headset perimeter approach plays priority danger speech at half a metre with cooldown and recovery',
+    () => runBoundaryVoiceScenario(page, output));
   await check('scan-picked centreline follows calibration and remains unchecked', async () => {
     await page.locator('#experience-pick-center').click();
     const positions = await page.evaluate(async () => {
@@ -1003,6 +1104,7 @@ try {
     realPage.on('pageerror', error => errors.push(error.message));
     await realPage.goto(`${baseUrl}?quality=detail`, { waitUntil: 'domcontentloaded' });
     await realPage.waitForFunction(() => document.getElementById('status')?.textContent?.includes('loaded'), undefined, { timeout: 180000 });
+    await isolateCorePixels(realPage);
     await realPage.locator('#experience-show-box').click({ timeout: 60000 });
     await realPage.waitForFunction(() => window.__debug.experience.installation.snapshot().phase === 'box', undefined, { timeout: 60000 });
     await realPage.waitForFunction(() => window.__debug.spawnMarker.userData.reference === 'box-turn-pivot', undefined, { timeout: 60000 });
@@ -1034,8 +1136,9 @@ try {
     report.checks.push({ name: 'private original hallway3 PLY centres and shows the manual box', passed: true, details: privateCenter });
     const privateFloor = await capturePrivateFloorHole(realPage, output);
     report.checks.push({ name: 'private original scan renders the floor opening into the void', passed: true, details: privateFloor });
-    await realPage.locator('#experience-show-wall').click({ timeout: 60000 });
-    await realPage.evaluate(seconds => window.__debug.wallBlocker.update(seconds), WALL_SECTION.slideSeconds);
+    const privateReveal = await capturePrivateWallReveal(realPage, output);
+    report.checks.push({ name: 'private original scan wall conceals the hole before glitching away at its endpoint', passed: true, details: privateReveal });
+    await realPage.locator('#experience-wall-inspect-start').click({ timeout: 60000 });
     await realPage.waitForFunction(() => window.__debug.wallBlocker.snapshot().motion === 'visible', undefined, { timeout: 60000 });
     const privateWall = await realPage.evaluate(async () => {
       const THREE = await import('/node_modules/.vite/deps/three.js');
@@ -1086,7 +1189,6 @@ try {
     const privateFaces = await captureWallFaces(realPage, output, 'private-wall');
     report.checks.push({ name: 'private wall renders the same good face outward on both full-thickness sides', passed: true, details: privateFaces });
     await realPage.locator('#experience-show-wall').click({ timeout: 60000 });
-    await realPage.evaluate(seconds => window.__debug.wallBlocker.update(seconds), WALL_SECTION.slideSeconds);
     assert.equal(await realPage.evaluate(() => window.__debug.wallBlocker.snapshot().visible), false);
     await realPage.locator('#experience-rotate').click();
     // Synthetic elapsed time on this isolated desktop smoke; no hardware run.
@@ -1124,6 +1226,15 @@ try {
     assert.deepEqual(errors, []);
     report.checks.push({ name: 'private original scan reveals the second seat against the current rotated wall', passed: true,
       details: { prepared: privateCenter.second, revealed: privateSecond, placement: privateCenter.secondPlacement } });
+    await check('private hallway crop renders downward through the fitted original-scan opening',
+      () => runHallwayCutScenario(realPage, output, { privateAsset: true }));
+    // Previous private captures pause the loop. Reload once to test the actual
+    // entry/animation loop with both original assets, rather than a posed frame.
+    await realPage.reload({ waitUntil: 'domcontentloaded' });
+    await realPage.waitForFunction(() => document.getElementById('status')?.textContent?.includes('loaded'), undefined, { timeout: 180000 });
+    await isolateCorePixels(realPage);
+    await check('private original hallway and cutout perform the eased quarter-turn through the actual render loop',
+      () => runHoleWorldTurnScenario(realPage, output, { privateAsset: true }));
     await realPage.close();
   }
   report.passed = true;
@@ -1136,6 +1247,11 @@ try {
   releaseWall?.();
   releaseBroom?.();
   releaseBox?.();
+  for (const { targetPage, visible } of corePixelFogIsolations.reverse()) {
+    if (!targetPage.isClosed()) {
+      await targetPage.evaluate(visible => {window.__debug.hallwayFog.setVisible(visible.fog);window.__debug.hallwayMist.setVisible(visible.mist);}, visible).catch(() => {});
+    }
+  }
   await browser?.close();
   await server?.close();
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');

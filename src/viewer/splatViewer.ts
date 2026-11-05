@@ -10,6 +10,7 @@ import { scanOriginForStart } from './scanPlacement';
 import { WALL_SECTION } from './wallSectionConfig';
 import { BROOM } from './broomConfig';
 import { WOODEN_BOX } from './woodenBox';
+import { HALLWAY_CUT, cutOpeningFromMetadata } from './hallwayCutPlacement';
 export type { ScanVariant } from './quality';
 
 /** Resolve the active original hallway3 PLY; no compressed derivative is used. */
@@ -57,7 +58,7 @@ export function createViewerRig(): ViewerRig {
   const context = canvas.getContext('webgl2', {
     xrCompatible: true,
     antialias: WEBGL_ANTIALIAS,
-    alpha: true, // required for immersive-ar passthrough
+    alpha: false, // opaque immersive VR; never expose a compositor background
     powerPreference: 'high-performance',
   });
   if (!context) throw new Error('WebGL2 not available in this browser');
@@ -66,7 +67,7 @@ export function createViewerRig(): ViewerRig {
   // XRWebGLBinding while the renderer is constructed so three.js wires the
   // proven XRWebGLLayer path instead of the frame-less projection layers.
   const rendererOptions = {
-    canvas, context, antialias: WEBGL_ANTIALIAS, alpha: true,
+    canvas, context, antialias: WEBGL_ANTIALIAS, alpha: false,
   } as THREE.WebGLRendererParameters;
   const renderer = resolveLayerPath() === 'classic'
     ? withHiddenXrWebGlBinding(() => new THREE.WebGLRenderer(rendererOptions))
@@ -75,12 +76,17 @@ export function createViewerRig(): ViewerRig {
   // Desktop only: XR owns its framebuffer after session entry.
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, quality.desktopPixelRatioLimit));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setClearColor(0x000000, 0); // transparent clear for AR passthrough
+  // Three.js r180's classic XRWebGLLayer always has an alpha channel, even
+  // with an opaque desktop canvas. Clear that XR framebuffer to alpha 1.
+  renderer.setClearColor(0xffffff, 1);
   renderer.xr.enabled = true;
   renderer.xr.setFoveation(0); // 0 = no fixed foveation → sharp peripheral vision
   document.body.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
+  // Splat gaps, floor clipping and calibration fades reveal our white void,
+  // rather than transmitting the SteamVR environment through the XR layer.
+  scene.background = new THREE.Color(0xffffff);
   const camera = new THREE.PerspectiveCamera(
     75, window.innerWidth / window.innerHeight, 0.1, 500,
   );
@@ -127,6 +133,11 @@ export async function loadScene(
 ): Promise<string> {
   const quality = parseRenderQuality(window.location.search);
   const modelUrl = quality.modelUrl;
+  const cutResponse = await fetch(HALLWAY_CUT.metadataUrl);
+  if (!cutResponse.ok) throw new Error('Missing hallway cutout metadata. Run node scripts/extract-hallway.mjs.');
+  const cutMetadata: unknown = await cutResponse.json();
+  cutOpeningFromMetadata(cutMetadata);
+  splats.userData.hallwayCutMetadata = cutMetadata;
   await splats.addSplatScenes([{
     path: modelUrl,
     rotation: [0, 0, 0, 1],
@@ -152,7 +163,13 @@ export async function loadScene(
     showLoadingUI: false,
     scale: [1, 1, 1] as [number, number, number],
     splatAlphaRemovalThreshold: 1,
-  }))]);
+  })), {
+    path: HALLWAY_CUT.modelUrl,
+    visible: false,
+    showLoadingUI: false,
+    scale: [1, 1, 1],
+    splatAlphaRemovalThreshold: 1,
+  }]);
   applyStartPoint(splats, START_POINT);
   const patched = patchSplatOpacity(splats, SCAN_OPACITY);
   if (!patched) console.warn('scan opacity patch failed (shader string not found)');
@@ -230,11 +247,11 @@ export function applyStartPoint(
 
 /**
  * Cyan marker at the XR origin: a ring on the floor + a vertical line.
- * Shows in the flat preview exactly where you will stand in VR. Hidden
- * during immersive sessions.
+ * An opt-in desktop diagnostic. Hidden by default and during immersive sessions.
  */
 export function createSpawnMarker(): THREE.Group {
   const group = new THREE.Group();
+  group.visible = false;
   const material = new THREE.LineBasicMaterial({ color: 0x00e5ff, transparent: true, depthWrite: false });
   const vertical = new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(0, 0, 0),

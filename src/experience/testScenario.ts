@@ -1,7 +1,8 @@
 import type { VoiceCue } from '../audio/voiceCues.ts';
+import { GAMEPLAY_TIMING } from './gameplayTiming.ts';
 
-export type TestScenarioAction = 'showBox' | 'rotate' | 'showSecondBox';
-export type TestScenarioStage = 'idle' | 'waitingBox' | 'waitingTurn' | 'waitingSeat' | 'complete' | 'cancelled';
+export type TestScenarioAction = 'showBox' | 'anticipateTurn' | 'rotate' | 'showSecondBox';
+export type TestScenarioStage = 'idle' | 'waitingWelcome' | 'waitingBox' | 'waitingTurn' | 'anticipatingTurn' | 'waitingSeat' | 'complete' | 'cancelled';
 
 export interface TestScenarioSnapshot {
   stage: TestScenarioStage;
@@ -19,17 +20,14 @@ export interface TestScenarioOptions {
   onChange?(): void;
 }
 
-const waitingStages: readonly TestScenarioStage[] = ['waitingBox', 'waitingTurn', 'waitingSeat'];
-const steps = {
-  waitingBox: { seconds: 10, action: 'showBox', cue: 'scenarioBox', next: 'waitingTurn' },
-  waitingTurn: { seconds: 15, action: 'rotate', cue: 'scenarioTurn', next: 'waitingSeat' },
-  waitingSeat: { seconds: 20, action: 'showSecondBox', cue: 'scenarioSeat', next: 'complete' },
-} as const;
+const waitingStages: readonly TestScenarioStage[] = ['waitingWelcome', 'waitingBox', 'waitingTurn', 'anticipatingTurn', 'waitingSeat'];
 const descriptions: Record<TestScenarioStage, string> = {
   idle: 'Test scenario waits for a fresh calibration.',
-  waitingBox: 'Test scenario: first box at 10 seconds after calibration.',
-  waitingTurn: 'Test scenario: hallway turn at 15 seconds after calibration.',
-  waitingSeat: 'Test scenario: second box at 20 seconds after calibration.',
+  waitingWelcome: 'Welcome one second after calibration.',
+  waitingBox: `Test scenario: first box at ${GAMEPLAY_TIMING.firstBoxSeconds} seconds after calibration.`,
+  waitingTurn: `Explore: transition music starts at ${GAMEPLAY_TIMING.explorationSeconds} seconds, then the hallway turns ${GAMEPLAY_TIMING.transitionLeadSeconds} seconds later.`,
+  anticipatingTurn: `Transition music: hallway turn in ${GAMEPLAY_TIMING.transitionLeadSeconds} seconds.`,
+  waitingSeat: `Test scenario: second box ${GAMEPLAY_TIMING.secondBoxDelaySeconds} seconds after the turn starts.`,
   complete: 'Test scenario complete.',
   cancelled: 'Test scenario cancelled.',
 };
@@ -43,7 +41,9 @@ export function createTestScenario(options: TestScenarioOptions) {
   let lastUpdatedAt = 0;
   let generation = 0;
   let waitForHeadset = false;
-  let seatSeconds = 20;
+  let seatSeconds = 0;
+  let turnReadySeconds = 0;
+  let turnSeconds = 0;
   const running = () => waitingStages.includes(stage);
   const changed = () => options.onChange?.();
   const cancel = (reason = descriptions.cancelled): void => {
@@ -58,28 +58,43 @@ export function createTestScenario(options: TestScenarioOptions) {
       if (token === generation) cancel('Test scenario cancelled: narration could not be started.');
     }
   };
+  const action = (name: TestScenarioAction, token: number): boolean => {
+    let succeeded = false;
+    try { succeeded = options.onAction(name); }
+    catch { /* Guard failures cancel below without leaking an exception. */ }
+    if (token !== generation) return false;
+    if (!succeeded) cancel(`Test scenario cancelled: ${name} could not run. Review placement and tracking, then recalibrate.`);
+    return succeeded;
+  };
+  const enter = (next: TestScenarioStage): void => {
+    stage = next;
+    status = descriptions[next];
+  };
 
   return {
     snapshot(): TestScenarioSnapshot {
-      const next = stage === 'waitingBox' || stage === 'waitingTurn' || stage === 'waitingSeat'
-        ? stage === 'waitingTurn' && waitForHeadset ? null : stage === 'waitingSeat' ? seatSeconds : steps[stage].seconds : null;
+      let next: number | null = null;
+      if (stage === 'waitingWelcome') next = GAMEPLAY_TIMING.welcomeSeconds;
+      else if (stage === 'waitingBox') next = GAMEPLAY_TIMING.firstBoxSeconds;
+      else if (stage === 'waitingTurn') {
+        next = waitForHeadset ? elapsedSeconds < turnReadySeconds ? turnReadySeconds : null
+          : Math.max(GAMEPLAY_TIMING.explorationSeconds, turnReadySeconds);
+      } else if (stage === 'anticipatingTurn') next = turnSeconds;
+      else if (stage === 'waitingSeat') next = seatSeconds;
       return { stage, status, running: running(), elapsedSeconds, nextActionSeconds: next };
     },
     start(nowSeconds: number, headsetTriggered = false): void {
       generation += 1;
       waitForHeadset = headsetTriggered;
-      seatSeconds = 20;
+      seatSeconds = turnReadySeconds = turnSeconds = 0;
       if (!Number.isFinite(nowSeconds) || nowSeconds < 0) {
         cancel('Test scenario cancelled: invalid start time.');
         return;
       }
-      const token = generation;
       startedAt = lastUpdatedAt = nowSeconds;
       elapsedSeconds = 0;
-      stage = 'waitingBox';
-      status = descriptions[stage];
+      enter('waitingWelcome');
       changed();
-      if (token === generation) cue('scenarioWelcome', token);
     },
     update(nowSeconds: number, headsetInsideBox = false): void {
       if (!running()) return;
@@ -94,28 +109,37 @@ export function createTestScenario(options: TestScenarioOptions) {
       }
       lastUpdatedAt = nowSeconds;
       elapsedSeconds = nowSeconds - startedAt;
-      if (stage !== 'waitingBox' && stage !== 'waitingTurn' && stage !== 'waitingSeat') return;
-      const step = steps[stage];
-      if (stage === 'waitingTurn' && waitForHeadset) {
-        if (!headsetInsideBox) return;
-      } else if (elapsedSeconds < (stage === 'waitingSeat' ? seatSeconds : step.seconds)) return;
-      if (stage === 'waitingTurn' && waitForHeadset) seatSeconds = elapsedSeconds + 5;
       const token = generation;
-      // The action can publish installation state synchronously. Advance first
-      // so reentrant callbacks cannot execute the same action twice.
-      stage = step.next;
-      status = descriptions[stage];
-      if (stage === 'waitingTurn' && waitForHeadset) status = 'Box ready: move the headset inside or above its footprint to turn the hallway.';
-      if (stage === 'waitingSeat' && waitForHeadset) status = 'Test scenario: second box five seconds after the headset-triggered turn.';
-      let succeeded = false;
-      try { succeeded = options.onAction(step.action); }
-      catch { /* Guard failures cancel below without leaking an exception. */ }
-      if (token !== generation) return;
-      if (!succeeded) {
-        cancel(`Test scenario cancelled: ${step.action} could not run. Review placement and tracking, then recalibrate.`);
-        return;
+      // Advance before invoking callbacks so a reentrant update cannot repeat a cue/action.
+      if (stage === 'waitingWelcome') {
+        if (elapsedSeconds + 1e-9 < GAMEPLAY_TIMING.welcomeSeconds) return;
+        enter('waitingBox');
+        cue('scenarioWelcome', token);
+      } else if (stage === 'waitingBox') {
+        if (elapsedSeconds + 1e-9 < GAMEPLAY_TIMING.firstBoxSeconds) return;
+        turnReadySeconds = elapsedSeconds + GAMEPLAY_TIMING.boxAnnouncementSeconds;
+        enter('waitingTurn');
+        if (waitForHeadset) status = 'Listen to the box announcement, then move the headset inside or above its footprint to start the transition.';
+        if (!action('showBox', token)) return;
+        cue('scenarioBox', token);
+      } else if (stage === 'waitingTurn') {
+        if (elapsedSeconds + 1e-9 < turnReadySeconds) return;
+        if (waitForHeadset ? !headsetInsideBox : elapsedSeconds + 1e-9 < GAMEPLAY_TIMING.explorationSeconds) return;
+        turnSeconds = elapsedSeconds + GAMEPLAY_TIMING.transitionLeadSeconds;
+        enter('anticipatingTurn');
+        if (!action('anticipateTurn', token)) return;
+      } else if (stage === 'anticipatingTurn') {
+        if (elapsedSeconds + 1e-9 < turnSeconds) return;
+        seatSeconds = elapsedSeconds + GAMEPLAY_TIMING.secondBoxDelaySeconds;
+        enter('waitingSeat');
+        if (!action('rotate', token)) return;
+        cue('scenarioTurn', token);
+      } else if (stage === 'waitingSeat') {
+        if (elapsedSeconds + 1e-9 < seatSeconds) return;
+        enter('complete');
+        if (!action('showSecondBox', token)) return;
+        cue('scenarioSeat', token);
       }
-      cue(step.cue, token);
       if (token === generation) changed();
     },
     cancel,

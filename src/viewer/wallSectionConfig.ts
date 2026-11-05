@@ -10,9 +10,9 @@ export const WALL_SECTION = {
   slideMargin: 0.10,
   // Authored desktop-world stations; mapped into the live calibration frame.
   startWorldZ: -8,
-  targetWorldZ: -2,
-  approachSpeed: 0.30,
-  afterTurnSeconds: 2,
+  // Fallback only; the first box's actual calibrated station is captured per run.
+  targetWorldZ: 2.5,
+  approachSpeed: 1.0,
   playerClearance: 0.75,
   resumeExtra: 0.15,
   width: 2.10,

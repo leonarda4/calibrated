@@ -20,6 +20,13 @@ export async function runSessionStartScenario(page) {
       };
       const xrDescriptor = Object.getOwnPropertyDescriptor(navigator, 'xr');
       const sessionDescriptor = Object.getOwnPropertyDescriptor(window, 'XRSession');
+      const layerDescriptor = Object.getOwnPropertyDescriptor(window, 'XRWebGLLayer');
+      const gl = {};
+      class FakeLayer {
+        constructor(session, context, options) {
+          ensure(context === gl && options.alpha === false, 'classic layer still permits compositor transparency');
+        }
+      }
       const xr = new THREE.EventDispatcher();
       const head = new THREE.PerspectiveCamera();
       head.position.y = 1.65;
@@ -74,6 +81,7 @@ export async function runSessionStartScenario(page) {
         async setSession(session) {
           ensure(attached.at(-1)?.type === 'scale', 'framebuffer scale was not set before session attachment');
           if (failAttachment) throw new Error('Synthetic renderer attachment refusal');
+          new XRWebGLLayer(session, gl, { alpha: true });
           attached.push({ type: 'session' });
           ensure(session.renderState.layers === undefined, 'classic session still exposed projection layers');
           activeSession = session;
@@ -83,12 +91,13 @@ export async function runSessionStartScenario(page) {
       });
       Object.defineProperty(navigator, 'xr', { configurable: true, value: fakeXrSystem });
       Object.defineProperty(window, 'XRSession', { configurable: true, value: FakeSession });
+      Object.defineProperty(window, 'XRWebGLLayer', { configurable: true, writable: true, value: FakeLayer });
       let enterVr;
       try {
         const scanStatus = document.getElementById('status');
         scanStatus.textContent = 'loaded: synthetic hallway.ply';
         const originalScanLine = scanStatus.innerHTML;
-        enterVr = setupEnterVr({ xr }, text => statuses.push(text));
+        enterVr = setupEnterVr({ xr, getContext: () => gl }, text => statuses.push(text));
         await Promise.resolve();
         const vrButton = [...document.querySelectorAll('button')].find(button => button.textContent === 'Enter VR (WebXR)');
         const setupButton = document.getElementById('calib-start');
@@ -105,9 +114,10 @@ export async function runSessionStartScenario(page) {
             'new start retained the previous request error');
           return result;
         };
-        const resolveSession = () => {
+        const resolveSession = (blendMode = 'opaque') => {
           ensure(pendingRequest, 'no queued request to resolve');
           const session = new FakeSession();
+          session.environmentBlendMode = blendMode;
           const request = pendingRequest; pendingRequest = null;
           request.resolve(session);
           return session;
@@ -149,6 +159,20 @@ export async function runSessionStartScenario(page) {
         enterVr.noteXrFrame();
         ensure(enterVr.stats().frames === 1, 're-entry retained previous-session frame count');
         await secondSession.end();
+
+        for (const blendMode of ['alpha-blend', 'additive']) {
+          const attachedBefore = attached.length;
+          const rejectedStart = begin();
+          const rejectedSession = resolveSession(blendMode);
+          ensure(await rejectedStart === false && rejectedSession.ended,
+            `${blendMode}: a see-through session was not rejected and closed`);
+          ensure(attached.length === attachedBefore && !xr.isPresenting,
+            `${blendMode}: a see-through session reached renderer attachment`);
+          ensure(statuses.at(-1).includes('requires opaque VR') && statuses.at(-1).includes(blendMode) &&
+            xrStatus.querySelector('details').textContent.includes('opaque VR validation'),
+            `${blendMode}: recovery omitted the opaque-session requirement or runtime detail`);
+          expectReleasedControls();
+        }
 
         for (const errorName of ['NotSupportedError', 'NotSupportedError', 'SecurityError']) {
           const failedStart = begin();
@@ -199,6 +223,7 @@ export async function runSessionStartScenario(page) {
           evidence: 'Actual setupEnterVr with fake XRSystem/session and detached renderer; no browser immersive request or hardware claim',
           checks: ['PC start requests immersive VR synchronously', 'pending start blocks duplicate launch',
             'hand tracking retained with classic layer path', 'successful attach clears pending and counts frames',
+            'alpha-blend and additive sessions close before renderer attachment',
             'explicit re-entry after end', 'unsupported request has precise Chrome/SteamVR recovery',
             'activation failure has SteamVR Desktop recovery', 'failure reenables both controls',
             'repeated failures replace one bounded message and preserve scan status',
@@ -213,6 +238,8 @@ export async function runSessionStartScenario(page) {
         else delete navigator.xr;
         if (sessionDescriptor) Object.defineProperty(window, 'XRSession', sessionDescriptor);
         else delete window.XRSession;
+        if (layerDescriptor) Object.defineProperty(window, 'XRWebGLLayer', layerDescriptor);
+        else delete window.XRWebGLLayer;
       }
     });
     await isolated.screenshot({ path: fileURLToPath(new URL('../../.check/xr-error-synthetic.png', import.meta.url)), fullPage: true });

@@ -8,6 +8,18 @@ import { WallTravel, validateWallTravel, type WallTravelMode } from './wallTrave
 import { WallApproach, wallEntryBlocked, type PlayerPosition } from './wallApproach.ts';
 import { createWallRouteFrame, type HallwayPlacementFrame } from './wallRouteFrame.ts';
 import { lockWallTrajectory } from './wallTrajectory.ts';
+import { WallGlitch } from './wallGlitch.ts';
+import { prepareWallGlitchShader, setWallGlitch } from './wallGlitchShader.ts';
+import { WallGaze, lookingAtWall } from './wallGaze.ts';
+import { WallPassage } from './wallPassage.ts';
+import { wallConcealsHole } from './wallConcealment.ts';
+
+export interface WallArrivalPlacement {
+  positionRoute: [number, number, number];
+  direction: 1 | -1;
+  halfDepth: number;
+  crossing?: { playerRoute: readonly [number, number, number]; direction: 1 | -1 };
+}
 
 export interface WallBlockerSnapshot {
   phase: 'loading' | 'ready' | 'error';
@@ -29,10 +41,15 @@ export interface WallBlockerSnapshot {
   placementSource: 'fitted' | 'manual';
   travel: ReturnType<WallTravel['snapshot']>;
   approach: ReturnType<WallApproach['snapshot']>;
-  gameplayCue: 'waitingTurn' | 'delay' | 'waitingPlayer' | null;
+  gameplayCue: 'waitingSecondBox' | 'waitingLookAway' | 'waitingPlayer' | null;
   revealInSeconds: number | null;
   alignmentQueries: number;
   trajectoryLocked: boolean;
+  routeEndpoints: { start: number[]; end: number[] } | null;
+  arrival: ReturnType<WallGlitch['snapshot']>;
+  inspectionEndpoint: 'start' | 'end' | null;
+  gaze: ReturnType<WallGaze['snapshot']>;
+  moving: boolean;
 }
 
 /**
@@ -111,7 +128,17 @@ export function createWallBlocker(options: {
   scanRoot: DropInViewer;
   canShow?(): string | null;
   getPlayerPosition?(): PlayerPosition;
+  getPlayerForward?(): PlayerPosition;
+  getRevealReady?(): boolean;
+  getTargetPosition?(): PlayerPosition;
   placementFrame?: HallwayPlacementFrame;
+  onArrived?(placement: WallArrivalPlacement): boolean;
+  onPrepareHole?(placement: WallArrivalPlacement): boolean;
+  getPreparedHole?(): { cornersRoute: readonly (readonly [number, number, number])[] } | null;
+  onRevealHole?(): boolean;
+  /** Natural successful reveal only; arming and endpoint inspections are silent. */
+  onAppeared?(): void;
+  onSequenceCancelled?(): void;
 }) {
   const { scanRoot } = options;
   const frame = options.placementFrame ?? createWallRouteFrame(scanRoot);
@@ -124,6 +151,14 @@ export function createWallBlocker(options: {
   const slide = new WallSlide(WALL_SECTION.slideSeconds);
   const travel = new WallTravel();
   const approach = new WallApproach();
+  const arrival = new WallGlitch({ holdSeconds: 0 });
+  const gaze = new WallGaze();
+  const passage = new WallPassage();
+  let moving = false;
+  let arrivalAttempted = false;
+  let holePrepareAttempted = false;
+  let holePrepared = false;
+  let holeRevealed = false;
   const sections = createHallwaySections({ scanRoot: routeRoot, getCenters: () => getSourceCenters(scanRoot) });
   let phase: WallBlockerSnapshot['phase'] = 'loading';
   let status = 'Loading the hallway and wall…';
@@ -133,13 +168,13 @@ export function createWallBlocker(options: {
   let pose: ReturnType<typeof placement> | null = null;
   let configuredRaw: THREE.Vector3 | null = null;
   let worldPath: WallWorldPath | null = null;
-  let pendingEntry: { pose: ReturnType<typeof placement>; path: WallWorldPath } | null = null;
+  let pendingEntry: { pose: ReturnType<typeof placement>; path: WallWorldPath; startZ: number; endZ: number } | null = null;
   let gameplayOwned = false;
   let gameplayCue: WallBlockerSnapshot['gameplayCue'] = null;
-  let revealInSeconds = 0;
-  let firstDelayFrame = false;
   let entryWaiting = false;
   let alignmentQueries = 0;
+  let plannedRoute: { pose: ReturnType<typeof placement>; path: WallWorldPath; startZ: number; endZ: number } | null = null;
+  let inspectionEndpoint: 'start' | 'end' | null = null;
   const sectionAt = (z: number) => { alignmentQueries++; return sections.at(z); };
   const wallScene = () => sceneIndex === null ? null : scanRoot.getSplatScene(sceneIndex);
   const currentBaseRaw = () => {
@@ -164,8 +199,13 @@ export function createWallBlocker(options: {
         : scene.getWorldPosition(new THREE.Vector3()).toArray() : null,
       routeToWorld: frame.matrix(),
       placementSource: configuredRaw ? 'manual' : 'fitted', travel: travel.snapshot(), approach: approach.snapshot(),
-      gameplayCue, revealInSeconds: gameplayCue === 'delay' ? revealInSeconds : null,
+      gameplayCue, revealInSeconds: null,
       alignmentQueries, trajectoryLocked: worldPath !== null,
+      routeEndpoints: plannedRoute ? {
+        start: frame.worldPoint(new THREE.Vector3(plannedRoute.path.trajectory.xAt(plannedRoute.startZ), plannedRoute.path.position.y, plannedRoute.startZ)).toArray(),
+        end: frame.worldPoint(new THREE.Vector3(plannedRoute.path.trajectory.xAt(plannedRoute.endZ), plannedRoute.path.position.y, plannedRoute.endZ)).toArray(),
+      } : null,
+      arrival: arrival.snapshot(), inspectionEndpoint, gaze: gaze.snapshot(), moving,
     };
   };
   const publish = () => { for (const listener of listeners) listener(snapshot()); };
@@ -210,9 +250,9 @@ export function createWallBlocker(options: {
       directionWorld: new THREE.Vector3(...fit.directionWorld), worldRotation,
     };
   };
-  const preparePath = (nextPose: NonNullable<typeof pose>): WallWorldPath => {
+  const preparePath = (nextPose: NonNullable<typeof pose>, endZ: number): WallWorldPath => {
     const fits = [0, .25, .5, .75, 1].map(t => {
-      const z = WALL_SECTION.startWorldZ + (WALL_SECTION.targetWorldZ - WALL_SECTION.startWorldZ) * t;
+      const z = WALL_SECTION.startWorldZ + (endZ - WALL_SECTION.startWorldZ) * t;
       const fit = sectionAt(z);
       if (!fit.ok) throw new Error(`Wall route at Z=${z}: ${fit.reason}`);
       return fit;
@@ -251,7 +291,7 @@ export function createWallBlocker(options: {
       // it. Publish each animated pose before sorting this frame.
       scene.updateTransform(true);
     }
-    scene.visible = state.motion !== 'hidden';
+    scene.visible = state.motion !== 'hidden' && arrival.snapshot().phase !== 'hidden';
   };
   const footprint = (rotation: THREE.Quaternion, width = pose?.fittedWidth ?? WALL_SECTION.width) => {
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(rotation);
@@ -268,11 +308,39 @@ export function createWallBlocker(options: {
     }, WALL_SECTION.playerClearance + (entryWaiting ? WALL_SECTION.resumeExtra : 0));
     return entryWaiting;
   };
+  const cancelArrival = () => {
+    arrival.reset();
+    gaze.reset(); passage.reset(); moving = false; arrivalAttempted = false;
+    holePrepareAttempted = holePrepared = holeRevealed = false;
+    const material = scanRoot.viewer.splatMesh.material as unknown as THREE.ShaderMaterial;
+    if (material?.uniforms?.uWallGlitch) setWallGlitch(material, 0);
+    options.onSequenceCancelled?.();
+  };
+  const plan = () => {
+    const nextPose = placement();
+    const authored = configuredRaw ? routeRoot.localToWorld(nextPose.position.clone()) : null;
+    const target = options.getTargetPosition?.();
+    const endZ = target?.every(Number.isFinite) ? frame.routePoint(new THREE.Vector3(...target)).z : WALL_SECTION.targetWorldZ;
+    if (endZ < WALL_SECTION.startWorldZ) throw new Error('The first-box station is behind the wall start.');
+    const path: WallWorldPath = authored ? {
+      position: authored, rotation: nextPose.worldRotation.clone(),
+      slideRight: new THREE.Vector3(new THREE.Vector3(1, 0, 0).applyQuaternion(nextPose.worldRotation).x < 0 ? -1 : 1, 0, 0),
+      trajectory: { xAt: () => authored.x },
+    } : preparePath(nextPose, endZ);
+    return { pose: nextPose, path, startZ: path.position.z, endZ: authored ? path.position.z : endZ };
+  };
+  const arrivalPlacement = (): WallArrivalPlacement => {
+    plannedRoute ??= plan();
+    return { positionRoute: [plannedRoute.path.trajectory.xAt(plannedRoute.endZ), plannedRoute.path.position.y, plannedRoute.endZ],
+      direction: plannedRoute.endZ < plannedRoute.startZ ? -1 : 1,
+      halfDepth: footprint(plannedRoute.path.rotation, plannedRoute.pose.fittedWidth).halfDepth };
+  };
   const reset = (reason = 'Wall hidden.') => {
+    cancelArrival(); plannedRoute = null; inspectionEndpoint = null;
     slide.reset();
     travel.reset();
     approach.cancel(); worldPath = null; gameplayOwned = false;
-    gameplayCue = null; revealInSeconds = 0; firstDelayFrame = false; entryWaiting = false;
+    gameplayCue = null; entryWaiting = false;
     pendingEntry = null;
     const scene = wallScene();
     if (scene) scene.visible = false;
@@ -297,7 +365,7 @@ export function createWallBlocker(options: {
     }
     travel.reset();
   };
-  const show = (gameplay = false): boolean => {
+  const show = (gameplay = false, retry = false): boolean => {
     if (disposed) return false;
     if (phase !== 'ready') return fail('Wait for the hallway and wall to finish loading.');
     if (slide.snapshot().motion !== 'hidden') return false;
@@ -305,33 +373,47 @@ export function createWallBlocker(options: {
     if (blocked) return fail(blocked);
     error = null;
     try {
-      if (!gameplay) { gameplayOwned = false; gameplayCue = null; pendingEntry = null; }
+      cancelArrival();
+      if (!gameplay && !retry) { gameplayOwned = false; gameplayCue = null; pendingEntry = null; }
       // Hide never turns an automatic route position into an authored override.
       // Buttons and scheduled cues use exactly the same reveal planner.
       worldPath = null;
       // Waiting for the player must not refit millions of hallway splats on
       // every frame. This candidate is discarded on all recovery/override paths.
-      const cached = gameplay ? pendingEntry : null;
-      pose = cached?.pose ?? placement();
+      const cached = pendingEntry;
+      const inspected = inspectionEndpoint && plannedRoute ? plannedRoute : null;
+      const prepared = cached ? null : inspected ?? plan();
+      pose = cached?.pose ?? prepared!.pose;
       {
-        const authored = configuredRaw ? routeRoot.localToWorld(pose.position.clone()) : null;
-        const path: WallWorldPath = cached ? cached.path : authored ? {
-          position: authored, rotation: pose.worldRotation.clone(),
-          slideRight: new THREE.Vector3(new THREE.Vector3(1, 0, 0).applyQuaternion(pose.worldRotation).x < 0 ? -1 : 1, 0, 0),
-          trajectory: { xAt: () => authored.x },
-        } : preparePath(pose);
-        if (entryBlocked(path, pose.fittedWidth + WALL_SECTION.slideMargin)) {
+        const path = cached ? cached.path : prepared!.path;
+        const startZ = cached?.startZ ?? prepared!.startZ;
+        const endZ = cached?.endZ ?? prepared!.endZ;
+        path.position.z = startZ; path.position.x = path.trajectory.xAt(startZ);
+        plannedRoute = { pose, path, startZ, endZ }; inspectionEndpoint = null;
+        const player = playerInRoute(), worldForward = options.getPlayerForward?.();
+        const forward = worldForward ? frame.routeVector(new THREE.Vector3(...worldForward)).toArray() : null;
+        const looking = lookingAtWall(player, forward, [path.position.x, path.position.y + WALL_SECTION.height / 2, startZ], 50);
+        if (looking !== false) {
+          status = 'Wall armed. Look away from the hallway for it to appear.';
+          gameplayCue = 'waitingLookAway'; pendingEntry = { pose, path, startZ, endZ };
+          publish(); return false;
+        }
+        if (entryBlocked(path, 0)) {
           status = 'Wall waiting for the player to clear its entry path.';
-          if (gameplay) { gameplayCue = 'waitingPlayer'; pendingEntry = { pose, path }; }
+          gameplayCue = 'waitingPlayer'; pendingEntry = { pose, path, startZ, endZ };
           publish(); return false;
         }
         worldPath = path;
         pendingEntry = null;
-        approach.start(path.position.z, authored ? path.position.z : WALL_SECTION.targetWorldZ, WALL_SECTION.approachSpeed);
+        approach.start(startZ, endZ, WALL_SECTION.approachSpeed);
+        gaze.start(startZ, endZ);
       }
       slide.show(pose.fittedWidth + WALL_SECTION.slideMargin);
+      slide.update(WALL_SECTION.slideSeconds);
+      gameplayCue = null;
       syncPose();
-      status = 'Wall sliding in from the left…';
+      status = 'Wall appeared out of sight.';
+      options.onAppeared?.();
       publish();
       return true;
     } catch (cause: unknown) {
@@ -340,15 +422,48 @@ export function createWallBlocker(options: {
     }
   };
   const hide = (): boolean => {
-    if (disposed || !slide.hide()) return false;
+    if (disposed || slide.snapshot().motion !== 'visible') return false;
+    slide.reset();
+    cancelArrival(); inspectionEndpoint = null;
     holdApproach();
     commitTravel();
-    status = 'Wall sliding out to the right…';
+    syncPose();
+    status = 'Wall hidden.';
     publish();
     return true;
   };
   return {
-    show, hide, reset, snapshot,
+    show, hide, reset, snapshot, arrivalPlacement,
+    runSequence(): boolean {
+      if (disposed || phase !== 'ready') return false;
+      const blocked = options.canShow?.();
+      if (blocked) return fail(blocked);
+      const inspected = plannedRoute;
+      reset(); plannedRoute = inspected; inspectionEndpoint = inspected ? 'start' : null;
+      return show() || gameplayCue === 'waitingLookAway' || gameplayCue === 'waitingPlayer';
+    },
+    inspectEndpoint(endpoint: 'start' | 'end'): boolean {
+      if (disposed || phase !== 'ready') return false;
+      const blocked = options.canShow?.();
+      if (blocked) return fail(blocked);
+      if (endpoint !== 'start' && endpoint !== 'end') return fail('Choose the wall start or end position.');
+      try {
+        const candidate = plannedRoute ?? plan();
+        const z = endpoint === 'start' ? candidate.startZ : candidate.endZ;
+        const point = new THREE.Vector3(candidate.path.trajectory.xAt(z), candidate.path.position.y, z);
+        const bounds = footprint(candidate.path.rotation, candidate.pose.fittedWidth);
+        if (wallEntryBlocked(playerInRoute(), { minX: point.x - bounds.halfWidth, maxX: point.x + bounds.halfWidth,
+          minZ: z - bounds.halfDepth, maxZ: z + bounds.halfDepth }, WALL_SECTION.playerClearance)) {
+          return fail('Move clear of the wall inspection position first.');
+        }
+        cancelArrival(); travel.reset(); gameplayOwned = false; gameplayCue = null; pendingEntry = null;
+        plannedRoute = candidate; pose = candidate.pose; worldPath = candidate.path;
+        worldPath.position.copy(point); approach.start(z, z, WALL_SECTION.approachSpeed);
+        slide.reset(); slide.show(pose.fittedWidth + WALL_SECTION.slideMargin); slide.update(WALL_SECTION.slideSeconds);
+        inspectionEndpoint = endpoint; error = null; syncPose();
+        status = `Inspecting wall ${endpoint}: hallway Z = ${z.toFixed(2)} m. Motion paused.`; publish(); return true;
+      } catch (cause) { return fail(cause instanceof Error ? cause.message : String(cause)); }
+    },
     /** Set only at calibration/desktop preview boundaries, before arming. */
     setRouteFrame(matrix?: THREE.Matrix4): void {
       reset();
@@ -356,26 +471,32 @@ export function createWallBlocker(options: {
       sections.clear();
       publish();
     },
-    startGameplay(): boolean {
+    startGameplay(options: { resetPlacement?: boolean } = {}): boolean {
       reset();
+      // A prior game's manual Stop must not turn the next full game into a
+      // stationary custom wall instead of its authored approach.
+      if (options.resetPlacement) configuredRaw = null;
       if (disposed || phase !== 'ready') return false;
-      gameplayOwned = true; gameplayCue = 'waitingTurn';
-      status = 'Wall waits until two seconds after the hallway turn finishes.'; publish(); return true;
+      gameplayOwned = true; gameplayCue = 'waitingSecondBox';
+      status = 'Wall waits for the player above the second box.'; publish(); return true;
     },
-    turnCompleted(): void {
-      if (!gameplayOwned || gameplayCue !== 'waitingTurn') return;
-      gameplayCue = 'delay'; revealInSeconds = WALL_SECTION.afterTurnSeconds; firstDelayFrame = true; publish();
+    turnCompleted(): void { /* The second-box footprint now supplies the reveal trigger. */ },
+    triggerSecondBox(): boolean {
+      if (!gameplayOwned || gameplayCue !== 'waitingSecondBox') return false;
+      gameplayCue = 'waitingLookAway';
+      status = 'Second box triggered. Look away for the wall to appear.'; publish(); return true;
     },
     cancelGameplay(): void { if (gameplayOwned) reset(); },
     /** Explicit authored bottom-centre, expressed in the current world frame. */
     setPosition(world: readonly [number, number, number]): boolean {
       if (disposed || phase !== 'ready') return fail('Wait for the wall to finish loading.');
-      if (slide.snapshot().animating) return fail('Wait for the side slide to finish before positioning the wall.');
+      if (slide.snapshot().animating) return fail('Wait for the wall transition before positioning it.');
       const blocked = options.canShow?.();
       if (blocked) return fail(blocked);
       try {
         if (world.length !== 3 || !world.every(Number.isFinite)) throw new Error('Wall coordinates must be finite X, Y and Z metres.');
         const next = placement(false, frame.routePoint(new THREE.Vector3(...world)).z);
+        cancelArrival(); plannedRoute = null; inspectionEndpoint = null;
         next.position.copy(scanRoot.worldToLocal(new THREE.Vector3(...world)));
         approach.cancel(); worldPath = null; gameplayOwned = false;
         gameplayCue = null;
@@ -391,6 +512,7 @@ export function createWallBlocker(options: {
       if (blocked) return fail(blocked);
       try {
         const next = placement(true);
+        cancelArrival(); plannedRoute = null; inspectionEndpoint = null;
         approach.cancel(); worldPath = null; gameplayOwned = false;
         gameplayCue = null;
         pendingEntry = null;
@@ -400,20 +522,23 @@ export function createWallBlocker(options: {
       } catch (cause) { return fail(cause instanceof Error ? cause.message : String(cause)); }
     },
     startTravel(mode: Exclude<WallTravelMode, 'stopped'>, distance: number, speed: number): boolean {
-      if (disposed || phase !== 'ready' || slide.snapshot().motion !== 'visible') return fail('Show the wall and wait for its side slide before moving it.');
+      if (disposed || phase !== 'ready' || slide.snapshot().motion !== 'visible') return fail('Reveal the wall before moving it.');
       const blocked = options.canShow?.();
       if (blocked) return fail(blocked);
       try {
         validateWallTravel(distance, speed);
         if (!['forward', 'backward', 'loop'].includes(mode)) throw new Error('Unknown wall motion.');
+        cancelArrival(); plannedRoute = null; inspectionEndpoint = null;
         commitApproach(); commitTravel(); travel.start(mode, distance, speed); error = null;
         status = mode === 'loop' ? 'Wall moving back and forth.' : `Wall moving ${mode}.`;
         publish(); return true;
       } catch (cause) { return fail(cause instanceof Error ? cause.message : String(cause)); }
     },
     stopTravel(): void {
+      cancelArrival(); inspectionEndpoint = null;
       if (worldPath && pose) { syncPose(); configuredRaw = pose.position.clone(); }
       holdApproach(); commitTravel(); syncPose();
+      plannedRoute = null;
       status = 'Wall motion stopped at its current position.'; publish();
     },
     /** Attach the hidden scene built together with the hallway at startup. */
@@ -425,9 +550,10 @@ export function createWallBlocker(options: {
       wallScene()!.visible = false;
       restoreScanOpacity(scanRoot);
       clipWallRectangle(scanRoot.viewer.splatMesh.material as unknown as THREE.ShaderMaterial, sceneIndex);
+      prepareWallGlitchShader(scanRoot.viewer.splatMesh.material as unknown as THREE.ShaderMaterial);
       phase = 'ready';
       error = null;
-      status = 'Wall ready. Show wall slides it in from the left.';
+      status = 'Wall ready. Show wall arms its out-of-sight appearance.';
       // Make its standing coordinate available before the first reveal.
       try { pose = placement(); } catch { pose = null; }
       publish();
@@ -438,6 +564,7 @@ export function createWallBlocker(options: {
       fail(`Wall unavailable: ${cause instanceof Error ? cause.message : String(cause)}`);
     },
     update(deltaSeconds = 0) {
+      const beforePosition = snapshot().positionWorld;
       restoreScanOpacity(scanRoot);
       if (phase === 'ready' && sceneIndex !== null) {
         clipWallRectangle(scanRoot.viewer.splatMesh.material as unknown as THREE.ShaderMaterial, sceneIndex);
@@ -446,39 +573,57 @@ export function createWallBlocker(options: {
       const wasTravelling = travel.snapshot().moving;
       const wasApproaching = approach.snapshot().active;
       const wasWaitingFor = approach.snapshot().waitingFor;
-      if (gameplayOwned && (gameplayCue === 'delay' || gameplayCue === 'waitingPlayer')) {
-        if (firstDelayFrame) firstDelayFrame = false;
-        else if (Number.isFinite(deltaSeconds) && deltaSeconds > 0) {
-          revealInSeconds = Math.max(0, revealInSeconds - deltaSeconds);
-          if (revealInSeconds <= 1e-9) {
-            if (show(true)) { gameplayCue = null; gameplayOwned = true; }
-            else if (gameplayCue !== 'waitingPlayer') { gameplayCue = null; gameplayOwned = false; pendingEntry = null; }
-          }
-        }
+      const previousArrival = arrival.snapshot().phase;
+      const previousGaze = gaze.snapshot().stage;
+      if ((gameplayCue === 'waitingPlayer' || gameplayCue === 'waitingLookAway') &&
+          Number.isFinite(deltaSeconds) && deltaSeconds > 0 && deltaSeconds <= .5 &&
+          (!gameplayOwned || options.getRevealReady?.() !== false)) {
+        const owner = gameplayOwned;
+        if (show(owner, true)) { gameplayCue = null; gameplayOwned = owner; }
       }
-      const wasEntryWaiting = entryWaiting;
-      const enteringBlocked = previous === 'entering' && worldPath && pose && entryBlocked(worldPath,
-        pose.fittedWidth + WALL_SECTION.slideMargin);
-      if (enteringBlocked) status = 'Wall entry paused: waiting for the player to move away.';
-      else if (previous === 'entering' && wasEntryWaiting) status = 'Wall sliding in from the left…';
-      // A newly revealed wall begins its side slide next frame, at the route start.
-      if (!enteringBlocked && previous !== 'hidden') slide.update(deltaSeconds);
-      if (previous === 'visible' && slide.snapshot().motion === 'visible' && worldPath) {
+      let crossing: ReturnType<WallPassage['update']> = null;
+      if (previous === 'visible' && slide.snapshot().motion === 'visible' && worldPath && previousArrival === 'idle' &&
+          !arrivalAttempted && approach.snapshot().state !== 'idle') {
+        if (inspectionEndpoint === null && !holePrepareAttempted) {
+          holePrepareAttempted = true;
+          holePrepared = options.onPrepareHole?.(arrivalPlacement()) !== false;
+        }
+        const route = approach.snapshot();
+        const player = playerInRoute();
+        const worldForward = options.getPlayerForward?.();
+        const forward = worldForward ? frame.routeVector(new THREE.Vector3(...worldForward)).toArray() : null;
+        const target: [number, number, number] = [worldPath.trajectory.xAt(route.z), worldPath.position.y + WALL_SECTION.height / 2, route.z];
+        const looking = lookingAtWall(player, forward, target, gaze.snapshot().looking === true ? 50 : 45);
+        const validForward = forward?.every(Number.isFinite) && Math.hypot(...forward) > 1e-9;
+        if (inspectionEndpoint === null && validForward) crossing = passage.update(player, deltaSeconds, {
+          position: [worldPath.trajectory.xAt(route.z), worldPath.position.y, route.z],
+          normal: new THREE.Vector3(0, 0, 1).applyQuaternion(worldPath.rotation).toArray(),
+          right: new THREE.Vector3(1, 0, 0).applyQuaternion(worldPath.rotation).toArray(),
+          width: pose!.fittedWidth, height: WALL_SECTION.height, halfDepth: WALL_SECTION.depth / 2,
+        });
+        else passage.reset();
+        const gate = inspectionEndpoint === null ? gaze.update(deltaSeconds, {
+          looking, z: route.z, arrived: route.state === 'complete',
+        }) : gaze.snapshot();
+        const allowedSeconds = crossing ? 0 : Math.min(gate.allowedSeconds, gate.maxTravel / route.speed);
         const bounds = footprint(worldPath.rotation);
         let sweptCenterX = worldPath.position.x, sweptHalfWidth = bounds.halfWidth, sweptHalfDepth = bounds.halfDepth;
-        if (Number.isFinite(deltaSeconds) && deltaSeconds > 0 && approach.snapshot().active) {
-          const route = approach.snapshot(), direction = Math.sign(route.targetZ - route.startZ);
-          const nextZ = direction * Math.min(direction * route.targetZ, direction * route.z + route.speed * deltaSeconds);
+        if (allowedSeconds > 0 && approach.snapshot().active) {
+          const direction = Math.sign(route.targetZ - route.startZ);
+          const nextZ = direction * Math.min(direction * route.targetZ, direction * route.z + route.speed * allowedSeconds);
           const nextX = worldPath.trajectory.xAt(nextZ);
           sweptCenterX = (worldPath.position.x + nextX) / 2;
           sweptHalfWidth = bounds.halfWidth + Math.abs(nextX - worldPath.position.x) / 2;
         }
-        approach.update(deltaSeconds, { player: playerInRoute(), centerX: sweptCenterX,
+        if (allowedSeconds > 0) approach.update(allowedSeconds, { player, centerX: sweptCenterX,
           halfWidth: sweptHalfWidth, halfDepth: sweptHalfDepth,
           clearance: WALL_SECTION.playerClearance, resumeExtra: WALL_SECTION.resumeExtra });
         if (approach.snapshot().waitingFor) status = approach.snapshot().waitingFor === 'player'
           ? 'Wall paused: waiting for the player to move away.' : 'Wall paused: waiting for current player tracking.';
-        else if (wasWaitingFor) status = `Wall continuing toward hallway Z = ${WALL_SECTION.targetWorldZ}.`;
+        else if (gate.looking === null && inspectionEndpoint === null) status = 'Wall paused: waiting for current viewing direction.';
+        else if (gate.stage === 'stealth' && allowedSeconds === 0 && route.active) status = 'Wall paused while the player is looking.';
+        else if (gate.stage === 'arrival' && gate.looking && !arrivalAttempted) status = `Look at the final wall for 5 seconds (${gate.lookSeconds.toFixed(1)} s), or walk through it.`;
+        else if (wasWaitingFor || previousGaze !== gate.stage) status = `Wall moving toward hallway Z = ${route.targetZ.toFixed(2)}.`;
       }
       if (slide.snapshot().motion === 'visible') travel.update(deltaSeconds);
       if (wasTravelling && !travel.snapshot().moving) {
@@ -486,19 +631,61 @@ export function createWallBlocker(options: {
       }
       syncPose();
       const current = slide.snapshot().motion;
-      if (wasApproaching && !approach.snapshot().active && worldPath) status = `Wall reached hallway Z = ${WALL_SECTION.targetWorldZ}.`;
+      if (current === 'visible' && worldPath && pose && inspectionEndpoint === null && holePrepared && !holeRevealed &&
+          !arrivalAttempted && approach.snapshot().state !== 'idle' &&
+          Number.isFinite(deltaSeconds) && deltaSeconds > 0 && deltaSeconds <= .5) {
+        const prepared = options.getPreparedHole?.();
+        const forward = options.getPlayerForward?.();
+        const validForward = forward?.every(Number.isFinite) && Math.hypot(...forward) > 1e-9;
+        if (prepared && validForward && wallConcealsHole(playerInRoute(), {
+          position: [worldPath.position.x, worldPath.position.y, worldPath.position.z],
+          normal: new THREE.Vector3(0, 0, 1).applyQuaternion(worldPath.rotation).toArray(),
+          right: new THREE.Vector3(1, 0, 0).applyQuaternion(worldPath.rotation).toArray(),
+          width: pose.fittedWidth, height: WALL_SECTION.height, halfDepth: WALL_SECTION.depth / 2,
+        }, prepared.cornersRoute)) holeRevealed = options.onRevealHole?.() !== false;
+      }
+      if (current === 'visible' && worldPath && inspectionEndpoint === null && approach.snapshot().state !== 'idle') {
+        gaze.observePosition(approach.snapshot().z, approach.snapshot().state === 'complete');
+      }
+      if (current === 'visible' && (crossing || gaze.snapshot().arrivalReady) && !arrivalAttempted && worldPath && inspectionEndpoint === null) {
+        arrivalAttempted = true;
+        approach.cancel(); travel.reset();
+        const placement: WallArrivalPlacement = {
+          positionRoute: [worldPath.position.x, worldPath.position.y, worldPath.position.z],
+          direction: plannedRoute && plannedRoute.endZ < plannedRoute.startZ ? -1 : 1,
+          halfDepth: footprint(worldPath.rotation).halfDepth,
+          ...(crossing ? { crossing } : {}),
+        };
+        // Freeze the current wall and hole before the first disappearance frame.
+        if (options.onArrived?.(placement) !== false) {
+          arrival.arm(); status = 'Wall encounter complete. Hole ready beyond it.';
+        } else status = 'Wall stopped. Floor opening unavailable; wall retained.';
+      } else if (previousArrival !== 'idle') arrival.update(deltaSeconds);
+      if (worldPath && phase === 'ready') {
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(worldPath.rotation)
+          .transformDirection(new THREE.Matrix4().fromArray(frame.matrix()));
+        setWallGlitch(scanRoot.viewer.splatMesh.material as unknown as THREE.ShaderMaterial, arrival.snapshot().progress, right);
+      }
+      if (arrival.snapshot().phase === 'hidden') {
+        slide.reset(); syncPose();
+        status = 'Wall glitched away. Floor opening revealed.';
+      } else if (arrival.snapshot().phase === 'glitching') status = 'Wall glitching away…';
+      const afterPosition = snapshot().positionWorld;
+      moving = Number.isFinite(deltaSeconds) && deltaSeconds > 0 && beforePosition !== null && afterPosition !== null &&
+        beforePosition.some((value, axis) => Math.abs(value - afterPosition[axis]) > 1e-7);
       if (current !== previous) {
         status = current === 'visible'
           ? `Wall shown: ${((pose?.fittedWidth ?? WALL_SECTION.width) * 100).toFixed(0)} cm wide × ${(WALL_SECTION.height * 100).toFixed(0)} cm high.`
-          : current === 'entering' ? 'Wall sliding in from the left…'
-          : current === 'exiting' ? 'Wall sliding out to the right…'
-          : 'Wall hidden. Show wall slides it in from the left.';
+          : current === 'entering' ? 'Wall appeared out of sight.'
+          : current === 'exiting' ? 'Wall hidden.'
+          : 'Wall hidden. Show wall arms its out-of-sight appearance.';
         publish();
-      } else if ((wasTravelling && !travel.snapshot().moving) || (wasApproaching && !approach.snapshot().active) || wasWaitingFor !== approach.snapshot().waitingFor) {
+      } else if ((wasTravelling && !travel.snapshot().moving) || (wasApproaching && !approach.snapshot().active) || wasWaitingFor !== approach.snapshot().waitingFor || previousArrival !== arrival.snapshot().phase || previousGaze !== gaze.snapshot().stage) {
         publish();
       }
     },
     toggle(): boolean {
+      if (gameplayCue === 'waitingPlayer' || gameplayCue === 'waitingLookAway') { reset('Wall reveal cancelled.'); return true; }
       return slide.snapshot().motion === 'visible' ? hide() : show();
     },
     subscribe(listener: (state: WallBlockerSnapshot) => void) {

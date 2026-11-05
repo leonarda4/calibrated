@@ -3,14 +3,18 @@ import { manualRectangle, type ManualRectangleConfig, type Point3 } from '../bou
 import { setupMovementBoundary } from '../xr/movementBoundary.ts';
 import { createMovementBounds } from '../viewer/movementBounds.ts';
 import { bindBoundaryPanel, type BoundaryBoxMarker } from '../ui/boundaryPanel.ts';
+import { createBoundaryApproachWarning } from '../boundary/approachWarning.ts';
 
 export function setupDesktopBoundary(
   renderer: Pick<THREE.WebGLRenderer, 'xr'>,
   scene: THREE.Scene,
-  options: { getBox?(): BoundaryBoxMarker | undefined } = {},
+  options: { getBox?(): BoundaryBoxMarker | undefined; showWorldGuides?: boolean;
+    onWarning?(): boolean; onWarningCancelled?(): void; isWarningEnabled?(): boolean } = {},
 ) {
-  const boundary = setupMovementBoundary(renderer);
-  const outline = createMovementBounds(scene);
+  const warning = createBoundaryApproachWarning({ onWarning: () => options.onWarning?.() ?? false,
+    onCancel: () => options.onWarningCancelled?.() });
+  const boundary = setupMovementBoundary(renderer, { onChange: state => { if (!state.live) warning.reset(); } });
+  const outline = createMovementBounds(scene, options.showWorldGuides);
   let manualConfig: ManualRectangleConfig = { centerX: 0, centerZ: 0, width: 2.1, depth: 2.1, floorY: 0, yawDegrees: 0 };
   let manualPoints = manualRectangle(manualConfig);
   let manualVisible = false;
@@ -44,9 +48,16 @@ export function setupDesktopBoundary(
     configureManual,
     setManualVisible,
     setRuntimeVisible,
-    snapshot() { return { runtime: boundary.snapshot(), manual: { config: { ...manualConfig }, visible: manualVisible, points: manualPoints.map(point => [...point]) }, head: liveHead ? [...liveHead] : null }; },
-    update(frame?: XRFrame) {
-      boundary.update(frame);
+    resetWarning: () => warning.reset(),
+    snapshot() { return { runtime: boundary.snapshot(), manual: { config: { ...manualConfig }, visible: manualVisible, points: manualPoints.map(point => [...point] as Point3) }, head: liveHead ? [...liveHead] : null,
+      warning: warning.snapshot() }; },
+    update(frame?: XRFrame, nowSeconds = performance.now() / 1000) {
+      const runtime = boundary.update(frame);
+      warning.update(nowSeconds, runtime, renderer.xr.isPresenting && options.isWarningEnabled?.() !== false);
+      const voice = warning.snapshot();
+      panel.setVoiceStatus(voice.status === 'unavailable' ? 'Boundary voice: no live headset outline available.'
+        : voice.status === 'paused' ? 'Boundary voice paused.'
+        : `Boundary voice: ${voice.distanceMetres!.toFixed(2)} m from edge${voice.latched ? ' · warning delivered' : ''}. Trigger: 0.50 m while approaching.`);
       // A manual map remains useful when the runtime declines bounded-floor.
       // Its head marker still requires a real current local-floor viewer pose.
       liveHead = null;
@@ -60,6 +71,6 @@ export function setupDesktopBoundary(
       }
       refresh();
     },
-    dispose() { boundary.dispose(); outline.dispose(); panel.dispose(); },
+    dispose() { warning.reset(); boundary.dispose(); outline.dispose(); panel.dispose(); },
   };
 }

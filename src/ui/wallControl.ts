@@ -1,4 +1,5 @@
 import type { WallBlocker } from '../viewer/wallBlocker';
+import { WALL_SECTION } from '../viewer/wallSectionConfig';
 
 /** PC wall placement and movement; coordinates describe its bottom centre. */
 export function bindWallControl(wall: WallBlocker, blockReason: () => string | null) {
@@ -9,6 +10,12 @@ export function bindWallControl(wall: WallBlocker, blockReason: () => string | n
     <button id="experience-show-wall" type="button" style="width:100%">Show wall</button>
     <p id="experience-wall-status" aria-live="polite"></p>
     <p id="experience-wall-coordinate" style="font-variant-numeric:tabular-nums"></p>
+    <div class="experience-row">
+      <button id="experience-wall-inspect-start" type="button">Check wall start</button>
+      <button id="experience-wall-inspect-end" type="button">Check wall end</button>
+    </div>
+    <button id="experience-wall-run" type="button" style="width:100%">Run wall sequence</button>
+    <p id="experience-wall-endpoints" aria-live="polite"></p>
     <details id="experience-wall-settings">
       <summary>Wall position &amp; motion</summary>
       <p>Bottom-centre XYZ · world metres. Forward moves away from the hallway start.</p>
@@ -55,26 +62,36 @@ export function bindWallControl(wall: WallBlocker, blockReason: () => string | n
       if (document.activeElement !== field) field.value = state.baseWorld![i].toFixed(3);
     });
     const key = JSON.stringify([state.phase, state.motion, state.travel.mode, state.approach.active, state.status, state.placementSource, reason]);
+    const endpoints = state.routeEndpoints;
+    find('endpoints').textContent = endpoints
+      ? `World start [${endpoints.start.map(n => n.toFixed(2)).join(', ')}] → end [${endpoints.end.map(n => n.toFixed(2)).join(', ')}] m. Checks hold the wall still; Run plays its approach, glitch and hole reveal.`
+      : 'Check either endpoint to inspect the fitted simulation route. Run plays the wall, glitch and hole reveal.';
     if (key === lastRender) return;
     lastRender = key;
     const active = state.motion === 'visible';
-    button.textContent = state.motion === 'entering' ? 'Sliding in…'
+    const pending = state.gameplayCue === 'waitingPlayer' || state.gameplayCue === 'waitingLookAway';
+    const dissolving = state.arrival.phase === 'waiting' || state.arrival.phase === 'glitching';
+    button.textContent = pending ? 'Cancel wall reveal' : state.arrival.phase === 'glitching' ? 'Glitching…' : state.motion === 'entering' ? 'Sliding in…'
       : state.motion === 'exiting' ? 'Sliding out…' : active ? 'Hide wall' : 'Show wall';
     button.setAttribute('aria-pressed', String(state.visible));
-    button.disabled = state.phase !== 'ready' || state.animating || (!active && reason !== null);
-    button.title = state.animating ? 'Wait for the wall to finish sliding'
-      : active ? 'Slide the wall out to the right' : reason ?? 'Slide the 210 cm wall in from the left';
+    button.disabled = state.phase !== 'ready' || state.animating || dissolving || (!active && !pending && reason !== null);
+    button.title = pending ? 'Cancel the armed wall' : state.animating ? 'Wait for the wall transition'
+      : active ? 'Hide the wall' : reason ?? 'Arm the wall to appear when you look away';
     status.textContent = state.status;
     const editable = state.phase === 'ready' && !state.animating && reason === null;
     for (const input of [...fields, distance, speed]) input.disabled = !editable;
     find<HTMLButtonElement>('apply').disabled = !editable;
     find<HTMLButtonElement>('fit').disabled = !editable;
+    for (const id of ['inspect-start', 'inspect-end', 'run']) find<HTMLButtonElement>(id).disabled = state.phase !== 'ready' || reason !== null || state.animating;
     for (const id of ['forward', 'backward', 'loop']) find<HTMLButtonElement>(id).disabled = !editable || !active;
-    find<HTMLButtonElement>('stop').disabled = !state.travel.moving && !state.approach.active && state.gameplayCue === null;
-    find('placement-source').textContent = state.placementSource === 'manual' ? 'Custom position for this page.' : 'Hallway route: Z = -8 → -2. Follows VR calibration; pauses near the player.';
+    find<HTMLButtonElement>('stop').disabled = !state.travel.moving && !state.approach.active && state.gameplayCue === null && !dissolving && state.gaze.stage !== 'arrival';
+    find('placement-source').textContent = state.placementSource === 'manual' ? 'Custom position for this page.' : `Hallway route starts at Z = ${WALL_SECTION.startWorldZ} and ends at the prepared first-box station. Follows VR calibration; pauses near the player.`;
   };
   const click = (element: HTMLElement, action: () => void) => element.addEventListener('click', action, { signal: events.signal });
   button.addEventListener('click', () => { wall.toggle(); }, { signal: events.signal });
+  click(find('inspect-start'), () => { wall.inspectEndpoint('start'); refresh(); });
+  click(find('inspect-end'), () => { wall.inspectEndpoint('end'); refresh(); });
+  click(find('run'), () => { wall.runSequence(); refresh(); });
   for (const field of fields) field.addEventListener('input', () => { dirty = true; }, { signal: events.signal });
   click(find('apply'), () => {
     const point = fields.map(field => field.value === '' ? NaN : Number(field.value)) as [number, number, number];

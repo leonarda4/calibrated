@@ -69,7 +69,7 @@ export const VOICE_CUES: Record<VoiceCue, VoiceCueDefinition> = {
   scenarioWelcome: narration('welcome, I hope you are calibrated to your new environment', 'Welcome...', 'Calibrated...'),
   scenarioBox: narration("well would you look at that, a box appeared... I wonder if it's real...", 'A box...', 'Real...', 4.7),
   scenarioTurn: narration('Whoosh, what just happened?', 'Whoosh...', 'What happened...'),
-  scenarioSeat: narration("oh look there's your seat because you are late for class.", 'Your seat...', 'Late...'),
+  scenarioSeat: narration('Sit down on the box.', 'Your seat...', 'Sit down...'),
 };
 
 export function voiceClipPath(cue: VoiceCue, role: VoiceRole): string {

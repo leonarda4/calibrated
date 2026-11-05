@@ -1,5 +1,7 @@
+import { GAMEPLAY_TIMING } from './gameplayTiming.ts';
+
 export const SECOND_BOX_LIGHT_DELAY = 2;
-export const LIGHT_FLICKER_SECONDS = 1;
+export const LIGHT_FLICKER_SECONDS = GAMEPLAY_TIMING.flickerDurationSeconds;
 export const SECOND_BOX_DARK_BRIGHTNESS = .30;
 
 type Phase = 'idle' | 'waiting' | 'flickering' | 'dark' | 'cancelled';
@@ -10,6 +12,8 @@ const relights = [[0, 1], [.07, 0], [.13, .95], [.22, .08], [.29, .8], [.39, 0],
 
 /** Pure timing/appearance only; settled visibility comes from the installation. */
 export class SecondBoxLights {
+  private readonly delaySeconds: number;
+  constructor(delaySeconds = SECOND_BOX_LIGHT_DELAY) { this.delaySeconds = delaySeconds; }
   private phase: Phase = 'idle';
   private elapsed = 0;
   private visible = false;
@@ -34,7 +38,7 @@ export class SecondBoxLights {
     if (deltaSeconds > .5) { this.cancel(); return; }
     if (this.fresh) { this.fresh = false; return; }
     this.elapsed += deltaSeconds;
-    if (this.phase === 'waiting' && this.elapsed + 1e-9 >= SECOND_BOX_LIGHT_DELAY) {
+    if (this.phase === 'waiting' && this.elapsed + 1e-9 >= this.delaySeconds) {
       this.phase = 'flickering'; this.elapsed = 0;
     } else if (this.phase === 'flickering' && this.elapsed + 1e-9 >= LIGHT_FLICKER_SECONDS) {
       this.phase = 'dark'; this.elapsed = LIGHT_FLICKER_SECONDS;
@@ -53,6 +57,6 @@ export class SecondBoxLights {
       }
     }
     return { phase: this.phase, relight, remainingSeconds: this.phase === 'waiting'
-      ? Math.max(0, SECOND_BOX_LIGHT_DELAY - this.elapsed) : null };
+      ? Math.max(0, this.delaySeconds - this.elapsed) : null };
   }
 }

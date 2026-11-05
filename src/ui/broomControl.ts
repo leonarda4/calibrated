@@ -1,6 +1,6 @@
 import type { Broom } from '../viewer/broom';
 
-export function bindBroomControl(broom: Broom, blockReason: () => string | null) {
+export function bindBroomControl(broom: Broom, blockReason: () => string | null, onToggle = () => broom.toggle()) {
   const host = document.getElementById('experience-broom-control');
   if (!host) throw new Error('Broom control container is missing.');
   host.innerHTML = `<button id="experience-show-broom" type="button" style="width:100%">Show broom</button>
@@ -19,7 +19,7 @@ export function bindBroomControl(broom: Broom, blockReason: () => string | null)
     button.title = state.visible ? 'Hide the broom' : reason ?? 'Stand the scanned broom at the hallway centre, hallway Z = 6 m';
     status.textContent = state.status;
   };
-  button.addEventListener('click', () => { broom.toggle(); refresh(); });
+  button.addEventListener('click', () => { onToggle(); refresh(); });
   refresh();
   return { refresh };
 }

@@ -53,11 +53,12 @@ export async function runTestScenarioScenario(parentPage) {
       document.body.append(render.domElement);
       const wallEvents = [];
       let currentViewer = null;
+      let currentForward = null;
       const experience = setupExperience({ xr, domElement: render.domElement }, scene, camera, scan, {
         isScanReady: () => true,
         onGameplayStart() { wallEvents.push({ action: 'arm' }); },
         onTurnCompleted() { wallEvents.push({ action: 'turnCompleted', phase: experience.installation.snapshot().phase }); },
-        onViewerPosition(position) { currentViewer = position; },
+        onViewerPosition(position, forward) { currentViewer = position; currentForward = forward; },
       });
       const installation = experience.installation;
       const state = () => installation.snapshot();
@@ -73,8 +74,9 @@ export async function runTestScenarioScenario(parentPage) {
       };
       let viewerValid = true;
       let viewerPosition = { x: 10, y: 1.65, z: 0 };
+      let viewerOrientation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
       const frame = { getViewerPose: () => viewerValid ? {
-        emulatedPosition: false, transform: { position: viewerPosition },
+        emulatedPosition: false, transform: { position: viewerPosition, orientation: viewerOrientation },
       } : null };
       const advance = seconds => {
         for (let remaining = seconds; remaining > 1e-8;) {
@@ -116,7 +118,10 @@ export async function runTestScenarioScenario(parentPage) {
       ensure(!document.querySelector('#experience-preview-scenario').disabled, 'loaded desktop preview is unavailable');
       document.querySelector('#experience-preview-scenario').click();
       await Promise.resolve();
-      ensure(clock().running && events[0]?.cue === 'scenarioWelcome', 'preview button failed to launch the welcome');
+      ensure(clock().running && clock().stage === 'waitingWelcome' && events.length === 0,
+        'preview button failed to launch the one-second welcome wait');
+      advance(1);
+      ensure(events[0]?.cue === 'scenarioWelcome', 'preview did not play welcome at one second');
       const previewCueCount = events.length;
       document.querySelector('#voice-panel [data-action="preview"]').click();
       await Promise.resolve();
@@ -147,17 +152,21 @@ export async function runTestScenarioScenario(parentPage) {
       installation.configure({ ...state().config, rotationSeconds: 8 });
       freshFit();
       ensure(state().config.rotationSeconds === 8, 'custom manual duration fixture was not retained before the timed turn');
-      ensure(clock().running && clock().elapsedSeconds === 0 && events[0]?.cue === 'scenarioWelcome',
-        'fresh XR fit did not start exactly one welcome immediately');
+      ensure(clock().running && clock().elapsedSeconds === 0 && clock().stage === 'waitingWelcome' && events.length === 0,
+        'fresh XR fit did not wait one second before welcome');
       ensure(state().phase === 'ready' && !scene.getObjectByName('installation-fixed-props').visible,
         'calibration start displayed the box before its deadline');
       ensure(document.querySelector('#experience-show-box').disabled && document.querySelector('#experience-rotate').disabled,
         'manual controls can advance an active timed sequence early');
-      until(9.999);
-      ensure(state().phase === 'ready' && events.length === 1, 'first box appeared before ten seconds');
-      until(10.001);
+      until(.999);
+      ensure(events.length === 0, 'welcome played before its one-second deadline');
+      until(1.001);
+      ensure(events.length === 1 && events[0].cue === 'scenarioWelcome', 'one-second welcome was missing or duplicated');
+      until(7.999);
+      ensure(state().phase === 'ready' && events.length === 1, 'first box appeared before eight seconds');
+      until(8.001);
       ensure(state().phase === 'box' && scene.getObjectByName('installation-fixed-props').visible,
-        'ten-second event failed to show the actual box');
+        'eight-second event failed to show the actual box');
       ensure(state().secondBox.placed && !state().secondBox.visible, 'first show did not prepare the hidden second box');
       scene.updateMatrixWorld(true);
       const primaryPose = scene.getObjectByName('installation-box').matrixWorld.toArray();
@@ -171,23 +180,33 @@ export async function runTestScenarioScenario(parentPage) {
       ensure(state().phase === 'box', 'headset beside the box triggered a turn');
       viewerPosition = { x: state().config.centerX, y: 2, z: state().config.centerZ };
       advance(.25);
+      ensure(state().phase === 'box' && clock().stage === 'anticipatingTurn' && events.length === 2,
+        'headset entry did not start anticipation before moving the hallway');
+      until(32.499);
+      ensure(state().phase === 'box' && events.length === 2, 'turn began before its two-second anticipation');
+      until(32.5);
       ensure(state().phase === 'rotating' && events.at(-1).cue === 'scenarioTurn' && events.at(-1).phase === 'rotating',
         'turn narration did not start while the hallway was turning');
       ensure(state().config.rotationSeconds === 4,
         'timed scenario retained the custom eight-second manual turn and would miss its seat deadline');
-      until(34.6);
+      until(36.6);
       ensure(state().phase === 'reversed' && Math.abs(state().yaw - Math.PI) < 1e-9 && !state().secondBox.visible,
         'four-second turn did not finish before the still-hidden seat reveal');
-      until(35.499);
-      ensure(!state().secondBox.visible && events.length === 3, 'seat appeared before twenty seconds');
-      until(35.501);
+      until(37.499);
+      ensure(!state().secondBox.visible && events.length === 3, 'seat appeared before five seconds after actual turn onset');
+      until(37.501);
       ensure(!clock().running && clock().stage === 'complete' && state().secondBox.visible &&
         scene.getObjectByName('installation-second-box').visible,
-        `twenty-second event did not reveal the actual second mesh: ${state().secondBox.alignmentError ?? clock().status}`);
+        `post-turn event did not reveal the actual second mesh: ${state().secondBox.alignmentError ?? clock().status}`);
       ensure(wallEvents.at(-1).action === 'turnCompleted' && wallEvents.at(-1).phase === 'reversed' &&
         wallEvents.some(event => event.action === 'arm'), 'wall was not armed and notified of the actual completed turn');
       ensure(same(currentViewer, [viewerPosition.x, viewerPosition.y, viewerPosition.z]),
         'wall proximity did not receive the current real viewer position');
+      ensure(currentForward && Math.abs(currentForward[0] + 1) < 1e-9 && Math.abs(currentForward[1]) < 1e-9 && Math.abs(currentForward[2]) < 1e-9,
+        'wall gaze did not receive the current XR orientation from the same viewer pose');
+      viewerOrientation = { x: NaN, y: 0, z: 0, w: 1 }; experience.update(.01, frame);
+      ensure(currentForward === null, 'Invalid current XR orientation fell back to the desktop viewing direction');
+      viewerOrientation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
       ensure(Math.abs(state().secondBox.base[2] - secondPose.base[2]) < 1e-8 &&
         Math.abs(state().secondBox.base[1] - secondPose.base[1]) < 1e-8 && !state().secondBox.alignmentError,
         'seat lost its authored floor/Z station or current-wall alignment');
@@ -230,9 +249,13 @@ export async function runTestScenarioScenario(parentPage) {
       freshFit(); advance(1); setEnabled(false);
       ensure(!clock().running, 'unchecking the timed scenario left it running');
       noLaterActions('disabled scenario');
-      freshFit(); advance(21);
+      freshFit();
+      ensure(clock().running && clock().stage === 'waitingWelcome' && events.length === 0 &&
+        document.querySelector('#experience-test-scenario').checked,
+        'fresh calibration did not restore the full game after a manual-only run');
+      setEnabled(false); events.length = 0; advance(21);
       ensure(!clock().running && events.length === 0 && state().phase === 'ready',
-        'disabled scenario automatically narrated or showed a box after a fit');
+        'explicit manual-only mode failed to cancel this run');
       document.querySelector('#experience-show-box').click();
       ensure(state().phase === 'box', 'disabled scenario prevented the existing manual Show box action');
       viewerPosition = { x: state().config.centerX, y: 2, z: state().config.centerZ };
@@ -249,17 +272,17 @@ export async function runTestScenarioScenario(parentPage) {
       setEnabled(true); freshFit();
       const savedCenters = scan.viewer.splatMesh.splatDataTextures.baseData.centers;
       scan.viewer.splatMesh.splatDataTextures.baseData.centers = new Float32Array([0, 0, 0]);
-      advance(10.1);
+      advance(8.1);
       ensure(!clock().running && clock().stage === 'cancelled' && state().phase !== 'box' && events.length === 1,
         'weak wall fit continued the scenario or narrated an unsuccessful reveal');
       noLaterActions('failed placement');
       scan.viewer.splatMesh.splatDataTextures.baseData.centers = savedCenters;
 
       // Leave a finished production scene/control panel for visual inspection.
-      freshFit(); advance(10.1);
+      freshFit(); advance(8.1);
       viewerPosition = { x: state().config.centerX, y: 2, z: state().config.centerZ };
       advance(1.5); // the existing floor-rise must finish before headset entry can trigger the turn
-      advance(5.5);
+      until(20.6); // complete box announcement, actual headset turn, then seat
       ensure(state().secondBox.visible && !clock().running, 'fresh calibration failed to restart after cancellation');
       ensure(camera.parent === scene && same(camera.position.toArray(), [0, 0, 0]) &&
         same(camera.quaternion.toArray(), [0, 0, 0, 1]) && same(camera.scale.toArray(), [1, 1, 1]),
@@ -275,17 +298,17 @@ export async function runTestScenarioScenario(parentPage) {
       heading.textContent = 'Post-calibration test scenario · synthetic desktop evidence';
       heading.style.fontSize = '20px';
       const text = document.createElement('p');
-      text.textContent = 'Welcome at 0 s; first box at 10 s; four-second turn on headset entry; second box five seconds later. Fixed world boxes and fabricated scan walls. Synthetic poses only; no hardware or narrated-audio acceptance.';
+      text.textContent = 'Welcome at 1 s; first box at 8 s; eligible headset entry starts 2 s of transition music before a 4 s turn; second box 5 s after turn onset. Fixed world boxes and fabricated scan walls. Synthetic poses only; no hardware or audible-output acceptance.';
       note.append(heading, text); document.body.append(note);
       window.__timedScenarioCleanup = () => { experience.dispose(); material.dispose(); render.dispose(); };
       return {
         passed: true,
         environment: 'Actual setupExperience and Chrome controls; fabricated scan walls, fake session/current-frame viewer pose; no immersive session',
-        checks: ['fresh XR fit automatically starts welcome; desktop fit does not',
+        checks: ['fresh XR fit automatically starts the one-second welcome wait; desktop fit does not',
           'desktop preview button starts the same guarded sequence',
           'delayed audio unlock cannot revive a cancelled preview',
           'legacy voice audition cannot replace active narration or play after a cancelled unlock',
-          'first box at 10 seconds; no timer turn; headset entry at 30.5 seconds; fixed second box five seconds later',
+          'first box at 8 seconds; no timer turn; headset entry at 30.5 starts two-second anticipation; fixed second box five seconds after turn onset',
           'timed turn uses four seconds even after a custom eight-second manual setting',
           'four-second rotation and turn narration occur before second-box reveal',
           'manual controls cannot advance an active timed sequence early',

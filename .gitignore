@@ -46,4 +46,11 @@ public/splats/wall-section/*
 # Local system/editor files
 .DS_Store
 Thumbs.db
+__MACOSX/
+._*
 *.log
+
+# Locally prepared derivatives of the user-supplied Alembic explosion.
+public/effects/fracture/*.glb
+public/effects/fracture/*.meta.json
+public/effects/fracture/*.tmp

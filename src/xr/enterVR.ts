@@ -29,6 +29,7 @@
 
 import * as THREE from 'three';
 import { logger } from '../debug/logger';
+import { withOpaqueXrLayer } from './opaqueLayer';
 
 const TAG = 'enter-vr';
 
@@ -248,6 +249,10 @@ export function setupEnterVr(renderer: THREE.WebGLRenderer, onStatus: (text: str
         `optionalFeatures=${optionalFeatures.join(',')}`);
       const session: XRSession = await xr.requestSession('immersive-vr', { optionalFeatures });
       requestedSession = session;
+      failureStage = 'opaque VR validation';
+      if (session.environmentBlendMode !== 'opaque') {
+        throw new Error(`Opaque immersive VR is required; runtime returned ${session.environmentBlendMode}.`);
+      }
       failureStage = 'renderer attachment';
       logger.info(TAG, `requestSession RESOLVED in ` +
         `${((performance.now() - t0) / 1000).toFixed(2)}s ` +
@@ -255,7 +260,15 @@ export function setupEnterVr(renderer: THREE.WebGLRenderer, onStatus: (text: str
         `renderState.layers exposed=${(session.renderState.layers !== undefined)})`);
       if (path === 'classic') hideRenderStateLayers(session);
       renderer.xr.setFramebufferScaleFactor(XR_FRAMEBUFFER_SCALE); // BEFORE setSession
-      await renderer.xr.setSession(session);
+      if (path === 'classic') {
+        await withOpaqueXrLayer(session, renderer.getContext(), () => renderer.xr.setSession(session));
+      } else {
+        await renderer.xr.setSession(session);
+        const layer = renderer.xr.getBaseLayer();
+        if (!layer || !('blendTextureSourceAlpha' in layer)) throw new Error('The projection layer cannot disable source alpha.');
+        layer.blendTextureSourceAlpha = false;
+      }
+      logger.info(TAG, 'XR layer source alpha disabled; uncovered world pixels are opaque black');
       logger.info(TAG, 'three.js attached the session — presenting now');
       showXrStatus();
       return true;
@@ -263,7 +276,9 @@ export function setupEnterVr(renderer: THREE.WebGLRenderer, onStatus: (text: str
       logger.error(TAG, `SESSION FAILED during ${failureStage} after ` +
         `${((performance.now() - t0) / 1000).toFixed(2)}s:`, e);
       const errorName = e instanceof Error ? e.name : 'Error';
-      const instruction = failureStage === 'renderer attachment'
+      const instruction = failureStage === 'opaque VR validation'
+        ? 'This experience requires opaque VR. Select SteamVR as the active OpenXR runtime, then click Resume VR.'
+        : failureStage === 'renderer attachment'
         ? 'VR opened, but the page could not attach its renderer. Keep SteamVR ready; restart Chrome, reopen this page and click Resume VR.'
         : errorName === 'NotSupportedError'
           ? 'Chrome could not open VR. Steam Link may still be connected. Once SteamVR is ready, restart Chrome and click Resume VR.'

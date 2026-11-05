@@ -4,7 +4,9 @@ import { setupPlacementPicker } from './placementPicker.ts';
 import { bindExperiencePanel } from '../ui/experiencePanel.ts';
 import { createExperienceHud } from '../ui/experienceHud.ts';
 import { bindVoicePanel } from '../ui/voicePanel.ts';
-import { createVoiceGuide } from '../audio/voiceGuide.ts';
+import { createGameplayAudio } from '../audio/gameplayAudio.ts';
+import type { VoiceCue } from '../audio/voiceCues.ts';
+import type { GameplaySpeech } from '../audio/gameplayAudioConfig.ts';
 import { setupTrackedHands } from '../xr/hands.ts';
 import { logger } from '../debug/logger.ts';
 import { estimateHallwayCenter, measureWallDistances } from './hallwayCenter.ts';
@@ -12,21 +14,28 @@ import { placeWallAdjacentBox } from './secondBoxPlacement.ts';
 import { setupFloorLinePicker } from './floorLinePicker.ts';
 import { getSourceCenters } from '../viewer/splatViewer.ts';
 import { createTestScenario } from './testScenario.ts';
-import { SCENARIO_VOICE_CUES } from '../audio/voiceCues.ts';
+import { GAMEPLAY_TIMING } from './gameplayTiming.ts';
+import { SecondBoxPrompts } from './secondBoxPrompts.ts';
 import { createHallwaySections } from './hallwaySection.ts';
+import type { HallwayPlacementFrame } from '../viewer/wallRouteFrame.ts';
 
 type ScanRoot = THREE.Object3D & { viewer: { splatMesh: unknown } };
 
 export interface ExperienceOptions {
   /** Operator-authored draft; applied only as the visual hallway turns. */
   initialRotationOffsetMetres?: number;
+  placementFrame?: HallwayPlacementFrame;
   isScanReady?(): boolean;
+  /** Freeze captured environment geometry until explicit Reset or a fresh game. */
+  authoringBlockReason?(): string | null;
   onDisarm?(): void;
   onGameplayStart?(): void;
   onCalibrationApplied?(): void;
   onTurnCompleted?(): void;
-  onViewerPosition?(position: readonly [number, number, number] | null): void;
+  onSecondBoxTriggered?(): void;
+  onViewerPosition?(position: readonly [number, number, number] | null, forward?: readonly [number, number, number] | null): void;
   onScenarioCancelled?(): void;
+  onAudioMuted?(muted: boolean): void;
 }
 
 // Approximate raw floor station visible in the supplied desktop screenshot.
@@ -49,21 +58,46 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
   let viewerReady = false;
   let interrupted = false;
   let captureInProgress = () => false;
-  const voices = createVoiceGuide({
+  const gameplayAudio = createGameplayAudio({
     onCaption(text) { reportCaption(text); },
     onStatus(text) { reportAudio(text); },
   });
+  const secondBoxPrompts = new SecondBoxPrompts({
+    onSit: () => gameplayAudio.speech('sitOnBox'),
+    onClassroom: () => gameplayAudio.speech('classroom'),
+  });
+  // Keep cue identities at the coordinator boundary; all playback uses the
+  // supplied WAVs. No generated voices or supporting whispers are loaded.
+  const speechCues: Partial<Record<VoiceCue, GameplaySpeech>> = { scenarioWelcome: 'welcome', scenarioBox: 'stepOnBox',
+    scenarioSeat: 'sitOnBox', purpose: 'findBox', badge: 'stepOnBox', congratulations: 'turned', reversed: 'turned' };
+  const speechForCue = (cue: VoiceCue) => speechCues[cue];
+  const voices = {
+    unlock: () => gameplayAudio.unlock(),
+    preload: async (_cues?: readonly VoiceCue[]) => gameplayAudio.preload(),
+    play: async (cue: VoiceCue) => {
+      // The clock requests the seat cue at reveal onset. Playback waits for
+      // the actual completed rise, shared with the manual Show action.
+      if (cue === 'scenarioSeat') { secondBoxPrompts.requestSit(); return; }
+      const speech = speechForCue(cue); if (speech) await gameplayAudio.speech(speech);
+    },
+    isCuePlaying: (cue: VoiceCue) => { const speech = speechForCue(cue); return speech ? gameplayAudio.isSpeechPlaying(speech) : false; },
+    stop: () => gameplayAudio.stop(),
+    setMuted: (muted: boolean) => { gameplayAudio.setMuted(muted); options.onAudioMuted?.(muted); },
+    dispose: () => gameplayAudio.dispose(),
+  };
   let scenarioEnabled = true;
   let scenarioTime = 0;
   let scenarioEpoch = 0;
   let reportScenario = (_text: string) => {};
   let refreshPanel = () => {};
-  const sections = createHallwaySections({ scanRoot, getCenters: () => getSourceCenters(scanRoot), floorY: FLOOR_Y });
+  const sections = createHallwaySections({ scanRoot: options.placementFrame?.root ?? scanRoot,
+    getCenters: () => getSourceCenters(scanRoot), floorY: FLOOR_Y });
   const installation = createInstallation({
     scene, camera, scanRoot, defaultPlyCenter: null,
-    getHallwaySection: worldZ => sections.at(worldZ),
+    getHallwaySection: stationZ => sections.at(stationZ),
+    placementFrame: options.placementFrame,
     onCue(cue) { void voices.play(cue); },
-    onStopAudio() { voices.stop(); },
+    onStopAudio() { gameplayAudio.stopSpeech(); },
   });
   installation.setRotationOffset(options.initialRotationOffsetMetres ?? 0);
   let placementMode: 'walls' | 'edges' = 'walls';
@@ -170,30 +204,47 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
     return true;
   };
   const floorLinePicker = setupFloorLinePicker(renderer, camera, scanRoot, FLOOR_Y, rawPoint => {
+    if (options.authoringBlockReason?.() != null) return;
     floorLineRaw = rawPoint;
     prepareSecondPlacement();
   });
+  const authoringEvents = new AbortController();
+  const cancelBlockedPicking = () => {
+    if (options.authoringBlockReason?.() == null) return;
+    placementPicker.cancel(); floorLinePicker.cancel();
+  };
+  // A pending desktop pick must not commit after a presentation turn locks its
+  // geometry. Capture runs before the pickers' canvas pointer handlers.
+  renderer.domElement.addEventListener('pointerdown', cancelBlockedPicking,
+    { capture: true, signal: authoringEvents.signal });
   // Timed and manual actions use the same placement and live-tracking guards.
-  const mayAct = (): boolean => options.isScanReady?.() !== false &&
+  const mayAct = (): boolean => options.authoringBlockReason?.() == null && options.isScanReady?.() !== false &&
     !placementPicker.isPicking() && !floorLinePicker.isPicking() &&
     (!renderer.xr.isPresenting || (installation.snapshot().calibrated && !calibrationActive && !interrupted && viewerReady));
-  const canInspectStartPoint = (): boolean => !renderer.xr.isPresenting && options.isScanReady?.() !== false &&
+  const canInspectStartPoint = (): boolean => options.authoringBlockReason?.() == null &&
+    !renderer.xr.isPresenting && options.isScanReady?.() !== false &&
     !calibrationActive && !captureInProgress() && installation.snapshot().phase !== 'rotating' &&
     !placementPicker.isPicking() && !floorLinePicker.isPicking();
   const showBox = (): boolean => {
     if (!mayAct()) { reportPlacement('Wait for the scan, finish selections and complete fresh calibration with visible headset tracking.'); return false; }
-    if (installation.snapshot().phase === 'reversed') return installation.showBox(!renderer.xr.isPresenting);
+    if (installation.snapshot().phase === 'reversed') {
+      const shown = installation.showBox(!renderer.xr.isPresenting);
+      if (shown) gameplayAudio.effect('box1');
+      return shown;
+    }
     if (!centerPlacement()) return false;
+    // Validate the whole next interaction before a box or its cue can appear.
+    if (!prepareSecondPlacement()) return false;
     const shown = installation.showBox(!renderer.xr.isPresenting);
-    const prepared = prepareSecondPlacement();
-    return shown && prepared;
+    if (shown) gameplayAudio.effect('box1');
+    return shown;
   };
   const rotate = (testTurn = false, fromHeadset = false): boolean => {
     if (!mayAct()) { reportPlacement('Restore tracking and finish calibration or floor selection before rotating.'); return false; }
     if (!fromHeadset && (!centerPlacement() || !prepareSecondPlacement())) return false;
     if (fromHeadset && !installation.snapshot().secondBox.placed) return false;
-    if (testTurn && installation.snapshot().config.rotationSeconds !== 4) {
-      installation.configure({ ...installation.snapshot().config, rotationSeconds: 4 });
+    if (testTurn && installation.snapshot().config.rotationSeconds !== GAMEPLAY_TIMING.turnDurationSeconds) {
+      installation.configure({ ...installation.snapshot().config, rotationSeconds: GAMEPLAY_TIMING.turnDurationSeconds });
     }
     const turned = installation.rotateHallway();
     return turned;
@@ -201,19 +252,26 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
   const showSecondBox = (): boolean => {
     if (!mayAct()) { reportSecondPlacement('Restore tracking and recalibrate before showing the second box in VR.'); return false; }
     // Preserve the authored world-Z station while refitting the selected current wall.
+    const wasVisible = installation.snapshot().secondBox.visible;
     const shown = installation.showSecondBox();
+    if (shown) {
+      gameplayAudio.effect('box2');
+      if (!wasVisible) secondBoxPrompts.requestSit(true);
+    }
     return shown;
   };
   const scenario = createTestScenario({
     onCue(cue) { void voices.play(cue); },
     onAction(action) {
       if (action === 'showBox') return showBox();
+      if (action === 'anticipateTurn') { gameplayAudio.transition(1); return mayAct(); }
       if (action === 'rotate') return rotate(true, renderer.xr.isPresenting);
       return showSecondBox();
     },
     onChange() { reportScenario(scenario.snapshot().status); refreshPanel(); },
   });
   const cancelScenario = (reason: string) => {
+    secondBoxPrompts.reset();
     scenarioEpoch++;
     scenario.cancel(reason);
     options.onScenarioCancelled?.();
@@ -228,16 +286,18 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
     calibrationActive = false;
     centeringResult = null;
     interrupted = false;
+    scenarioTime = 0;
     options.onGameplayStart?.();
+    gameplayAudio.start(0);
     scenario.start(scenarioTime);
     return true;
   };
-  const unlockAudio = () => { void voices.unlock().then(ready => { if (ready) void voices.preload(SCENARIO_VOICE_CUES); }); };
+  const unlockAudio = () => { void voices.unlock().then(ready => { if (ready) void voices.preload(); }); };
   const audioGesture = new AbortController();
   // Enter VR is a browser gesture; prime audio there before the XR-only trigger.
   const primeAudio = () => {
     void voices.unlock().then(ready => {
-      if (ready) { audioGesture.abort(); void voices.preload(SCENARIO_VOICE_CUES); }
+      if (ready) { audioGesture.abort(); void voices.preload(); }
     });
   };
   document.addEventListener('pointerdown', primeAudio, { signal: audioGesture.signal, capture: true });
@@ -245,6 +305,7 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
   const panel = bindExperiencePanel(installation, {
     isPresenting: () => renderer.xr.isPresenting,
     isScanReady: options.isScanReady,
+    authoringBlockReason: options.authoringBlockReason,
     isPlacementPending: () => placementPicker.isPicking() || floorLinePicker.isPicking(),
     isScenarioEnabled: () => scenarioEnabled,
     isScenarioRunning: () => scenario.snapshot().running,
@@ -253,7 +314,7 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
       const request = ++scenarioEpoch;
       void voices.unlock().then(() => {
         if (request !== scenarioEpoch) return;
-        void voices.preload(SCENARIO_VOICE_CUES);
+        void voices.preload();
         startTestScenarioPreview();
       });
     },
@@ -265,6 +326,7 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
     isRotationOffsetAllowed: () => mayAct() && !scenario.snapshot().running,
     onRotationOffset: metres => mayAct() && !scenario.snapshot().running && installation.setRotationOffset(metres),
     onPickSecondFloorLine: () => {
+      if (options.authoringBlockReason?.() != null) return;
       if (renderer.xr.isPresenting || !['idle', 'ready', 'box'].includes(installation.snapshot().phase)) return;
       placementPicker.cancel(); floorLinePicker.start();
       reportSecondPlacement('Click the visible floor line beside the marked wall. The second box will sit on its side away from the door.');
@@ -278,10 +340,14 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
       if (!placementPicker.hasSelection()) { placementPicker.clearSelection(); placementMode = 'walls'; }
       installation.reset();
     },
-    onPickCenter: () => { floorLinePicker.cancel(); placementPicker.start(); },
+    onPickCenter: () => {
+      if (options.authoringBlockReason?.() != null) return;
+      floorLinePicker.cancel(); placementPicker.start();
+    },
     onStop: () => interrupt('STOPPED. Stay still; press CALIBRATE when ready to realign.'),
   });
   refreshPanel = () => panel.refresh();
+  let previousAuthoringBlockReason = options.authoringBlockReason?.() ?? null;
   reportScenario = text => panel.setScenarioStatus(text);
   reportPlacement = text => panel.setPlacementStatus(text);
   reportWallMeasurement = text => panel.setWallMeasurementStatus(text);
@@ -306,6 +372,7 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
 
   let sessionEnded = false;
   const unsubscribe = installation.subscribe(snapshot => {
+    if (snapshot.phase === 'stopped') secondBoxPrompts.reset();
     if (snapshot.phase === 'stopped' && scenario.snapshot().running) cancelScenario('Narrated test cancelled: installation stopped.');
     refreshWallMeasurement();
     if (snapshot.preview) sessionEnded = false;
@@ -402,12 +469,16 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
     hallwaySection: (worldZ: number) => sections.at(worldZ),
     installation,
     scenario,
+    secondBoxPrompts,
+    wallAppeared(): boolean { return mayAct() && secondBoxPrompts.wallAppeared(scenarioTime); },
+    cancelWallPrompts(): void { secondBoxPrompts.cancelWall(); },
     startTestScenarioPreview,
     placementSnapshot: () => centeringResult,
     primaryWallMeasurement: () => primaryWallMeasurement,
     secondPlacementSnapshot: () => ({ result: secondPlacementResult, rawBase: secondPlacementRaw, floorLineRaw: [...floorLineRaw] }),
     hands,
     voices,
+    gameplayAudio,
     bindCalibrationInvalidator(callback: (reason: string) => void) { invalidateCalibration = callback; },
     bindCalibrationCaptureState(callback: () => boolean) { captureInProgress = callback; },
     setCalibrationActive(active: boolean) { calibrationActive = active; if (active) { cancelScenario('Narrated test cancelled for calibration.'); options.onDisarm?.(); hands.clear(); } },
@@ -424,6 +495,8 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
       options.onDisarm?.();
       calibrationActive = true;
       centeringResult = null;
+      secondPlacementResult = null; secondPlacementRaw = null;
+      scenarioTime = 0;
       placementPicker.cancel();
       floorLinePicker.cancel();
       installation.prepareForCalibration();
@@ -437,21 +510,38 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
       else if (installation.snapshot().placementSource === 'picked-scan') centerPlacement();
     },
     calibrated() {
+      // Each successful fit starts a new game, independent of the prior run's
+      // completion, manual-only diagnostic setting, pending cues or props.
+      cancelScenario('Starting the full game from a fresh calibration.');
+      options.onDisarm?.();
       calibrationActive = false;
       centeringResult = null;
+      secondPlacementResult = null; secondPlacementRaw = null;
+      scenarioTime = 0;
+      sections.clear();
+      if (renderer.xr.isPresenting) scenarioEnabled = true;
+      options.onCalibrationApplied?.();
       installation.setCalibrated();
       if (placementMode === 'edges') placementPicker.applyFromScan();
       else if (installation.snapshot().placementSource === 'picked-scan') centerPlacement();
       interrupted = false;
-      options.onCalibrationApplied?.();
       if (renderer.xr.isPresenting && scenarioEnabled) {
         options.onGameplayStart?.();
+        gameplayAudio.start(0);
         scenario.start(scenarioTime, true);
       }
     },
     update(deltaSeconds: number, frame?: XRFrame) {
+      cancelBlockedPicking();
+      // A synchronous desktop fit can block a frame without invalidating a
+      // physical tracking origin. Freeze the visual/story clock for that gap;
+      // the native background stream continues on its independent audio clock.
+      // XR still observes the raw delta and uses its existing recovery guard.
+      const presentationDeltaSeconds = !renderer.xr.isPresenting && Number.isFinite(deltaSeconds) && deltaSeconds > .5
+        ? 0 : deltaSeconds;
       let contacts: ReturnType<typeof hands.update> = [];
       let headsetPosition: readonly [number, number, number] | null = null;
+      let headsetForward: readonly [number, number, number] | null = null;
       if (renderer.xr.isPresenting) {
         const previouslyReady = viewerReady;
         observeReference();
@@ -461,6 +551,10 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
           viewerValid = !!pose && !pose.emulatedPosition &&
             [pose.transform.position.x, pose.transform.position.y, pose.transform.position.z].every(Number.isFinite);
           if (viewerValid && pose) headsetPosition = [pose.transform.position.x, pose.transform.position.y, pose.transform.position.z];
+          const q = pose?.transform.orientation;
+          if (viewerValid && q && [q.x, q.y, q.z, q.w].every(Number.isFinite) && Math.hypot(q.x, q.y, q.z, q.w) > 1e-9) {
+            headsetForward = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w).normalize()).toArray();
+          }
         } catch { /* a failed current-frame pose has no tracking authority */ }
         viewerReady = viewerValid && observedSession?.visibilityState === 'visible';
         // A visible-but-blurred session suppresses input poses by design.
@@ -478,29 +572,55 @@ export function setupExperience(renderer: THREE.WebGLRenderer, scene: THREE.Scen
       }
       const now = performance.now();
       const wasTurning = installation.snapshot().phase === 'rotating';
-      installation.update(deltaSeconds, contacts.map(contact => ({ position: contact.position, tracked: true, timestampMs: now })), now);
+      installation.update(presentationDeltaSeconds, contacts.map(contact => ({ position: contact.position, tracked: true, timestampMs: now })), now);
       // Publish only the current valid XR pose. Desktop inspection uses its
       // camera; it never supplies a substitute position during an XR session.
-      options.onViewerPosition?.(renderer.xr.isPresenting
-        ? viewerReady ? headsetPosition : null : camera.getWorldPosition(new THREE.Vector3()).toArray());
-      if (wasTurning && installation.snapshot().phase === 'reversed') options.onTurnCompleted?.();
+      const viewerPosition = renderer.xr.isPresenting
+        ? viewerReady ? headsetPosition : null : camera.getWorldPosition(new THREE.Vector3()).toArray();
+      const viewerForward = renderer.xr.isPresenting
+        ? viewerReady ? headsetForward : null : camera.getWorldDirection(new THREE.Vector3()).toArray();
+      options.onViewerPosition?.(viewerPosition, viewerForward);
+      if (wasTurning && installation.snapshot().phase === 'reversed') {
+        options.onTurnCompleted?.();
+        if (gameplayAudio.snapshot().running) void gameplayAudio.speech('turned');
+      }
       // Update the turn before dispatching this frame's next timed action. A
       // turn started at +15 s therefore gets its first animation step next frame.
-      if (Number.isFinite(deltaSeconds) && deltaSeconds >= 0) scenarioTime += deltaSeconds;
+      if (Number.isFinite(presentationDeltaSeconds) && presentationDeltaSeconds >= 0) scenarioTime += presentationDeltaSeconds;
+      gameplayAudio.update(scenarioTime);
+      const secondBoxState = installation.snapshot().secondBox;
+      secondBoxPrompts.update(Number.isFinite(deltaSeconds) && deltaSeconds >= 0 ? scenarioTime : Number.NaN, { visible:secondBoxState.visible,
+        settled:secondBoxState.reveal.motion === 'visible' });
+      const audioState = gameplayAudio.snapshot();
+      const musicName = (audioState.currentMusic ?? audioState.desiredMusic)?.match(/(Ambience|Transition)_(\d)/);
+      voicePanel.setMusic(audioState.running && musicName ? `Music: ${musicName[1]} ${musicName[2]}${audioState.muted ? ' (muted)' : ''}`
+        : 'Music waits for calibration or a desktop preview.');
       const headsetInsideBox = Number.isFinite(deltaSeconds) && deltaSeconds > 0 && deltaSeconds <= .5 &&
         renderer.xr.isPresenting && mayAct() && headsetPosition !== null &&
+        (!scenario.snapshot().running || !voices.isCuePlaying('scenarioBox')) &&
         installation.headsetInsideTrigger(headsetPosition);
       if (scenario.snapshot().running) {
         scenario.update(Number.isFinite(deltaSeconds) && deltaSeconds >= 0 ? scenarioTime : Number.NaN, headsetInsideBox);
         if (!scenario.snapshot().running && scenario.snapshot().stage === 'cancelled') {
-          options.onScenarioCancelled?.(); voices.stop();
+          interrupt(`GAME STOPPED. ${scenario.snapshot().status}`);
         }
       } else if (headsetInsideBox && Number.isFinite(deltaSeconds) && deltaSeconds > 0 && deltaSeconds <= .5) rotate(false, true);
+      const currentViewer = Number.isFinite(deltaSeconds) && deltaSeconds > 0 && deltaSeconds <= .5 &&
+        mayAct() && viewerPosition !== null && viewerForward !== null &&
+        [...viewerPosition, ...viewerForward].every(Number.isFinite);
+      if (currentViewer && (renderer.xr.isPresenting || installation.snapshot().preview) &&
+        installation.headsetAboveSecondBox(viewerPosition!)) options.onSecondBoxTriggered?.();
+      const authoringBlockReason = options.authoringBlockReason?.() ?? null;
+      if (authoringBlockReason !== previousAuthoringBlockReason) {
+        previousAuthoringBlockReason = authoringBlockReason;
+        panel.refresh();
+      }
     },
     invalidate: interrupt,
     dispose() {
       cancelScenario('Narrated test disposed.');
       audioGesture.abort();
+      authoringEvents.abort();
       options.onDisarm?.();
       detach(); unsubscribe(); placementPicker.dispose(); floorLinePicker.dispose(); hands.dispose();
       installation.dispose(); voices.dispose(); hud.dispose(); panel.dispose(); voicePanel.dispose();
